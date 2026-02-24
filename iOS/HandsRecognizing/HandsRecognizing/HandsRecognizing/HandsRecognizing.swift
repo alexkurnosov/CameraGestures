@@ -5,26 +5,31 @@ import HandGestureTypes
 import MediaPipeTasksVision
 
 /// Hand tracking and gesture recognition module (stub implementation)
-public class HandsRecognizing {
+public class HandsRecognizing: NSObject {
     
     // MARK: - Properties
     
     private var config: HandsRecognizingConfig
     private var isRunning = false
     private var currentHandfilm = HandFilm()
-    private var mockTimer: Timer?
     
     // Callbacks
     public var handshotCallback: HandShotCallback?
     public var handfilmCallback: HandFilmCallback?
     
-    // MediaPipe object underlying
+    // MediaPipe components
     private var landmarker: HandLandmarker?
+    
+    // Camera components
+    private var captureSession: AVCaptureSession?
+    private var videoOutput: AVCaptureVideoDataOutput?
+    private var processingQueue: DispatchQueue?
     
     // MARK: - Initialization
     
-    public init() {
+    public override init() {
         self.config = .init(detectBothHands: false)
+        super.init()
     }
     
     // MARK: - Configuration
@@ -46,9 +51,16 @@ public class HandsRecognizing {
             throw HandsRecognizingError.invalidConfiguration
         }
         
-        landmarker = try HandLandmarker(
-            options: config.getHandLandmarkerOptions()
-        )
+        // TODO: Investigate custom MediaPipe model for better accuracy
+        var options = config.getHandLandmarkerOptions()
+        
+        // Set up live stream callback
+        options.handLandmarkerLiveStreamDelegate = self
+        
+        landmarker = try HandLandmarker(options: options)
+        
+        // Set up camera session
+        try setupCameraSession()
     }
     
     // MARK: - Lifecycle
@@ -64,7 +76,7 @@ public class HandsRecognizing {
         }
         
         isRunning = true
-        startDetection()
+        try startCameraCapture()
     }
     
     /// Stop hand tracking
@@ -72,7 +84,7 @@ public class HandsRecognizing {
         guard isRunning else { return }
         
         isRunning = false
-        stopDetection()
+        stopCameraCapture()
         
         // Complete any pending handfilm
         if !currentHandfilm.frames.isEmpty {
@@ -83,21 +95,22 @@ public class HandsRecognizing {
     
     // MARK: - Frame Processing
     
-    /// Process a single frame (stub implementation)
+    /// Process a single frame using MediaPipe
     public func processFrame(_ image: UIImage) throws {
         guard isRunning else { 
             throw HandsRecognizingError.processingError
         }
         
-        // Stub: Generate mock handshot based on current time
-        let mockLandmarks = generateMockLandmarks()
-        let handshot = HandShot(
-            landmarks: mockLandmarks,
-            timestamp: Date().timeIntervalSince1970,
-            leftOrRight: .right
-        )
+        guard let landmarker = landmarker else {
+            throw HandsRecognizingError.initializationFailed
+        }
         
-        processHandshot(handshot)
+        // Convert UIImage to MPImage
+        let mpImage = try MPImage(uiImage: image)
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000) // MediaPipe expects milliseconds
+        
+        // Process with MediaPipe (async callback will handle results)
+        try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
     }
     
     /// Process frame data directly
@@ -106,15 +119,16 @@ public class HandsRecognizing {
             throw HandsRecognizingError.processingError
         }
         
-        // Stub: Just generate mock data
-        let mockLandmarks = generateMockLandmarks()
-        let handshot = HandShot(
-            landmarks: mockLandmarks,
-            timestamp: Date().timeIntervalSince1970,
-            leftOrRight: .right
-        )
+        guard let landmarker = landmarker else {
+            throw HandsRecognizingError.initializationFailed
+        }
         
-        processHandshot(handshot)
+        // Convert raw data to MPImage
+        let mpImage = try MPImage(pixelBuffer: createPixelBuffer(from: data, width: width, height: height, channels: channels))
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        
+        // Process with MediaPipe
+        try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
     }
     
     // MARK: - Status
@@ -131,57 +145,116 @@ public class HandsRecognizing {
     
     // MARK: - Private Methods
     
-    private func startDetection() {
-        let interval = 1.0 / Double(config.targetFPS)
+    private func setupCameraSession() throws {
+        captureSession = AVCaptureSession()
+        guard let captureSession = captureSession else {
+            throw HandsRecognizingError.initializationFailed
+        }
         
-        mockTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.generateMockHandshot()
+        // Configure session
+        captureSession.beginConfiguration()
+        captureSession.sessionPreset = .high
+        
+        // Add camera input
+        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+            throw HandsRecognizingError.cameraNotAvailable
+        }
+        
+        let cameraInput = try AVCaptureDeviceInput(device: camera)
+        guard captureSession.canAddInput(cameraInput) else {
+            throw HandsRecognizingError.cameraNotAvailable
+        }
+        captureSession.addInput(cameraInput)
+        
+        // Add video output
+        videoOutput = AVCaptureVideoDataOutput()
+        guard let videoOutput = videoOutput else {
+            throw HandsRecognizingError.initializationFailed
+        }
+        
+        processingQueue = DispatchQueue(label: "com.cameragestures.processing", qos: .userInitiated)
+        videoOutput.setSampleBufferDelegate(self, queue: processingQueue)
+        
+        // Configure video settings
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        
+        guard captureSession.canAddOutput(videoOutput) else {
+            throw HandsRecognizingError.initializationFailed
+        }
+        captureSession.addOutput(videoOutput)
+        
+        captureSession.commitConfiguration()
+    }
+    
+    private func startCameraCapture() throws {
+        guard let captureSession = captureSession else {
+            throw HandsRecognizingError.initializationFailed
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            captureSession.startRunning()
         }
     }
     
-    private func stopDetection() {
-        mockTimer?.invalidate()
-        mockTimer = nil
+    private func stopCameraCapture() {
+        captureSession?.stopRunning()
     }
     
-    private func generateMockHandshot() {
-        guard isRunning else { return }
+    private func createPixelBuffer(from data: Data, width: Int, height: Int, channels: Int) throws -> CVPixelBuffer {
+        let bytesPerRow = width * channels
+        var pixelBuffer: CVPixelBuffer?
         
-        // Randomly choose between different hand poses
-        let landmarks: [Point3D]
-        let randomChoice = Int.random(in: 0...3)
-        
-        switch randomChoice {
-        case 0:
-            landmarks = MockData.openHandLandmarks()
-        case 1:
-            landmarks = MockData.fistLandmarks()
-        case 2:
-            landmarks = MockData.pointingLandmarks()
-        default:
-            landmarks = MockData.peaceLandmarks()
-        }
-        
-        // Add some noise to make it more realistic
-        let noisyLandmarks = landmarks.map { point in
-            Point3D(
-                x: point.x + Float.random(in: -0.01...0.01),
-                y: point.y + Float.random(in: -0.01...0.01),
-                z: point.z + Float.random(in: -0.005...0.005)
-            )
-        }
-        
-        let handshot = HandShot(
-            landmarks: noisyLandmarks,
-            timestamp: Date().timeIntervalSince1970,
-            leftOrRight: config.detectBothHands && Bool.random() ? .left : .right
+        let status = CVPixelBufferCreateWithBytes(
+            nil,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            UnsafeMutableRawPointer(mutating: data.withUnsafeBytes { $0.bindMemory(to: UInt8.self).baseAddress! }),
+            bytesPerRow,
+            nil,
+            nil,
+            nil,
+            &pixelBuffer
         )
         
-        processHandshot(handshot)
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+            throw HandsRecognizingError.processingError
+        }
+        
+        return buffer
     }
     
-    private func generateMockLandmarks() -> [Point3D] {
-        return MockData.openHandLandmarks()
+    private func convertMediaPipeResults(_ result: HandLandmarkerResult, timestamp: TimeInterval) {
+        // Process each detected hand
+        for (handIndex, landmarks) in result.landmarks.enumerated() {
+            // Convert MediaPipe landmarks to our Point3D format
+            let convertedLandmarks = landmarks.map { landmark in
+                Point3D(
+                    x: landmark.x,
+                    y: landmark.y,
+                    z: landmark.z ?? 0.0 // MediaPipe z might be nil
+                )
+            }
+            
+            // Determine hand side (left/right)
+            let handedness: LeftOrRight
+            if handIndex < result.handedness.count,
+               let firstHandedness = result.handedness[handIndex].first, let categoryName = firstHandedness.categoryName {
+                handedness = categoryName.lowercased() == "left" ? .left : .right
+            } else {
+                handedness = .right // Default fallback
+            }
+            
+            let handshot = HandShot(
+                landmarks: convertedLandmarks,
+                timestamp: timestamp,
+                leftOrRight: handedness
+            )
+            
+            processHandshot(handshot)
+        }
     }
     
     private func processHandshot(_ handshot: HandShot) {
@@ -233,5 +306,46 @@ extension HandsRecognizing {
     /// Get current handfilm (for debugging)
     public func getCurrentHandfilm() -> HandFilm {
         return currentHandfilm
+    }
+}
+
+// MARK: - HandLandmarkerLiveStreamDelegate
+
+extension HandsRecognizing: HandLandmarkerLiveStreamDelegate {
+    public func handLandmarker(_ handLandmarker: HandLandmarker, didFinishDetection result: HandLandmarkerResult?, timestampInMilliseconds: Int, error: Error?) {
+        // Handle MediaPipe errors
+        if let error = error {
+            print("MediaPipe detection error: \(error)")
+            return
+        }
+        
+        // Process results if available
+        if let result = result {
+            let timestamp = TimeInterval(timestampInMilliseconds) / 1000.0
+            convertMediaPipeResults(result, timestamp: timestamp)
+        }
+    }
+}
+
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+
+extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard isRunning,
+              let landmarker = landmarker,
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
+        
+        do {
+            // Convert to MPImage
+            let mpImage = try MPImage(pixelBuffer: pixelBuffer)
+            let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            
+            // Process with MediaPipe
+            try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
+        } catch {
+            print("Frame processing error: \(error)")
+        }
     }
 }
