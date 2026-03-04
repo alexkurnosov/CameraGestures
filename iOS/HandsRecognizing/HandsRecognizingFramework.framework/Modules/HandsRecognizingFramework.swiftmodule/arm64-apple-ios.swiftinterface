@@ -1,0 +1,83 @@
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Apple Swift version 6.2 effective-5.10 (swiftlang-6.2.0.19.9 clang-1700.3.19.1)
+// swift-module-flags: -target arm64-apple-ios15.0 -enable-objc-interop -enable-library-evolution -swift-version 5 -enforce-exclusivity=checked -O -enable-upcoming-feature DisableOutwardActorInference -enable-upcoming-feature InferSendableFromCaptures -enable-upcoming-feature GlobalActorIsolatedTypesUsability -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -module-name HandsRecognizingFramework
+// swift-module-flags-ignorable:  -formal-cxx-interoperability-mode=off -interface-compiler-version 6.2
+import AVFoundation
+import Foundation
+import HandGestureTypes
+import MediaPipeTasksVision
+import Swift
+import UIKit
+import _Concurrency
+import _StringProcessing
+import _SwiftConcurrencyShims
+@objc @_inheritsConvenienceInitializers public class HandsRecognizing : ObjectiveC.NSObject {
+  public var handshotCallback: HandsRecognizingFramework.HandShotCallback?
+  public var handfilmCallback: HandsRecognizingFramework.HandFilmCallback?
+  @objc override dynamic public init()
+  public func initialize(config: HandsRecognizingFramework.HandsRecognizingConfig) throws
+  public func start() throws
+  public func stop()
+  public func processFrame(_ image: UIKit.UIImage) throws
+  public func processFrameData(_ data: Foundation.Data, width: Swift.Int, height: Swift.Int, channels: Swift.Int) throws
+  public var isTracking: Swift.Bool {
+    get
+  }
+  public func getConfig() -> HandsRecognizingFramework.HandsRecognizingConfig
+  #if compiler(>=5.3) && $AsyncExecutionBehaviorAttributes
+  nonisolated(nonsending) public static func requestCameraPermission() async -> Swift.Bool
+  #endif
+  public static func isCameraAvailable() -> Swift.Bool
+  public static func getAvailableCameras() -> [AVFoundation.AVCaptureDevice]
+  @objc deinit
+}
+extension HandsRecognizingFramework.HandsRecognizing {
+  public func startWithDefaultConfig() throws
+  public func getCurrentHandfilm() -> HandGestureTypes.HandFilm
+}
+extension HandsRecognizingFramework.HandsRecognizing : MediaPipeTasksVision.HandLandmarkerLiveStreamDelegate {
+  #if compiler(>=5.3) && $NonescapableTypes
+  @objc dynamic public func handLandmarker(_ handLandmarker: MediaPipeTasksVision.HandLandmarker, didFinishDetection result: MediaPipeTasksVision.HandLandmarkerResult?, timestampInMilliseconds: Swift.Int, error: (any Swift.Error)?)
+  #endif
+}
+extension HandsRecognizingFramework.HandsRecognizing : AVFoundation.AVCaptureVideoDataOutputSampleBufferDelegate {
+  @objc dynamic public func captureOutput(_ output: AVFoundation.AVCaptureOutput, didOutput sampleBuffer: CoreMedia.CMSampleBuffer, from connection: AVFoundation.AVCaptureConnection)
+}
+public enum MockData {
+  public static func openHandLandmarks(handedness: HandGestureTypes.LeftOrRight = .right) -> [HandGestureTypes.Point3D]
+  public static func fistLandmarks(handedness: HandGestureTypes.LeftOrRight = .right) -> [HandGestureTypes.Point3D]
+  public static func pointingLandmarks(handedness: HandGestureTypes.LeftOrRight = .right) -> [HandGestureTypes.Point3D]
+  public static func peaceLandmarks(handedness: HandGestureTypes.LeftOrRight = .right) -> [HandGestureTypes.Point3D]
+  public static func waveGesture() -> HandGestureTypes.HandFilm
+  public static func grabGesture() -> HandGestureTypes.HandFilm
+  public static func randomGesture() -> HandGestureTypes.HandFilm
+}
+public enum HandsRecognizingError : Swift.Error {
+  case cameraNotAvailable
+  case invalidConfiguration
+  case initializationFailed
+  case processingError
+  public var localizedDescription: Swift.String {
+    get
+  }
+  public static func == (a: HandsRecognizingFramework.HandsRecognizingError, b: HandsRecognizingFramework.HandsRecognizingError) -> Swift.Bool
+  public func hash(into hasher: inout Swift.Hasher)
+  public var hashValue: Swift.Int {
+    get
+  }
+}
+public struct HandsRecognizingConfig {
+  public let cameraIndex: Swift.Int
+  public let targetFPS: Swift.Int
+  public let detectBothHands: Swift.Bool
+  public let minDetectionConfidence: Swift.Float
+  public let minTrackingConfidence: Swift.Float
+  public let handfilmMaxDuration: Foundation.TimeInterval
+  public init(cameraIndex: Swift.Int = 0, targetFPS: Swift.Int = 30, detectBothHands: Swift.Bool = true, minDetectionConfidence: Swift.Float = 0.5, minTrackingConfidence: Swift.Float = 0.5, handfilmMaxDuration: Foundation.TimeInterval = 2.0)
+  public static let defaultConfig: HandsRecognizingFramework.HandsRecognizingConfig
+  public func getHandLandmarkerOptions() -> MediaPipeTasksVision.HandLandmarkerOptions
+}
+public typealias HandShotCallback = (HandGestureTypes.HandShot) -> Swift.Void
+public typealias HandFilmCallback = (HandGestureTypes.HandFilm) -> Swift.Void
+extension HandsRecognizingFramework.HandsRecognizingError : Swift.Equatable {}
+extension HandsRecognizingFramework.HandsRecognizingError : Swift.Hashable {}

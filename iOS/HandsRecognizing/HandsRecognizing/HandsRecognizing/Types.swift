@@ -55,6 +55,16 @@ public struct HandsRecognizingConfig {
     public func getHandLandmarkerOptions() -> HandLandmarkerOptions {
         let options = HandLandmarkerOptions()
         
+        // Configure base options with model file
+        let baseOptions = BaseOptions()
+        
+        // Load model from vendored MediaPipeModel framework
+        let frameworkBundle = Bundle(for: HandsRecognizing.self)
+        if let modelPath = frameworkBundle.path(forResource: "hand_landmarker", ofType: "task") {
+            baseOptions.modelAssetPath = modelPath
+        }
+        options.baseOptions = baseOptions
+        
         // Configure number of hands to detect
         options.numHands = detectBothHands ? 2 : 1
         

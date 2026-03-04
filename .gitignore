@@ -58,7 +58,6 @@ Package.resolved
 
 # CocoaPods
 Pods/
-*.podspec
 
 # macOS
 .DS_Store

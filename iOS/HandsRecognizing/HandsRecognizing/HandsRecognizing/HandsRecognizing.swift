@@ -57,7 +57,12 @@ public class HandsRecognizing: NSObject {
         // Set up live stream callback
         options.handLandmarkerLiveStreamDelegate = self
         
-        landmarker = try HandLandmarker(options: options)
+        do {
+            landmarker = try HandLandmarker(options: options)
+        }
+        catch {
+            print("HandLandmarker init error: \(error)")
+        }
         
         // Set up camera session
         try setupCameraSession()

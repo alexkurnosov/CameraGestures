@@ -1,0 +1,2153 @@
+{
+  "ABIRoot": {
+    "kind": "Root",
+    "name": "HandsRecognizingFramework",
+    "printedName": "HandsRecognizingFramework",
+    "children": [
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "AVFoundation",
+        "printedName": "AVFoundation",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "UIKit",
+        "printedName": "UIKit",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "HandGestureTypes",
+        "printedName": "HandGestureTypes",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "MediaPipeTasksVision",
+        "printedName": "MediaPipeTasksVision",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "HandsRecognizing",
+        "printedName": "HandsRecognizing",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "handshotCallback",
+            "printedName": "handshotCallback",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "((HandGestureTypes.HandShot) -> ())?",
+                "children": [
+                  {
+                    "kind": "TypeFunc",
+                    "name": "Function",
+                    "printedName": "(HandGestureTypes.HandShot) -> ()",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "Void",
+                        "printedName": "()"
+                      },
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandShot",
+                        "printedName": "HandGestureTypes.HandShot",
+                        "usr": "s:16HandGestureTypes0A4ShotV"
+                      }
+                    ]
+                  }
+                ],
+                "usr": "s:Sq"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasInitialValue",
+              "HasStorage",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((HandGestureTypes.HandShot) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(HandGestureTypes.HandShot) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "HandShot",
+                            "printedName": "HandGestureTypes.HandShot",
+                            "usr": "s:16HandGestureTypes0A4ShotV"
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Set",
+                "printedName": "Set()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((HandGestureTypes.HandShot) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(HandGestureTypes.HandShot) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "HandShot",
+                            "printedName": "HandGestureTypes.HandShot",
+                            "usr": "s:16HandGestureTypes0A4ShotV"
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvs",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvs",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "set"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Modify",
+                "printedName": "Modify()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvM",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handshotCallbacky16HandGestureTypes0F4ShotVcSgvM",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "_modify"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "handfilmCallback",
+            "printedName": "handfilmCallback",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "((HandGestureTypes.HandFilm) -> ())?",
+                "children": [
+                  {
+                    "kind": "TypeFunc",
+                    "name": "Function",
+                    "printedName": "(HandGestureTypes.HandFilm) -> ()",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "Void",
+                        "printedName": "()"
+                      },
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandFilm",
+                        "printedName": "HandGestureTypes.HandFilm",
+                        "usr": "s:16HandGestureTypes0A4FilmV"
+                      }
+                    ]
+                  }
+                ],
+                "usr": "s:Sq"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasInitialValue",
+              "HasStorage",
+              "AccessControl"
+            ],
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((HandGestureTypes.HandFilm) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(HandGestureTypes.HandFilm) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "HandFilm",
+                            "printedName": "HandGestureTypes.HandFilm",
+                            "usr": "s:16HandGestureTypes0A4FilmV"
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Set",
+                "printedName": "Set()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((HandGestureTypes.HandFilm) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(HandGestureTypes.HandFilm) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "HandFilm",
+                            "printedName": "HandGestureTypes.HandFilm",
+                            "usr": "s:16HandGestureTypes0A4FilmV"
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvs",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvs",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "set"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Modify",
+                "printedName": "Modify()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvM",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C16handfilmCallbacky16HandGestureTypes0F4FilmVcSgvM",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "_modify"
+              }
+            ]
+          },
+          {
+            "kind": "Constructor",
+            "name": "init",
+            "printedName": "init()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizing",
+                "printedName": "HandsRecognizingFramework.HandsRecognizing",
+                "usr": "c:@M@HandsRecognizingFramework@objc(cs)HandsRecognizing"
+              }
+            ],
+            "declKind": "Constructor",
+            "usr": "c:@M@HandsRecognizingFramework@objc(cs)HandsRecognizing(im)init",
+            "mangledName": "$s25HandsRecognizingFramework0aB0CACycfc",
+            "moduleName": "HandsRecognizingFramework",
+            "overriding": true,
+            "objc_name": "init",
+            "declAttributes": [
+              "Dynamic",
+              "ObjC",
+              "Override",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "init_kind": "Designated"
+          },
+          {
+            "kind": "Function",
+            "name": "initialize",
+            "printedName": "initialize(config:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingConfig",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingConfig",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C10initialize6configyAA0aB6ConfigV_tKF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C10initialize6configyAA0aB6ConfigV_tKF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "throwing": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "start",
+            "printedName": "start()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C5startyyKF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C5startyyKF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "throwing": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "stop",
+            "printedName": "stop()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C4stopyyF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C4stopyyF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "processFrame",
+            "printedName": "processFrame(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "UIImage",
+                "printedName": "UIKit.UIImage",
+                "usr": "c:objc(cs)UIImage"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C12processFrameyySo7UIImageCKF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C12processFrameyySo7UIImageCKF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "throwing": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "processFrameData",
+            "printedName": "processFrameData(_:width:height:channels:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Data",
+                "printedName": "Foundation.Data",
+                "usr": "s:10Foundation4DataV"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C16processFrameData_5width6height8channelsy10Foundation0F0V_S3itKF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C16processFrameData_5width6height8channelsy10Foundation0F0V_S3itKF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "throwing": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Var",
+            "name": "isTracking",
+            "printedName": "isTracking",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB0C10isTrackingSbvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C10isTrackingSbvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Bool",
+                    "printedName": "Swift.Bool",
+                    "usr": "s:Sb"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB0C10isTrackingSbvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB0C10isTrackingSbvg",
+                "moduleName": "HandsRecognizingFramework",
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "getConfig",
+            "printedName": "getConfig()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingConfig",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingConfig",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C9getConfigAA0abE0VyF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C9getConfigAA0abE0VyF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "requestCameraPermission",
+            "printedName": "requestCameraPermission()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C23requestCameraPermissionSbyYaFZ",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C23requestCameraPermissionSbyYaFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "Nonisolated",
+              "Final",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "isCameraAvailable",
+            "printedName": "isCameraAvailable()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C17isCameraAvailableSbyFZ",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C17isCameraAvailableSbyFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "Final",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "getAvailableCameras",
+            "printedName": "getAvailableCameras()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[AVFoundation.AVCaptureDevice]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "AVCaptureDevice",
+                    "printedName": "AVFoundation.AVCaptureDevice",
+                    "usr": "c:objc(cs)AVCaptureDevice"
+                  }
+                ],
+                "usr": "s:Sa"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C19getAvailableCamerasSaySo15AVCaptureDeviceCGyFZ",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C19getAvailableCamerasSaySo15AVCaptureDeviceCGyFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "Final",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "startWithDefaultConfig",
+            "printedName": "startWithDefaultConfig()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C22startWithDefaultConfigyyKF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C22startWithDefaultConfigyyKF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "isFromExtension": true,
+            "throwing": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "getCurrentHandfilm",
+            "printedName": "getCurrentHandfilm()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandFilm",
+                "printedName": "HandGestureTypes.HandFilm",
+                "usr": "s:16HandGestureTypes0A4FilmV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB0C18getCurrentHandfilm16HandGestureTypes0G4FilmVyF",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C18getCurrentHandfilm16HandGestureTypes0G4FilmVyF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "handLandmarker",
+            "printedName": "handLandmarker(_:didFinishDetection:timestampInMilliseconds:error:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "HandLandmarker",
+                "printedName": "MediaPipeTasksVision.HandLandmarker",
+                "usr": "c:objc(cs)MPPHandLandmarker"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "MediaPipeTasksVision.HandLandmarkerResult?",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandLandmarkerResult",
+                    "printedName": "MediaPipeTasksVision.HandLandmarkerResult",
+                    "usr": "c:objc(cs)MPPHandLandmarkerResult"
+                  }
+                ],
+                "usr": "s:Sq"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "(any Swift.Error)?",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Error",
+                    "printedName": "any Swift.Error",
+                    "usr": "s:s5ErrorP"
+                  }
+                ],
+                "usr": "s:Sq"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@CM@HandsRecognizingFramework@objc(cs)HandsRecognizing(im)handLandmarker:didFinishDetectionWithResult:timestampInMilliseconds:error:",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C14handLandmarker_18didFinishDetection23timestampInMilliseconds5errorySo07MPPHandE0C_So0mE6ResultCSgSis5Error_pSgtF",
+            "moduleName": "HandsRecognizingFramework",
+            "objc_name": "handLandmarker:didFinishDetectionWithResult:timestampInMilliseconds:error:",
+            "declAttributes": [
+              "Dynamic",
+              "ObjC",
+              "AccessControl"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "captureOutput",
+            "printedName": "captureOutput(_:didOutput:from:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "AVCaptureOutput",
+                "printedName": "AVFoundation.AVCaptureOutput",
+                "usr": "c:objc(cs)AVCaptureOutput"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "CMSampleBuffer",
+                "printedName": "CoreMedia.CMSampleBuffer",
+                "usr": "c:@T@CMSampleBufferRef"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "AVCaptureConnection",
+                "printedName": "AVFoundation.AVCaptureConnection",
+                "usr": "c:objc(cs)AVCaptureConnection"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@CM@HandsRecognizingFramework@objc(cs)HandsRecognizing(im)captureOutput:didOutputSampleBuffer:fromConnection:",
+            "mangledName": "$s25HandsRecognizingFramework0aB0C13captureOutput_03didE04fromySo09AVCaptureE0C_So17CMSampleBufferRefaSo0H10ConnectionCtF",
+            "moduleName": "HandsRecognizingFramework",
+            "objc_name": "captureOutput:didOutputSampleBuffer:fromConnection:",
+            "declAttributes": [
+              "Dynamic",
+              "ObjC",
+              "AccessControl"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          }
+        ],
+        "declKind": "Class",
+        "usr": "c:@M@HandsRecognizingFramework@objc(cs)HandsRecognizing",
+        "mangledName": "$s25HandsRecognizingFramework0aB0C",
+        "moduleName": "HandsRecognizingFramework",
+        "declAttributes": [
+          "AccessControl",
+          "RawDocComment",
+          "ObjC"
+        ],
+        "superclassUsr": "c:objc(cs)NSObject",
+        "inheritsConvenienceInitializers": true,
+        "superclassNames": [
+          "ObjectiveC.NSObject"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Equatable",
+            "printedName": "Equatable",
+            "usr": "s:SQ",
+            "mangledName": "$sSQ"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Hashable",
+            "printedName": "Hashable",
+            "usr": "s:SH",
+            "mangledName": "$sSH"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CVarArg",
+            "printedName": "CVarArg",
+            "usr": "s:s7CVarArgP",
+            "mangledName": "$ss7CVarArgP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObservingPublishing",
+            "printedName": "_KeyValueCodingAndObservingPublishing",
+            "usr": "s:10Foundation37_KeyValueCodingAndObservingPublishingP",
+            "mangledName": "$s10Foundation37_KeyValueCodingAndObservingPublishingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObserving",
+            "printedName": "_KeyValueCodingAndObserving",
+            "usr": "s:10Foundation27_KeyValueCodingAndObservingP",
+            "mangledName": "$s10Foundation27_KeyValueCodingAndObservingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomStringConvertible",
+            "printedName": "CustomStringConvertible",
+            "usr": "s:s23CustomStringConvertibleP",
+            "mangledName": "$ss23CustomStringConvertibleP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomDebugStringConvertible",
+            "printedName": "CustomDebugStringConvertible",
+            "usr": "s:s28CustomDebugStringConvertibleP",
+            "mangledName": "$ss28CustomDebugStringConvertibleP"
+          }
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "HandGestureTypes",
+        "printedName": "HandGestureTypes",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "MockData",
+        "printedName": "MockData",
+        "children": [
+          {
+            "kind": "Function",
+            "name": "openHandLandmarks",
+            "printedName": "openHandLandmarks(handedness:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[HandGestureTypes.Point3D]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Point3D",
+                    "printedName": "HandGestureTypes.Point3D",
+                    "usr": "s:16HandGestureTypes7Point3DV"
+                  }
+                ],
+                "usr": "s:Sa"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "LeftOrRight",
+                "printedName": "HandGestureTypes.LeftOrRight",
+                "hasDefaultArg": true,
+                "usr": "s:16HandGestureTypes11LeftOrRightO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO17openHandLandmarks10handednessSay0G12GestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO17openHandLandmarks10handednessSay0G12GestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "fistLandmarks",
+            "printedName": "fistLandmarks(handedness:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[HandGestureTypes.Point3D]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Point3D",
+                    "printedName": "HandGestureTypes.Point3D",
+                    "usr": "s:16HandGestureTypes7Point3DV"
+                  }
+                ],
+                "usr": "s:Sa"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "LeftOrRight",
+                "printedName": "HandGestureTypes.LeftOrRight",
+                "hasDefaultArg": true,
+                "usr": "s:16HandGestureTypes11LeftOrRightO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO13fistLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO13fistLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "pointingLandmarks",
+            "printedName": "pointingLandmarks(handedness:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[HandGestureTypes.Point3D]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Point3D",
+                    "printedName": "HandGestureTypes.Point3D",
+                    "usr": "s:16HandGestureTypes7Point3DV"
+                  }
+                ],
+                "usr": "s:Sa"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "LeftOrRight",
+                "printedName": "HandGestureTypes.LeftOrRight",
+                "hasDefaultArg": true,
+                "usr": "s:16HandGestureTypes11LeftOrRightO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO17pointingLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO17pointingLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "peaceLandmarks",
+            "printedName": "peaceLandmarks(handedness:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[HandGestureTypes.Point3D]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Point3D",
+                    "printedName": "HandGestureTypes.Point3D",
+                    "usr": "s:16HandGestureTypes7Point3DV"
+                  }
+                ],
+                "usr": "s:Sa"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "LeftOrRight",
+                "printedName": "HandGestureTypes.LeftOrRight",
+                "hasDefaultArg": true,
+                "usr": "s:16HandGestureTypes11LeftOrRightO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO14peaceLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO14peaceLandmarks10handednessSay16HandGestureTypes7Point3DVGAF11LeftOrRightO_tFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "waveGesture",
+            "printedName": "waveGesture()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandFilm",
+                "printedName": "HandGestureTypes.HandFilm",
+                "usr": "s:16HandGestureTypes0A4FilmV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO11waveGesture04HandG5Types0H4FilmVyFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO11waveGesture04HandG5Types0H4FilmVyFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "grabGesture",
+            "printedName": "grabGesture()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandFilm",
+                "printedName": "HandGestureTypes.HandFilm",
+                "usr": "s:16HandGestureTypes0A4FilmV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO11grabGesture04HandG5Types0H4FilmVyFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO11grabGesture04HandG5Types0H4FilmVyFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "randomGesture",
+            "printedName": "randomGesture()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandFilm",
+                "printedName": "HandGestureTypes.HandFilm",
+                "usr": "s:16HandGestureTypes0A4FilmV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework8MockDataO13randomGesture04HandG5Types0H4FilmVyFZ",
+            "mangledName": "$s25HandsRecognizingFramework8MockDataO13randomGesture04HandG5Types0H4FilmVyFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          }
+        ],
+        "declKind": "Enum",
+        "usr": "s:25HandsRecognizingFramework8MockDataO",
+        "mangledName": "$s25HandsRecognizingFramework8MockDataO",
+        "moduleName": "HandsRecognizingFramework",
+        "declAttributes": [
+          "AccessControl",
+          "RawDocComment"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          }
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "HandGestureTypes",
+        "printedName": "HandGestureTypes",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "Import",
+        "name": "MediaPipeTasksVision",
+        "printedName": "MediaPipeTasksVision",
+        "declKind": "Import",
+        "moduleName": "HandsRecognizingFramework"
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "HandsRecognizingError",
+        "printedName": "HandsRecognizingError",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "cameraNotAvailable",
+            "printedName": "cameraNotAvailable",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(HandsRecognizingFramework.HandsRecognizingError.Type) -> HandsRecognizingFramework.HandsRecognizingError",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandsRecognizingError",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                    "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandsRecognizingError",
+                        "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                        "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO18cameraNotAvailableyA2CmF",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO18cameraNotAvailableyA2CmF",
+            "moduleName": "HandsRecognizingFramework"
+          },
+          {
+            "kind": "Var",
+            "name": "invalidConfiguration",
+            "printedName": "invalidConfiguration",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(HandsRecognizingFramework.HandsRecognizingError.Type) -> HandsRecognizingFramework.HandsRecognizingError",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandsRecognizingError",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                    "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandsRecognizingError",
+                        "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                        "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO20invalidConfigurationyA2CmF",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO20invalidConfigurationyA2CmF",
+            "moduleName": "HandsRecognizingFramework"
+          },
+          {
+            "kind": "Var",
+            "name": "initializationFailed",
+            "printedName": "initializationFailed",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(HandsRecognizingFramework.HandsRecognizingError.Type) -> HandsRecognizingFramework.HandsRecognizingError",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandsRecognizingError",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                    "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandsRecognizingError",
+                        "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                        "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO20initializationFailedyA2CmF",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO20initializationFailedyA2CmF",
+            "moduleName": "HandsRecognizingFramework"
+          },
+          {
+            "kind": "Var",
+            "name": "processingError",
+            "printedName": "processingError",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(HandsRecognizingFramework.HandsRecognizingError.Type) -> HandsRecognizingFramework.HandsRecognizingError",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandsRecognizingError",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                    "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingError.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "HandsRecognizingError",
+                        "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                        "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO010processingD0yA2CmF",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO010processingD0yA2CmF",
+            "moduleName": "HandsRecognizingFramework"
+          },
+          {
+            "kind": "Var",
+            "name": "localizedDescription",
+            "printedName": "localizedDescription",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO20localizedDescriptionSSvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO20localizedDescriptionSSvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl"
+            ],
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "String",
+                    "printedName": "Swift.String",
+                    "usr": "s:SS"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB5ErrorO20localizedDescriptionSSvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO20localizedDescriptionSSvg",
+                "moduleName": "HandsRecognizingFramework",
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "==",
+            "printedName": "==(_:_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingError",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingError",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingError",
+                "usr": "s:25HandsRecognizingFramework0aB5ErrorO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO2eeoiySbAC_ACtFZ",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO2eeoiySbAC_ACtFZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "implicit": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Var",
+            "name": "hashValue",
+            "printedName": "hashValue",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO9hashValueSivp",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO9hashValueSivp",
+            "moduleName": "HandsRecognizingFramework",
+            "implicit": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Int",
+                    "printedName": "Swift.Int",
+                    "usr": "s:Si"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB5ErrorO9hashValueSivg",
+                "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO9hashValueSivg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "hash",
+            "printedName": "hash(into:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Hasher",
+                "printedName": "Swift.Hasher",
+                "paramValueOwnership": "InOut",
+                "usr": "s:s6HasherV"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB5ErrorO4hash4intoys6HasherVz_tF",
+            "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO4hash4intoys6HasherVz_tF",
+            "moduleName": "HandsRecognizingFramework",
+            "implicit": true,
+            "funcSelfKind": "NonMutating"
+          }
+        ],
+        "declKind": "Enum",
+        "usr": "s:25HandsRecognizingFramework0aB5ErrorO",
+        "mangledName": "$s25HandsRecognizingFramework0aB5ErrorO",
+        "moduleName": "HandsRecognizingFramework",
+        "declAttributes": [
+          "AccessControl",
+          "RawDocComment"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Equatable",
+            "printedName": "Equatable",
+            "usr": "s:SQ",
+            "mangledName": "$sSQ"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Hashable",
+            "printedName": "Hashable",
+            "usr": "s:SH",
+            "mangledName": "$sSH"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Error",
+            "printedName": "Error",
+            "usr": "s:s5ErrorP",
+            "mangledName": "$ss5ErrorP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Sendable",
+            "printedName": "Sendable",
+            "usr": "s:s8SendableP",
+            "mangledName": "$ss8SendableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "SendableMetatype",
+            "printedName": "SendableMetatype",
+            "usr": "s:s16SendableMetatypeP",
+            "mangledName": "$ss16SendableMetatypeP"
+          }
+        ]
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "HandsRecognizingConfig",
+        "printedName": "HandsRecognizingConfig",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "cameraIndex",
+            "printedName": "cameraIndex",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV11cameraIndexSivp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV11cameraIndexSivp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Int",
+                    "printedName": "Swift.Int",
+                    "usr": "s:Si"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV11cameraIndexSivg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV11cameraIndexSivg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "targetFPS",
+            "printedName": "targetFPS",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV9targetFPSSivp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV9targetFPSSivp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Int",
+                    "printedName": "Swift.Int",
+                    "usr": "s:Si"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV9targetFPSSivg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV9targetFPSSivg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "detectBothHands",
+            "printedName": "detectBothHands",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV010detectBothA0Sbvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV010detectBothA0Sbvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Bool",
+                    "printedName": "Swift.Bool",
+                    "usr": "s:Sb"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV010detectBothA0Sbvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV010detectBothA0Sbvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "minDetectionConfidence",
+            "printedName": "minDetectionConfidence",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Float",
+                "printedName": "Swift.Float",
+                "usr": "s:Sf"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV22minDetectionConfidenceSfvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV22minDetectionConfidenceSfvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Float",
+                    "printedName": "Swift.Float",
+                    "usr": "s:Sf"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV22minDetectionConfidenceSfvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV22minDetectionConfidenceSfvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "minTrackingConfidence",
+            "printedName": "minTrackingConfidence",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Float",
+                "printedName": "Swift.Float",
+                "usr": "s:Sf"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV21minTrackingConfidenceSfvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV21minTrackingConfidenceSfvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Float",
+                    "printedName": "Swift.Float",
+                    "usr": "s:Sf"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV21minTrackingConfidenceSfvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV21minTrackingConfidenceSfvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "handfilmMaxDuration",
+            "printedName": "handfilmMaxDuration",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Double",
+                "printedName": "Swift.Double",
+                "usr": "s:Sd"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV19handfilmMaxDurationSdvp",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV19handfilmMaxDurationSdvp",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Double",
+                    "printedName": "Swift.Double",
+                    "usr": "s:Sd"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV19handfilmMaxDurationSdvg",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV19handfilmMaxDurationSdvg",
+                "moduleName": "HandsRecognizingFramework",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Constructor",
+            "name": "init",
+            "printedName": "init(cameraIndex:targetFPS:detectBothHands:minDetectionConfidence:minTrackingConfidence:handfilmMaxDuration:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingConfig",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingConfig",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "hasDefaultArg": true,
+                "usr": "s:Si"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "hasDefaultArg": true,
+                "usr": "s:Si"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "hasDefaultArg": true,
+                "usr": "s:Sb"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Float",
+                "printedName": "Swift.Float",
+                "hasDefaultArg": true,
+                "usr": "s:Sf"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Float",
+                "printedName": "Swift.Float",
+                "hasDefaultArg": true,
+                "usr": "s:Sf"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Double",
+                "printedName": "Swift.Double",
+                "hasDefaultArg": true,
+                "usr": "s:Sd"
+              }
+            ],
+            "declKind": "Constructor",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV11cameraIndex9targetFPS010detectBothA022minDetectionConfidence0k8TrackingM019handfilmMaxDurationACSi_SiSbS2fSdtcfc",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV11cameraIndex9targetFPS010detectBothA022minDetectionConfidence0k8TrackingM019handfilmMaxDurationACSi_SiSbS2fSdtcfc",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl"
+            ],
+            "init_kind": "Designated"
+          },
+          {
+            "kind": "Var",
+            "name": "defaultConfig",
+            "printedName": "defaultConfig",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandsRecognizingConfig",
+                "printedName": "HandsRecognizingFramework.HandsRecognizingConfig",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV07defaultD0ACvpZ",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV07defaultD0ACvpZ",
+            "moduleName": "HandsRecognizingFramework",
+            "static": true,
+            "declAttributes": [
+              "HasInitialValue",
+              "HasStorage",
+              "AccessControl"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "HandsRecognizingConfig",
+                    "printedName": "HandsRecognizingFramework.HandsRecognizingConfig",
+                    "usr": "s:25HandsRecognizingFramework0aB6ConfigV"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:25HandsRecognizingFramework0aB6ConfigV07defaultD0ACvgZ",
+                "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV07defaultD0ACvgZ",
+                "moduleName": "HandsRecognizingFramework",
+                "static": true,
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "getHandLandmarkerOptions",
+            "printedName": "getHandLandmarkerOptions()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "HandLandmarkerOptions",
+                "printedName": "MediaPipeTasksVision.HandLandmarkerOptions",
+                "usr": "c:objc(cs)MPPHandLandmarkerOptions"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:25HandsRecognizingFramework0aB6ConfigV24getHandLandmarkerOptionsSo07MPPHandgH0CyF",
+            "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV24getHandLandmarkerOptionsSo07MPPHandgH0CyF",
+            "moduleName": "HandsRecognizingFramework",
+            "declAttributes": [
+              "AccessControl"
+            ],
+            "funcSelfKind": "NonMutating"
+          }
+        ],
+        "declKind": "Struct",
+        "usr": "s:25HandsRecognizingFramework0aB6ConfigV",
+        "mangledName": "$s25HandsRecognizingFramework0aB6ConfigV",
+        "moduleName": "HandsRecognizingFramework",
+        "declAttributes": [
+          "AccessControl",
+          "RawDocComment"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          }
+        ]
+      }
+    ],
+    "json_format_version": 8
+  },
+  "ConstValues": [
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizing.swift",
+      "kind": "BooleanLiteral",
+      "offset": 328,
+      "length": 5,
+      "value": "false"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 281,
+      "length": 1,
+      "value": "0"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 307,
+      "length": 1,
+      "value": "1"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 321,
+      "length": 1,
+      "value": "2"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 334,
+      "length": 1,
+      "value": "3"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 348,
+      "length": 1,
+      "value": "4"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 374,
+      "length": 1,
+      "value": "5"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 388,
+      "length": 1,
+      "value": "6"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 402,
+      "length": 1,
+      "value": "7"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 416,
+      "length": 1,
+      "value": "8"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 443,
+      "length": 1,
+      "value": "9"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 458,
+      "length": 2,
+      "value": "10"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 474,
+      "length": 2,
+      "value": "11"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 490,
+      "length": 2,
+      "value": "12"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 516,
+      "length": 2,
+      "value": "13"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 530,
+      "length": 2,
+      "value": "14"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 544,
+      "length": 2,
+      "value": "15"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 558,
+      "length": 2,
+      "value": "16"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 585,
+      "length": 2,
+      "value": "17"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 600,
+      "length": 2,
+      "value": "18"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 615,
+      "length": 2,
+      "value": "19"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/MockData.swift",
+      "kind": "IntegerLiteral",
+      "offset": 630,
+      "length": 2,
+      "value": "20"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "IntegerLiteral",
+      "offset": 1053,
+      "length": 1,
+      "value": "0"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "IntegerLiteral",
+      "offset": 1081,
+      "length": 2,
+      "value": "30"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "BooleanLiteral",
+      "offset": 1117,
+      "length": 4,
+      "value": "true"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "FloatLiteral",
+      "offset": 1163,
+      "length": 3,
+      "value": "0.5"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "FloatLiteral",
+      "offset": 1207,
+      "length": 3,
+      "value": "0.5"
+    },
+    {
+      "filePath": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/iOS\/HandsRecognizingFramework\/HandsRecognizingFramework\/HandsRecognizingFramework\/Types.swift",
+      "kind": "FloatLiteral",
+      "offset": 1256,
+      "length": 3,
+      "value": "2.0"
+    }
+  ]
+}

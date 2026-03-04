@@ -1,48 +1,23 @@
 platform :ios, '15.0'
-workspace 'CameraGestures'
+use_frameworks! :linkage => :static
 
-project 'ModelTraining/HandGestureTypes/HandGestureTypes.xcodeproj'
-project 'HandsRecognizing/HandsRecognizing/HandsRecognizingModule.xcodeproj'
-project 'GestureModel/GestureModel/GestureModelModule.xcodeproj'
-project 'HandGestureRecognizing/HandGestureRecognizing/HandGestureRecognizingFramework.xcodeproj'
-project 'ModelTraining/ModelTraining/ModelTrainingApp.xcodeproj'
+# Declare all local pods for dependency resolution
+pod 'HandGestureTypes', :path => 'HandGestureTypes'
+pod 'HandsRecognizingModule', :path => 'HandsRecognizing'
+pod 'GestureModelModule', :path => 'GestureModel' 
+pod 'HandGestureRecognizingFramework', :path => 'HandGestureRecognizing'
 
-abstract_target 'CameraGestures' do
+target 'ModelTrainingApp' do
+  project 'ModelTraining/ModelTraining/ModelTrainingApp.xcodeproj'
   
-  target 'HandsRecognizingModule' do
-    project 'HandsRecognizing/HandsRecognizing/HandsRecognizingModule.xcodeproj'
-    use_frameworks!
-    pod 'MediaPipeTasksVision', '0.10.14'
-  end
-  
-  target 'GestureModelModule' do
-    project 'GestureModel/GestureModel/GestureModelModule.xcodeproj'
-    use_frameworks!
-  end
-  
-  target 'HandGestureRecognizingFramework' do
-    project 'HandGestureRecognizing/HandGestureRecognizing/HandGestureRecognizingFramework.xcodeproj'
-    use_frameworks!
-    pod 'MediaPipeTasksVision', '0.10.14'
-  end
-  
-  target 'ModelTrainingApp' do
-    project 'ModelTraining/ModelTraining/ModelTrainingApp.xcodeproj'
-    use_frameworks!
-    #pod 'MediaPipeTasksVision', '0.10.14'
-    # No MediaPipe here - gets it through framework dependencies
-  end
-  
-  target 'HandGestureTypes' do
-    project 'ModelTraining/HandGestureTypes/HandGestureTypes.xcodeproj'
-    use_frameworks!
-  end
+  # App uses the top-level pod that includes all dependencies
+  pod 'HandGestureRecognizingFramework', :path => 'HandGestureRecognizing'
+end
 
-  post_install do |installer|
-      installer.pods_project.targets.each do |target|
-        target.build_configurations.each do |config|
-          config.build_settings['ENABLE_BITCODE'] = 'NO'
-        end
-      end
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
     end
+  end
 end
