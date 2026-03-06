@@ -155,6 +155,92 @@ HandGestureTypes          (no dependencies)
 - **Training pipeline is incomplete end-to-end**: the `ModelTraining` UI allows data collection and labeling, but persistent storage and actual model training are not yet implemented.
 - **Gesture set is dynamic**: gestures are defined at runtime as `GestureDefinition` values (name + description + slug ID) managed by `GestureRegistry`. The registry persists to `<AppSupport>/gestures.json`. There is no longer a fixed compile-time enum. The ModelTrainingApp provides an "Add Gesture" sheet (accessible from the Training and Gestures tabs) to define new gestures at runtime.
 
+### Python Server (`/server`)
+
+The Python server is the training backend for the client-server architecture. The iOS app uploads labelled `HandFilm` examples to it, it trains a gesture recognition model, and serves the resulting `.tflite` file back to the device.
+
+**Location**: `/server`
+**Language**: Python 3.11
+**Framework**: FastAPI + uvicorn
+**Database**: SQLite via SQLAlchemy Core (async, `aiosqlite`)
+**Deployment**: Docker / docker-compose (data volume at `./data`)
+**Config**: `pydantic-settings` — all values overridable via `.env` (see `.env.example`)
+
+#### Server File Structure
+
+```
+server/
+├── main.py               — FastAPI app, CORS, DB init on startup
+├── config.py             — Settings (HOST, PORT, DATA_DIR, AUTO_TRAIN_THRESHOLD, TRAINER, …)
+├── database.py           — SQLAlchemy engine + table definitions (examples, models)
+├── models.py             — Pydantic schemas mirroring HandGestureTypes Swift structs
+├── training_state.py     — In-process training state singleton (idle/training/ready/failed)
+├── routers/
+│   ├── examples.py       — POST /examples, GET /examples/stats, DELETE /examples
+│   ├── training.py       — POST /train, GET /model/status + auto-train threshold logic
+│   └── model.py          — GET /model/download, GET /model/info, DELETE /model
+├── ml/
+│   ├── preprocessor.py   — HandFilm → (60, 126) numpy array + 256-feature summary vector
+│   ├── trainer_rf_mlp.py — Phase 1: shallow Keras MLP on stat features → .tflite (working)
+│   └── trainer_lstm.py   — Phase 2: Keras LSTM on full sequence → .tflite (stub)
+├── storage/
+│   ├── example_store.py  — SQLite CRUD for training examples
+│   └── model_store.py    — SQLite model registry; keeps last N versions on disk
+├── test_api.sh           — End-to-end smoke test script (see below)
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── .gitignore            — excludes data/ and .env
+```
+
+#### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness check |
+| `POST` | `/examples` | Upload one labelled `HandFilm`; triggers auto-train check |
+| `GET` | `/examples/stats` | Per-gesture example counts |
+| `DELETE` | `/examples` | Wipe all examples (add `?gesture_id=slug` to wipe one gesture) |
+| `POST` | `/train` | Trigger training immediately |
+| `GET` | `/model/status` | Poll training state + latest accuracy |
+| `GET` | `/model/download` | Download `gesture_model.tflite` |
+| `GET` | `/model/info` | Model metadata (accuracy, F1, confusion matrix, gesture list) |
+| `DELETE` | `/model` | Wipe all model versions and reset training state |
+
+Interactive docs available at `http://localhost:8000/docs` when the server is running.
+
+#### Running locally
+
+```bash
+cd server
+cp .env.example .env       # adjust if needed
+docker compose up --build
+```
+
+#### Smoke tests
+
+`server/test_api.sh` is a self-contained shell script that runs a full end-to-end test suite against a running server — from `/health` through uploading examples, triggering training, downloading the model, and wiping everything at the end.
+
+```bash
+cd server
+./test_api.sh                                    # localhost:8000
+./test_api.sh http://192.168.1.5:8000            # custom host
+./test_api.sh --verbose                          # show full JSON for every response
+./test_api.sh http://my-vps.com:8000 --verbose
+```
+
+#### Key Configuration Variables (`.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8000` | Bind port |
+| `DATA_DIR` | `data` | Root for SQLite DB, examples, and model files |
+| `AUTO_TRAIN_THRESHOLD` | `10` | Examples per gesture before auto-training fires |
+| `TRAINER` | `rf_mlp` | `rf_mlp` (MLP, working) or `lstm` (stub) |
+| `MAX_MODEL_VERSIONS` | `5` | Number of `.tflite` versions to retain on disk |
+
 ---
 
 ## Glossary

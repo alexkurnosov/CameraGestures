@@ -1,0 +1,15 @@
+# Uploaded training data and trained models — do not commit
+data/
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/

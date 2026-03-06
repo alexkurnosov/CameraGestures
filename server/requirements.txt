@@ -1,0 +1,20 @@
+# Web framework
+fastapi>=0.111
+uvicorn[standard]>=0.29
+
+# Settings
+pydantic>=2.0
+pydantic-settings>=2.0
+
+# Database
+sqlalchemy>=2.0
+aiosqlite>=0.20
+
+# ML — TensorFlow with Keras + tf.lite converter
+# tensorflow-cpu has no linux/arm64 wheel (Apple Silicon Docker).
+# The plain tensorflow package is CPU-only on ARM64 Linux by default.
+tensorflow>=2.16
+
+# Feature engineering / evaluation
+numpy>=1.26
+scikit-learn>=1.4
