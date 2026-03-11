@@ -582,29 +582,7 @@ class CameraPreviewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        setupCamera()
         setupOverlay()
-    }
-    
-    private func setupCamera() {
-        captureSession = AVCaptureSession()
-        
-        guard let captureSession = captureSession,
-              let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
-              let input = try? AVCaptureDeviceInput(device: camera) else {
-            return
-        }
-        
-        if captureSession.canAddInput(input) {
-            captureSession.addInput(input)
-        }
-        
-        previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
-        previewLayer?.videoGravity = .resizeAspectFill
-        
-        if let previewLayer = previewLayer {
-            view.layer.addSublayer(previewLayer)
-        }
     }
     
     private func setupOverlay() {
