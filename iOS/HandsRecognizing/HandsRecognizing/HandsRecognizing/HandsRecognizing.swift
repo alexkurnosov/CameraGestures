@@ -98,44 +98,6 @@ public class HandsRecognizing: NSObject {
         }
     }
     
-    // MARK: - Frame Processing
-    
-    /// Process a single frame using MediaPipe
-    public func processFrame(_ image: UIImage) throws {
-        guard isRunning else { 
-            throw HandsRecognizingError.processingError
-        }
-        
-        guard let landmarker = landmarker else {
-            throw HandsRecognizingError.initializationFailed
-        }
-        
-        // Convert UIImage to MPImage
-        let mpImage = try MPImage(uiImage: image)
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000) // MediaPipe expects milliseconds
-        
-        // Process with MediaPipe (async callback will handle results)
-        try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
-    }
-    
-    /// Process frame data directly
-    public func processFrameData(_ data: Data, width: Int, height: Int, channels: Int) throws {
-        guard isRunning else {
-            throw HandsRecognizingError.processingError
-        }
-        
-        guard let landmarker = landmarker else {
-            throw HandsRecognizingError.initializationFailed
-        }
-        
-        // Convert raw data to MPImage
-        let mpImage = try MPImage(pixelBuffer: createPixelBuffer(from: data, width: width, height: height, channels: channels))
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
-        
-        // Process with MediaPipe
-        try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
-    }
-    
     // MARK: - Status
     
     /// Check if tracking is currently running
