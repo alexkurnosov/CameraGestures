@@ -149,61 +149,6 @@ public class HandGestureRecognizing {
         currentStatus = .running
     }
     
-    // MARK: - Manual Processing
-    
-    /// Process a single image for gesture recognition
-    public func processImage(_ image: UIImage) async throws -> [DetectedGesture] {
-        guard isInitialized else {
-            throw HandGestureRecognizingError.notInitialized
-        }
-        
-        let startTime = Date().timeIntervalSince1970
-        
-        do {
-            // Process with hands recognizing
-            try handsRecognizer.processFrame(image)
-            
-            // Wait a moment for processing (in real implementation this would be synchronous)
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
-            
-            // For manual processing, return recent detected gestures
-            let recentGestures = detectedGestures.filter { 
-                startTime - $0.detectionTimestamp < 1.0 
-            }
-            
-            return recentGestures
-            
-        } catch {
-            throw HandGestureRecognizingError.processingError(error.localizedDescription)
-        }
-    }
-    
-    /// Process frame data directly
-    public func processFrameData(_ data: Data, width: Int, height: Int, channels: Int) async throws -> [DetectedGesture] {
-        guard isInitialized else {
-            throw HandGestureRecognizingError.notInitialized
-        }
-        
-        let startTime = Date().timeIntervalSince1970
-        
-        do {
-            // Process with hands recognizing
-            try handsRecognizer.processFrameData(data, width: width, height: height, channels: channels)
-            
-            // Wait for processing
-            try await Task.sleep(nanoseconds: 50_000_000)
-            
-            // Return recent gestures
-            let recentGestures = detectedGestures.filter { 
-                startTime - $0.detectionTimestamp < 1.0 
-            }
-            
-            return recentGestures
-            
-        } catch {
-            throw HandGestureRecognizingError.processingError(error.localizedDescription)
-        }
-    }
     
     // MARK: - Status and Statistics
     
