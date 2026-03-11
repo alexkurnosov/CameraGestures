@@ -139,6 +139,8 @@ public class HandsRecognizing: NSObject {
             throw HandsRecognizingError.initializationFailed
         }
         
+        videoOutput.alwaysDiscardsLateVideoFrames = false
+        
         processingQueue = DispatchQueue(label: "com.cameragestures.processing", qos: .userInitiated)
         videoOutput.setSampleBufferDelegate(self, queue: processingQueue)
         
