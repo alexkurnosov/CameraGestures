@@ -536,7 +536,9 @@ struct CameraView: View {
         }
 
         gestureRecognizer.recognizer.handTrackingUpdateCallback = { handshot in
+            let callbackTime = Date().timeIntervalSince1970
             DispatchQueue.main.async {
+                //print(String(format: "<<--render_timing-->> handshot_received=%.4f", callbackTime))
                 recognitionHandPoints = handshot.landmarks
             }
         }
@@ -640,14 +642,20 @@ class CameraPreviewController: UIViewController {
 
 class HandTrackingOverlayView: UIView {
     private var handPoints: [Point3D] = []
-    
+    private var pointsReceivedTime: TimeInterval = 0
+    private var framesRendered: Int = 0
+
     func updatePoints(_ points: [Point3D]) {
         handPoints = points
+        pointsReceivedTime = Date().timeIntervalSince1970
         setNeedsDisplay()
     }
     
     override func draw(_ rect: CGRect) {
+        let drawTime = Date().timeIntervalSince1970
         guard let context = UIGraphicsGetCurrentContext(), !handPoints.isEmpty else { return }
+        framesRendered += 1
+        //print(String(format: "<<--render_timing-->> frame=%d  draw_start=%.4f  render_lag=%.4f s", framesRendered, drawTime, drawTime - pointsReceivedTime))
         
         context.setStrokeColor(UIColor.green.cgColor)
         context.setLineWidth(2.0)

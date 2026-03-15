@@ -231,8 +231,8 @@ public class HandGestureRecognizing {
             guard let self = self else { return }
 
             let processStart = Date().timeIntervalSince1970
-            let lag = processStart - handshot.timestamp
-            print(String(format: "<<--frame_timing-->> currentTime=%.4f  frameTime=%.4f  lag=%.4f s", processStart, handshot.timestamp, lag))
+            //let lag = processStart - handshot.timestamp
+            //print(String(format: "<<--frame_timing-->> currentTime=%.4f  frameTime=%.4f  lag=%.4f s", processStart, handshot.timestamp, lag))
 
             // Add to recent handshots buffer
             self.recentHandshots.append(handshot)
@@ -252,8 +252,8 @@ public class HandGestureRecognizing {
                 self.performRealTimeGestureRecognition()
             }
 
-            let processingDuration = Date().timeIntervalSince1970 - processStart
-            print(String(format: "<<--frame_timing-->> processingDuration=%.4f s", processingDuration))
+            //let processingDuration = Date().timeIntervalSince1970 - processStart
+            //print(String(format: "<<--frame_timing-->> processingDuration=%.4f s", processingDuration))
         }
     }
     
