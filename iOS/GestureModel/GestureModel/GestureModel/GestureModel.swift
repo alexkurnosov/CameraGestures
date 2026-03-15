@@ -1,5 +1,6 @@
 import Foundation
 import HandGestureTypes
+import TensorFlowLite
 
 /// Neural network abstraction layer for gesture classification.
 public class GestureModel {
@@ -10,6 +11,7 @@ public class GestureModel {
     private var isModelLoaded = false
     private var mockBackend: MockGestureBackend?
     private var supportedGestureIds: [String] = []
+    private var tfliteInterpreter: Interpreter?
 
     // MARK: - Initialization
 
@@ -179,18 +181,61 @@ public class GestureModel {
         }
     }
 
-    // MARK: - TensorFlow Lite Backend (stubbed — inference wired in TFLiteBackend.swift)
+    // MARK: - TensorFlow Lite Backend
 
     private func loadTensorFlowModel(from path: String) throws {
-        isModelLoaded = true
+        do {
+            let interpreter = try Interpreter(modelPath: path)
+            try interpreter.allocateTensors()
+            tfliteInterpreter = interpreter
+        } catch {
+            throw GestureModelError.predictionFailed
+        }
     }
 
     private func saveTensorFlowModel(to path: String) throws {}
 
     private func predictWithTensorFlow(handfilm: HandFilm, k: Int) throws -> [GesturePrediction] {
-        return Array(MockData.mockPredictions()
-            .filter { $0.confidence >= config.predictionThreshold }
-            .prefix(k))
+        guard let interpreter = tfliteInterpreter else {
+            throw GestureModelError.modelNotLoaded
+        }
+        guard !supportedGestureIds.isEmpty else { return [] }
+
+        let features = FeaturePreprocessor.featureMatrix(from: handfilm)
+        var floatFeatures = features.map { Float($0) }
+
+        let inputByteCount = floatFeatures.count * MemoryLayout<Float>.size
+        let inputData = Data(bytes: &floatFeatures, count: inputByteCount)
+
+        do {
+            try interpreter.copy(inputData, toInputAt: 0)
+            try interpreter.invoke()
+
+            let outputTensor = try interpreter.output(at: 0)
+            let outputData = outputTensor.data
+            let outputCount = outputData.count / MemoryLayout<Float>.size
+
+            let probabilities: [Float] = outputData.withUnsafeBytes { rawBuffer in
+                Array(rawBuffer.bindMemory(to: Float.self))
+            }
+
+            guard outputCount == supportedGestureIds.count else {
+                throw GestureModelError.predictionFailed
+            }
+
+            let timestamp = Date().timeIntervalSince1970
+            let predictions = probabilities.enumerated().compactMap { (index, confidence) -> GesturePrediction? in
+                guard confidence >= config.predictionThreshold else { return nil }
+                let gestureId = supportedGestureIds[index]
+                return GesturePrediction(gestureId: gestureId, gestureName: gestureId, confidence: confidence, timestamp: timestamp)
+            }
+
+            return Array(predictions.sorted { $0.confidence > $1.confidence }.prefix(k))
+        } catch let e as GestureModelError {
+            throw e
+        } catch {
+            throw GestureModelError.predictionFailed
+        }
     }
 
     private func trainWithTensorFlow(dataset: TrainingDataset) throws -> ModelMetrics {
