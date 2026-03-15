@@ -1,5 +1,5 @@
 import Foundation
-import HandsRecognizingModule
+@_exported import HandsRecognizingModule
 import GestureModelModule
 import HandGestureTypes
 
@@ -126,6 +126,7 @@ public typealias HandTrackingUpdateCallback = (HandShot) -> Void
 
 /// Callback for system status changes
 public typealias StatusChangeCallback = (GestureRecognizingStatus) -> Void
+
 
 // MARK: - System Status
 

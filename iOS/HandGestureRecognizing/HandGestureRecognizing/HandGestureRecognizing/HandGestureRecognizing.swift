@@ -31,6 +31,12 @@ public class HandGestureRecognizing {
     public var gestureDetectionCallback: GestureDetectionCallback?
     public var handTrackingUpdateCallback: HandTrackingUpdateCallback?
     public var statusChangeCallback: StatusChangeCallback?
+
+    /// Called for every individual handshot received from the camera.
+    public var handshotCallback: HandShotCallback?
+
+    /// Called whenever a completed handfilm is produced.
+    public var handfilmCallback: HandFilmCallback?
     
     private var currentStatus: GestureRecognizingStatus = .idle {
         didSet {
@@ -210,18 +216,24 @@ public class HandGestureRecognizing {
         // Handle individual handshots
         handsRecognizer.handshotCallback = { [weak self] handshot in
             self?.handleHandshot(handshot)
+            self?.handshotCallback?(handshot)
         }
         
         // Handle completed handfilms
         handsRecognizer.handfilmCallback = { [weak self] handfilm in
             self?.handleHandfilm(handfilm)
+            self?.handfilmCallback?(handfilm)
         }
     }
     
     private func handleHandshot(_ handshot: HandShot) {
         handshotQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
+            let processStart = Date().timeIntervalSince1970
+            let lag = processStart - handshot.timestamp
+            print(String(format: "<<--frame_timing-->> currentTime=%.4f  frameTime=%.4f  lag=%.4f s", processStart, handshot.timestamp, lag))
+
             // Add to recent handshots buffer
             self.recentHandshots.append(handshot)
             
@@ -239,6 +251,9 @@ public class HandGestureRecognizing {
             if self.config.enableRealTimeProcessing && self.recentHandshots.count >= 3 {
                 self.performRealTimeGestureRecognition()
             }
+
+            let processingDuration = Date().timeIntervalSince1970 - processStart
+            print(String(format: "<<--frame_timing-->> processingDuration=%.4f s", processingDuration))
         }
     }
     

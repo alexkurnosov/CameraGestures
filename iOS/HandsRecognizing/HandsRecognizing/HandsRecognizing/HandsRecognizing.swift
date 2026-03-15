@@ -168,11 +168,9 @@ public class HandsRecognizing: NSObject {
             throw HandsRecognizingError.initializationFailed
         }
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        isRunning = true
+        DispatchQueue.global(qos: .userInitiated).async {
             captureSession.startRunning()
-            DispatchQueue.main.async {
-                self?.isRunning = captureSession.isRunning
-            }
         }
     }
     

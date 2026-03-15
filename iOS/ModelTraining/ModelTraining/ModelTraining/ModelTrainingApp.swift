@@ -1,6 +1,5 @@
 import SwiftUI
 import HandGestureTypes
-import HandsRecognizingModule
 import GestureModelModule
 import HandGestureRecognizingFramework
 import Combine
@@ -247,7 +246,7 @@ class GestureRecognizerWrapper: ObservableObject {
 
 /// Drives a repeating series of HandFilm captures for training data collection.
 /// Each iteration: countdown → recording window → pause → repeat.
-/// Uses HandsRecognizing directly, bypassing gesture classification entirely.
+/// Subscribes to handshotCallback/handfilmCallback on the shared HandGestureRecognizing instance.
 @MainActor
 class TrainingSeriesCoordinator: ObservableObject {
 
@@ -268,7 +267,7 @@ class TrainingSeriesCoordinator: ObservableObject {
     @Published var capturedCount: Int = 0
     @Published var handTrackingPoints: [Point3D] = []
 
-    private var handsRecognizer: HandsRecognizing?
+    private weak var gestureRecognizer: HandGestureRecognizing?
     private var seriesTask: Task<Void, Never>?
     private var latestFilm = HandFilm()
     private var filmReady = false
@@ -278,24 +277,18 @@ class TrainingSeriesCoordinator: ObservableObject {
 
     // MARK: - Start / Stop
 
-    func start(captureWindow: TimeInterval, pauseInterval: TimeInterval, onFilmCaptured: @escaping (HandFilm) -> Void) {
+    func start(
+        using recognizer: HandGestureRecognizing,
+        captureWindow: TimeInterval,
+        pauseInterval: TimeInterval,
+        onFilmCaptured: @escaping (HandFilm) -> Void
+    ) {
         stop()
+        self.gestureRecognizer = recognizer
         self.captureWindow = captureWindow
         self.pauseInterval = pauseInterval
         self.onFilmCaptured = onFilmCaptured
         capturedCount = 0
-
-        let recognizer = HandsRecognizing()
-        handsRecognizer = recognizer
-
-        do {
-            try recognizer.initialize(config: HandsRecognizingConfig(
-                handfilmMaxDuration: captureWindow
-            ))
-        } catch {
-            print("[TrainingSeriesCoordinator] initialize error: \(error)")
-            return
-        }
 
         recognizer.handshotCallback = { [weak self] handshot in
             DispatchQueue.main.async {
@@ -309,22 +302,15 @@ class TrainingSeriesCoordinator: ObservableObject {
             }
         }
 
-        do {
-            try recognizer.start()
-        } catch {
-            print("[TrainingSeriesCoordinator] start error: \(error)")
-            handsRecognizer = nil
-            return
-        }
-
         seriesTask = Task { await self.runLoop() }
     }
 
     func stop() {
         seriesTask?.cancel()
         seriesTask = nil
-        handsRecognizer?.stop()
-        handsRecognizer = nil
+        gestureRecognizer?.handshotCallback = nil
+        gestureRecognizer?.handfilmCallback = nil
+        gestureRecognizer = nil
         phase = .idle
         handTrackingPoints = []
     }

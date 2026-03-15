@@ -2,7 +2,6 @@ import SwiftUI
 import AVFoundation
 import GestureModelModule
 import HandGestureTypes
-import HandsRecognizingModule
 import HandGestureRecognizingFramework
 
 struct CameraView: View {
@@ -485,14 +484,26 @@ struct CameraView: View {
     private func startTrainingSeries() {
         guard let gesture = trainingDataManager.selectedGesture else { return }
         trainingDataManager.startDataCollection(for: gesture)
-        seriesCoordinator.start(captureWindow: captureWindow, pauseInterval: pauseInterval) { film in
-            let example = TrainingExample(
-                handfilm: film,
-                gestureId: gesture.id,
-                userId: "current_user",
-                sessionId: UUID().uuidString
-            )
-            trainingDataManager.addTrainingExample(example)
+
+        Task {
+            if !gestureRecognizer.recognizer.isActive {
+                do {
+                    try await gestureRecognizer.recognizer.start()
+                } catch {
+                    print("Failed to start recognizer for training: \(error)")
+                    trainingDataManager.stopDataCollection()
+                    return
+                }
+            }
+            seriesCoordinator.start(using: gestureRecognizer.recognizer, captureWindow: captureWindow, pauseInterval: pauseInterval) { film in
+                let example = TrainingExample(
+                    handfilm: film,
+                    gestureId: gesture.id,
+                    userId: "current_user",
+                    sessionId: UUID().uuidString
+                )
+                trainingDataManager.addTrainingExample(example)
+            }
         }
     }
 

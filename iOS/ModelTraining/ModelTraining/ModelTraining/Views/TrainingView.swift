@@ -1,7 +1,6 @@
 import SwiftUI
 import HandGestureTypes
 import GestureModelModule
-import HandsRecognizingModule
 import HandGestureRecognizingFramework
 
 struct TrainingView: View {

@@ -1,6 +1,5 @@
 import SwiftUI
 import HandGestureTypes
-import HandsRecognizingModule
 import GestureModelModule
 import HandGestureRecognizingFramework
 
