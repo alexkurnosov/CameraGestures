@@ -201,8 +201,7 @@ public class GestureModel {
         }
         guard !supportedGestureIds.isEmpty else { return [] }
 
-        let features = FeaturePreprocessor.featureMatrix(from: handfilm)
-        var floatFeatures = features.map { Float($0) }
+        var floatFeatures = FeaturePreprocessor.summaryFeatures(from: handfilm)
 
         let inputByteCount = floatFeatures.count * MemoryLayout<Float>.size
         let inputData = Data(bytes: &floatFeatures, count: inputByteCount)
