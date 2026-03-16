@@ -23,7 +23,7 @@ Pod::Spec.new do |spec|
   
   # Dependencies
   spec.dependency 'HandGestureTypes', '0.1.0'
-  spec.dependency 'TensorFlowLiteSwift', '~> 2.13.0'
+  spec.dependency 'TensorFlowLiteSwift', '~> 2.17'
   
   # Framework settings
   spec.requires_arc     = true
