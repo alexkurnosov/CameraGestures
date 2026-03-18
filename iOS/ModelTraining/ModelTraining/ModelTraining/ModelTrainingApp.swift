@@ -140,6 +140,38 @@ class TrainingDataManager: ObservableObject {
         trainingExamples = dataset.examples
     }
 
+    // MARK: - Example Mutation
+
+    func deleteExample(id: UUID) {
+        trainingExamples.removeAll { $0.id == id }
+        pendingExamples.removeAll { $0.id == id }
+        currentDataset?.removeExample(id: id)
+    }
+
+    func relabelExample(id: UUID, newGestureId: String) {
+        if let idx = trainingExamples.firstIndex(where: { $0.id == id }) {
+            let old = trainingExamples[idx]
+            trainingExamples[idx] = TrainingExample(
+                id: old.id,
+                handfilm: old.handfilm,
+                gestureId: newGestureId,
+                userId: old.userId,
+                sessionId: old.sessionId
+            )
+        }
+        if let idx = pendingExamples.firstIndex(where: { $0.id == id }) {
+            let old = pendingExamples[idx]
+            pendingExamples[idx] = TrainingExample(
+                id: old.id,
+                handfilm: old.handfilm,
+                gestureId: newGestureId,
+                userId: old.userId,
+                sessionId: old.sessionId
+            )
+        }
+        currentDataset?.relabelExample(id: id, newGestureId: newGestureId)
+    }
+
     /// All dataset names currently saved on disk.
     func savedDatasetNames() -> [String] {
         let dir = datasetsDirectory()
@@ -413,6 +445,7 @@ struct HandFilmDTO: Codable {
 }
 
 struct TrainingExampleDTO: Codable {
+    let id: UUID
     let handfilm: HandFilmDTO
     let gestureId: String
     let userId: String?
@@ -420,6 +453,7 @@ struct TrainingExampleDTO: Codable {
     let timestamp: TimeInterval
 
     init(from example: TrainingExample) {
+        id = example.id
         handfilm = HandFilmDTO(from: example.handfilm)
         gestureId = example.gestureId
         userId = example.userId
@@ -429,6 +463,7 @@ struct TrainingExampleDTO: Codable {
 
     func toTrainingExample() -> TrainingExample {
         TrainingExample(
+            id: id,
             handfilm: handfilm.toHandFilm(),
             gestureId: gestureId,
             userId: userId,

@@ -62,8 +62,16 @@ struct TrainingView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("New Dataset") {
-                        showingNewDatasetAlert = true
+                    HStack(spacing: 4) {
+                        NavigationLink(destination: HandFilmsView()
+                            .environmentObject(trainingDataManager)
+                            .environmentObject(gestureRegistry)
+                        ) {
+                            Image(systemName: "film.stack")
+                        }
+                        Button("New Dataset") {
+                            showingNewDatasetAlert = true
+                        }
                     }
                 }
             }

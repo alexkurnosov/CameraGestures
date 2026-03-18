@@ -431,6 +431,26 @@ struct CameraView: View {
             .disabled(trainingDataManager.pendingExamples.isEmpty || trainingDataManager.isSendingToServer)
 
             uploadStatusRow
+
+            NavigationLink(destination: HandFilmsView()
+                .environmentObject(trainingDataManager)
+                .environmentObject(gestureRegistry)
+            ) {
+                HStack(spacing: 6) {
+                    Image(systemName: "film.stack")
+                    Text("View Collected Films (\(trainingDataManager.trainingExamples.count))")
+                        .font(.subheadline)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .foregroundColor(.primary)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(Color.gray.opacity(0.08))
+                .cornerRadius(10)
+            }
         }
     }
 
@@ -638,6 +658,24 @@ class CameraPreviewController: UIViewController {
     }
 }
 
+// MARK: - Hand Skeleton SwiftUI View
+
+/// Reusable SwiftUI wrapper around HandTrackingOverlayView.
+/// Pass 21 Point3D landmarks; pass an empty array to show a blank canvas.
+struct HandSkeletonView: UIViewRepresentable {
+    var points: [Point3D]
+
+    func makeUIView(context: Context) -> HandTrackingOverlayView {
+        let view = HandTrackingOverlayView()
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: HandTrackingOverlayView, context: Context) {
+        uiView.updatePoints(points)
+    }
+}
+
 // MARK: - Hand Tracking Overlay
 
 class HandTrackingOverlayView: UIView {
@@ -676,14 +714,12 @@ class HandTrackingOverlayView: UIView {
         
         context.strokePath()
         
-        // Draw hand skeleton connections (simplified)
         drawHandConnections(context: context, rect: rect)
     }
     
     private func drawHandConnections(context: CGContext, rect: CGRect) {
         guard handPoints.count >= 21 else { return }
         
-        // Define hand landmark connections
         let connections: [(Int, Int)] = [
             // Thumb
             (0, 1), (1, 2), (2, 3), (3, 4),
