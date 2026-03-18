@@ -105,15 +105,17 @@ public struct GestureDefinition: Codable, Identifiable, Equatable {
 // MARK: - Training Data
 
 /// Training example for gesture recognition
-public struct TrainingExample {
+public struct TrainingExample: Identifiable {
+    public let id: UUID
     public let handfilm: HandFilm
     /// ID of the gesture being demonstrated (matches `GestureDefinition.id`)
-    public let gestureId: String
+    public var gestureId: String
     public let userId: String?
     public let sessionId: String
     public let timestamp: TimeInterval
     
-    public init(handfilm: HandFilm, gestureId: String, userId: String? = nil, sessionId: String) {
+    public init(id: UUID = UUID(), handfilm: HandFilm, gestureId: String, userId: String? = nil, sessionId: String) {
+        self.id = id
         self.handfilm = handfilm
         self.gestureId = gestureId
         self.userId = userId
@@ -136,6 +138,23 @@ public struct TrainingDataset {
     
     public mutating func addExample(_ example: TrainingExample) {
         examples.append(example)
+    }
+
+    public mutating func removeExample(id: UUID) {
+        examples.removeAll { $0.id == id }
+    }
+
+    public mutating func relabelExample(id: UUID, newGestureId: String) {
+        if let idx = examples.firstIndex(where: { $0.id == id }) {
+            let old = examples[idx]
+            examples[idx] = TrainingExample(
+                id: old.id,
+                handfilm: old.handfilm,
+                gestureId: newGestureId,
+                userId: old.userId,
+                sessionId: old.sessionId
+            )
+        }
     }
 
     /// Number of examples recorded per gesture ID
