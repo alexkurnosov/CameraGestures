@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from config import settings
-from models import ModelStatusResponse, TrainingJobResponse
+from models import ModelStatusResponse, TrainingJobResponse, TriggerTrainingRequest
 from storage.example_store import count_all_by_gesture, load_all_examples
 from storage.model_store import save_model
 from training_state import training_state
@@ -19,7 +19,7 @@ router = APIRouter(tags=["training"])
 
 
 @router.post("/train", response_model=TrainingJobResponse)
-async def trigger_training() -> TrainingJobResponse:
+async def trigger_training(body: TriggerTrainingRequest = TriggerTrainingRequest()) -> TrainingJobResponse:
     """Kick off a training job in the background (regardless of threshold)."""
     async with training_state._lock:
         if training_state.is_running():
@@ -29,6 +29,7 @@ async def trigger_training() -> TrainingJobResponse:
         job_id = str(uuid.uuid4())
         training_state.job_id = job_id
         training_state.status = "training"
+        training_state.min_in_view_duration = body.min_in_view_duration
         training_state.error = None
 
     asyncio.create_task(_run_training(job_id))
@@ -79,6 +80,9 @@ async def _run_training(job_id: str) -> None:
     the event loop during heavy Keras/TF computation.
     """
     loop = asyncio.get_running_loop()
+    # Snapshot the threshold before entering the thread so we don't need the lock there.
+    async with training_state._lock:
+        min_in_view = training_state.min_in_view_duration
     try:
         result: dict[str, Any] = await loop.run_in_executor(None, _train_sync)
         async with training_state._lock:
@@ -89,6 +93,8 @@ async def _run_training(job_id: str) -> None:
                 training_state.gesture_ids = result["gesture_ids"]
                 training_state.trained_at = result.get("trained_at")
                 training_state.error = None
+        # Persist min_in_view_duration alongside the model record.
+        result["min_in_view_duration"] = min_in_view
     except Exception as exc:
         async with training_state._lock:
             if training_state.job_id == job_id:
@@ -121,6 +127,7 @@ def _train_sync() -> dict[str, Any]:
             trainer=settings.trainer,
             trained_on=result["trained_on"],
             metrics=result["metrics"],
+            min_in_view_duration=result.get("min_in_view_duration"),
         )
     )
     result["trained_at"] = __import__("time").time()

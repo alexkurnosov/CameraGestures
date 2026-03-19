@@ -57,6 +57,7 @@ async def model_info() -> ModelInfoResponse:
         accuracy=metrics.get("accuracy"),
         f1=metrics.get("f1_weighted"),
         confusion_matrix=metrics.get("confusion_matrix"),
+        min_in_view_duration=model.get("min_in_view_duration"),
     )
 
 
@@ -76,4 +77,5 @@ async def wipe_models() -> dict:
         training_state.gesture_ids = []
         training_state.trained_at = None
         training_state.error = None
+        training_state.min_in_view_duration = 1.2
     return {"deleted_models": deleted}

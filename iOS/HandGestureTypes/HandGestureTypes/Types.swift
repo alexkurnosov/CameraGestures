@@ -22,40 +22,82 @@ public struct Point3D {
     }
 }
 
-/// Single frame of hand landmarks
+/// Single frame of hand landmarks.
+/// When `isAbsent` is `true` the hand was not detected in this frame;
+/// `landmarks` will be 21 zero-valued points used as a placeholder.
 public struct HandShot {
     public let landmarks: [Point3D]
     public let timestamp: TimeInterval
     public let leftOrRight: LeftOrRight
-    
-    public init(landmarks: [Point3D], timestamp: TimeInterval, leftOrRight: LeftOrRight) {
+    /// `true` when no hand was detected in this frame (all landmarks are zero).
+    public let isAbsent: Bool
+
+    public init(
+        landmarks: [Point3D],
+        timestamp: TimeInterval,
+        leftOrRight: LeftOrRight,
+        isAbsent: Bool = false
+    ) {
         self.landmarks = landmarks
         self.timestamp = timestamp
         self.leftOrRight = leftOrRight
+        self.isAbsent = isAbsent
+    }
+
+    /// A placeholder HandShot representing a frame where no hand was visible.
+    public static func absent(timestamp: TimeInterval) -> HandShot {
+        let zeroPoints = (0..<21).map { _ in Point3D(x: 0, y: 0, z: 0) }
+        return HandShot(landmarks: zeroPoints, timestamp: timestamp, leftOrRight: .unknown, isAbsent: true)
     }
 }
 
-/// Sequence of handshots representing a gesture
+/// Sequence of handshots representing a gesture.
+/// Frames where the hand left the camera view are stored with `isAbsent = true`
+/// so the temporal structure of the session is preserved.
 public struct HandFilm {
     public var frames: [HandShot]
     public let startTime: TimeInterval
+
     public var endTime: TimeInterval {
         frames.last?.timestamp ?? startTime
     }
-    
-    public var duration: TimeInterval {
+
+    /// Total wall-clock length of the session (first frame → last frame).
+    public var gestureDuration: TimeInterval {
         endTime - startTime
     }
-    
+
+    /// Backward-compatible alias for `gestureDuration`.
+    public var duration: TimeInterval { gestureDuration }
+
+    /// Total time the hand was actually visible (sum of inter-frame intervals
+    /// between consecutive non-absent frames).
+    public var inViewDuration: TimeInterval {
+        let visible = frames.filter { !$0.isAbsent }
+        guard visible.count >= 2 else {
+            return visible.isEmpty ? 0 : 0
+        }
+        var total: TimeInterval = 0
+        for i in 1..<visible.count {
+            total += visible[i].timestamp - visible[i - 1].timestamp
+        }
+        return total
+    }
+
+    /// Number of frames where the hand was detected.
+    public var inViewFrameCount: Int {
+        frames.filter { !$0.isAbsent }.count
+    }
+
     public init(startTime: TimeInterval = Date().timeIntervalSince1970) {
         self.frames = []
         self.startTime = startTime
     }
-    
+
     public mutating func addFrame(_ handshot: HandShot) {
         frames.append(handshot)
     }
-    
+
     public mutating func clear() {
         frames.removeAll()
     }
@@ -161,6 +203,82 @@ public struct TrainingDataset {
     public var gestureCount: [String: Int] {
         return Dictionary(grouping: examples) { $0.gestureId }
             .mapValues { $0.count }
+    }
+}
+
+// MARK: - HandFilm Validation
+
+/// Why a captured HandFilm was rejected as a training example.
+///
+/// Stored as a raw string so older clients can deserialise values introduced by
+/// newer app versions without crashing — unknown strings become `.unknown(rawValue)`.
+public enum HandFilmFailureReason: Equatable {
+    case insufficientInViewDuration
+    case unknown(String)
+
+    public var rawValue: String {
+        switch self {
+        case .insufficientInViewDuration: return "insufficientInViewDuration"
+        case .unknown(let s):             return s
+        }
+    }
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "insufficientInViewDuration": self = .insufficientInViewDuration
+        default:                           self = .unknown(rawValue)
+        }
+    }
+
+    /// Human-readable description shown in the UI.
+    public var displayName: String {
+        switch self {
+        case .insufficientInViewDuration: return "Hand not visible long enough"
+        case .unknown(let s):             return "Unknown reason (\(s))"
+        }
+    }
+}
+
+extension HandFilmFailureReason: Codable {
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self.init(rawValue: raw)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// A HandFilm that did not meet the quality threshold for training.
+/// Stored locally only; never uploaded to the server.
+public struct FailedHandFilm: Identifiable {
+    public let id: UUID
+    public let handfilm: HandFilm
+    public let gestureId: String
+    public let failureReason: HandFilmFailureReason
+    /// Human-readable detail, e.g. "0.4s in-view, need ≥1.2s"
+    public let failureDetail: String
+    public let timestamp: TimeInterval
+    /// `true` when the user has manually overridden the failure and promoted
+    /// this film to a valid training example.
+    public var isManuallyValidated: Bool
+
+    public init(
+        id: UUID = UUID(),
+        handfilm: HandFilm,
+        gestureId: String,
+        failureReason: HandFilmFailureReason,
+        failureDetail: String,
+        isManuallyValidated: Bool = false
+    ) {
+        self.id = id
+        self.handfilm = handfilm
+        self.gestureId = gestureId
+        self.failureReason = failureReason
+        self.failureDetail = failureDetail
+        self.timestamp = Date().timeIntervalSince1970
+        self.isManuallyValidated = isManuallyValidated
     }
 }
 

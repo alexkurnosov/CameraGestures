@@ -46,6 +46,7 @@ struct TrainingView: View {
                     collectionControlsSection
                     trainingDataSummarySection
                     trainingControlsSection
+                    inViewThresholdSection
                     serverControlsSection
                     dangerZoneSection
                 }
@@ -437,6 +438,65 @@ struct TrainingView: View {
 
     // MARK: - Server Controls Section
 
+    // MARK: - In-View Threshold Section
+
+    private var inViewThresholdSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Recording Quality")
+                    .font(.headline)
+                Spacer()
+                if appSettings.isThresholdLocked {
+                    Label("Locked", systemImage: "lock.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.12))
+                        .cornerRadius(6)
+                }
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Min. in-view duration")
+                        .font(.subheadline)
+                    Text("Minimum seconds the hand must be visible in a capture window")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 6) {
+                    Text(String(format: "%.1fs", appSettings.minInViewDuration))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(appSettings.isThresholdLocked ? .secondary : .primary)
+                        .frame(width: 38, alignment: .trailing)
+                    Stepper(
+                        "",
+                        value: $appSettings.minInViewDuration,
+                        in: 0.2...10.0,
+                        step: 0.1
+                    )
+                    .labelsHidden()
+                    .disabled(appSettings.isThresholdLocked)
+                }
+            }
+
+            if appSettings.isThresholdLocked {
+                Text("Locked after first training job. Wipe the server model to unlock.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else {
+                Text("This value will be locked when you start server training.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .background(Color.yellow.opacity(0.06))
+        .cornerRadius(8)
+    }
+
     private var serverControlsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -718,8 +778,10 @@ struct TrainingView: View {
     private func triggerServerTraining() {
         Task {
             do {
-                let job = try await apiClient.triggerTraining()
+                let job = try await apiClient.triggerTraining(minInViewDuration: appSettings.minInViewDuration)
                 print("[TrainingView] Training job started: \(job.jobId)")
+                // Lock the in-view threshold now that the first training job has fired.
+                appSettings.lockThresholdIfNeeded()
                 startPollingStatus()
             } catch {
                 await MainActor.run {
@@ -759,6 +821,8 @@ struct TrainingView: View {
                 await MainActor.run {
                     serverStatus = nil
                     appSettings.updateModelConfig()
+                    // Unlock the in-view threshold so the user can reconfigure before retraining.
+                    appSettings.isThresholdLocked = false
                 }
             } catch {
                 await MainActor.run {

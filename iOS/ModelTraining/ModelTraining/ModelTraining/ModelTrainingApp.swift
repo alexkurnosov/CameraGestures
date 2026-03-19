@@ -50,6 +50,9 @@ class TrainingDataManager: ObservableObject {
     @Published var pendingExamples: [TrainingExample] = []
     @Published var isSendingToServer = false
 
+    /// Films that failed the quality threshold. Stored locally only; never uploaded.
+    @Published var failedExamples: [FailedHandFilm] = []
+
     weak var apiClient: GestureModelAPIClient?
 
     // MARK: - Data Collection
@@ -72,6 +75,33 @@ class TrainingDataManager: ObservableObject {
             currentDataset?.addExample(example)
         }
         objectWillChange.send()
+    }
+
+    // MARK: - Failed Film Management
+
+    /// Store a film that did not meet quality requirements. Never added to `pendingExamples`.
+    func addFailedFilm(_ film: FailedHandFilm) {
+        failedExamples.append(film)
+    }
+
+    /// Promote a failed film to a valid training example (manual override).
+    func validateFailedFilm(id: UUID) {
+        guard let idx = failedExamples.firstIndex(where: { $0.id == id }) else { return }
+        var film = failedExamples[idx]
+        film.isManuallyValidated = true
+        failedExamples.remove(at: idx)
+        let example = TrainingExample(
+            handfilm: film.handfilm,
+            gestureId: film.gestureId,
+            userId: nil,
+            sessionId: UUID().uuidString
+        )
+        addTrainingExample(example)
+    }
+
+    /// Permanently delete a failed film.
+    func deleteFailedFilm(id: UUID) {
+        failedExamples.removeAll { $0.id == id }
     }
 
     /// Upload all pending examples to the server (currently mocked).
@@ -229,6 +259,36 @@ class AppSettings: ObservableObject {
     @Published var cameraConfig = HandsRecognizingConfig.defaultConfig
     @Published var modelConfig = GestureModelConfig.defaultConfig
 
+    // MARK: - In-view threshold
+
+    private static let minInViewDurationKey = "minInViewDuration"
+    private static let isThresholdLockedKey = "isThresholdLocked"
+
+    /// Minimum seconds the hand must be visible within a capture window for the
+    /// resulting HandFilm to be accepted as a training example.
+    /// Defaults to 1.2s; locked after the first successful training job.
+    @Published var minInViewDuration: TimeInterval {
+        didSet { UserDefaults.standard.set(minInViewDuration, forKey: Self.minInViewDurationKey) }
+    }
+
+    /// Once `true`, `minInViewDuration` cannot be changed from the UI.
+    /// Locked when the first `POST /train` succeeds.
+    @Published var isThresholdLocked: Bool {
+        didSet { UserDefaults.standard.set(isThresholdLocked, forKey: Self.isThresholdLockedKey) }
+    }
+
+    init() {
+        let stored = UserDefaults.standard.double(forKey: Self.minInViewDurationKey)
+        minInViewDuration = stored > 0 ? stored : 1.2
+        isThresholdLocked = UserDefaults.standard.bool(forKey: Self.isThresholdLockedKey)
+    }
+
+    /// Call after the first training job fires to permanently lock the threshold.
+    func lockThresholdIfNeeded() {
+        guard !isThresholdLocked else { return }
+        isThresholdLocked = true
+    }
+
     func updateCameraConfig() {
         cameraConfig = HandsRecognizingConfig(
             cameraIndex: preferredCamera,
@@ -278,7 +338,10 @@ class GestureRecognizerWrapper: ObservableObject {
 
 /// Drives a repeating series of HandFilm captures for training data collection.
 /// Each iteration: countdown → recording window → pause → repeat.
-/// Subscribes to handshotCallback/handfilmCallback on the shared HandGestureRecognizing instance.
+///
+/// At the end of each recording window the accumulated film is harvested and
+/// evaluated against `minInViewDuration`. Films that pass are delivered to
+/// `onFilmCaptured`; films that fail are delivered to `onFilmFailed`.
 @MainActor
 class TrainingSeriesCoordinator: ObservableObject {
 
@@ -286,6 +349,8 @@ class TrainingSeriesCoordinator: ObservableObject {
     var captureWindow: TimeInterval = 1.0
     var pauseInterval: TimeInterval = 5.0
     var countdownDuration: Int = 3
+    /// Minimum seconds of non-absent frames required for a film to be valid.
+    var minInViewDuration: TimeInterval = 1.2
 
     // MARK: - Capture phase
     enum Phase: Equatable {
@@ -297,13 +362,15 @@ class TrainingSeriesCoordinator: ObservableObject {
 
     @Published var phase: Phase = .idle
     @Published var capturedCount: Int = 0
+    @Published var failedCount: Int = 0
     @Published var handTrackingPoints: [Point3D] = []
+    /// `true` during the recording phase when the most recent frame had no hand.
+    @Published var isHandAbsent: Bool = false
 
     private weak var gestureRecognizer: HandGestureRecognizing?
     private var seriesTask: Task<Void, Never>?
-    private var latestFilm = HandFilm()
-    private var filmReady = false
     private var onFilmCaptured: ((HandFilm) -> Void)?
+    private var onFilmFailed: ((FailedHandFilm, String) -> Void)?
 
     var isRunning: Bool { phase != .idle }
 
@@ -313,28 +380,29 @@ class TrainingSeriesCoordinator: ObservableObject {
         using recognizer: HandGestureRecognizing,
         captureWindow: TimeInterval,
         pauseInterval: TimeInterval,
-        onFilmCaptured: @escaping (HandFilm) -> Void
+        minInViewDuration: TimeInterval,
+        gestureId: String,
+        onFilmCaptured: @escaping (HandFilm) -> Void,
+        onFilmFailed: @escaping (FailedHandFilm, String) -> Void
     ) {
         stop()
         self.gestureRecognizer = recognizer
         self.captureWindow = captureWindow
         self.pauseInterval = pauseInterval
+        self.minInViewDuration = minInViewDuration
         self.onFilmCaptured = onFilmCaptured
+        self.onFilmFailed = onFilmFailed
         capturedCount = 0
+        failedCount = 0
 
         recognizer.handshotCallback = { [weak self] handshot in
             DispatchQueue.main.async {
                 self?.handTrackingPoints = handshot.landmarks
-            }
-        }
-        recognizer.handfilmCallback = { [weak self] film in
-            DispatchQueue.main.async {
-                self?.latestFilm = film
-                self?.filmReady = true
+                self?.isHandAbsent = handshot.isAbsent
             }
         }
 
-        seriesTask = Task { await self.runLoop() }
+        seriesTask = Task { await self.runLoop(gestureId: gestureId) }
     }
 
     func stop() {
@@ -345,11 +413,12 @@ class TrainingSeriesCoordinator: ObservableObject {
         gestureRecognizer = nil
         phase = .idle
         handTrackingPoints = []
+        isHandAbsent = false
     }
 
     // MARK: - Series Loop
 
-    private func runLoop() async {
+    private func runLoop(gestureId: String) async {
         while !Task.isCancelled {
             // --- Countdown ---
             for remaining in stride(from: countdownDuration, through: 1, by: -1) {
@@ -360,22 +429,18 @@ class TrainingSeriesCoordinator: ObservableObject {
             guard !Task.isCancelled else { return }
 
             // --- Recording ---
-            // Reset the handfilm buffer so frames accumulated during countdown/pause
-            // don't contaminate this capture window.
+            // Reset the buffer so countdown/pause frames don't contaminate the capture.
             gestureRecognizer?.resetHandfilm()
             phase = .recording
-            filmReady = false
+            isHandAbsent = false
 
-            let deadline = Date().addingTimeInterval(captureWindow + 0.5)
-            while !filmReady && Date() < deadline && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 100_000_000) // poll every 100ms
-            }
+            // Sleep for the full capture window, then harvest whatever was recorded.
+            let windowNs = UInt64(captureWindow * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: windowNs)
             guard !Task.isCancelled else { return }
 
-            if filmReady {
-                capturedCount += 1
-                onFilmCaptured?(latestFilm)
-            }
+            let film = gestureRecognizer?.harvestHandfilm() ?? HandFilm()
+            evaluateAndDispatch(film: film, gestureId: gestureId)
 
             // --- Pause ---
             let pauseSecs = Int(pauseInterval)
@@ -386,6 +451,27 @@ class TrainingSeriesCoordinator: ObservableObject {
             }
         }
         phase = .idle
+    }
+
+    private func evaluateAndDispatch(film: HandFilm, gestureId: String) {
+        let inView = film.inViewDuration
+        if inView >= minInViewDuration {
+            capturedCount += 1
+            onFilmCaptured?(film)
+        } else {
+            failedCount += 1
+            let detail = String(
+                format: "%.1fs in-view, need ≥%.1fs (gesture: %.1fs total)",
+                inView, minInViewDuration, film.gestureDuration
+            )
+            let failed = FailedHandFilm(
+                handfilm: film,
+                gestureId: gestureId,
+                failureReason: .insufficientInViewDuration,
+                failureDetail: detail
+            )
+            onFilmFailed?(failed, gestureId)
+        }
     }
 }
 
@@ -408,10 +494,12 @@ struct HandShotDTO: Codable {
     let landmarks: [Point3DDTO]
     let timestamp: TimeInterval
     let leftOrRight: String   // "left" | "right" | "unknown"
+    let isAbsent: Bool
 
     init(from handShot: HandShot) {
         landmarks = handShot.landmarks.map { Point3DDTO(from: $0) }
         timestamp = handShot.timestamp
+        isAbsent = handShot.isAbsent
         leftOrRight = {
             switch handShot.leftOrRight {
             case .left: return "left"
@@ -426,7 +514,8 @@ struct HandShotDTO: Codable {
         return HandShot(
             landmarks: landmarks.map { $0.toPoint3D() },
             timestamp: timestamp,
-            leftOrRight: side
+            leftOrRight: side,
+            isAbsent: isAbsent
         )
     }
 }

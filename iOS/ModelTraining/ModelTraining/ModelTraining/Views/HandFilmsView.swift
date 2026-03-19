@@ -12,6 +12,11 @@ struct HandFilmsView: View {
     @State private var currentFrameIndex: Int = 0
     @State private var isPlaying = false
     @State private var playTimer: Timer? = nil
+    @State private var showFailedFilms = false
+    @State private var failedFilmToValidate: FailedHandFilm? = nil
+    @State private var showingValidateAlert = false
+    @State private var failedFilmToDelete: FailedHandFilm? = nil
+    @State private var showingFailedDeleteAlert = false
 
     // MARK: - Derived data
 
@@ -58,13 +63,17 @@ struct HandFilmsView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            if filteredExamples.isEmpty {
-                emptyState
-            } else {
-                skeletonSection
-                Divider()
-                bottomPanel
+        ScrollView {
+            VStack(spacing: 0) {
+                if filteredExamples.isEmpty {
+                    emptyState
+                } else {
+                    skeletonSection
+                    Divider()
+                    bottomPanel
+                }
+
+                failedFilmsSection
             }
         }
         .navigationTitle("Collected Films")
@@ -100,6 +109,28 @@ struct HandFilmsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This HandFilm will be permanently removed from the local collection.")
+        }
+        .alert("Mark as Valid?", isPresented: $showingValidateAlert) {
+            Button("Mark as Valid", role: .none) {
+                if let film = failedFilmToValidate {
+                    trainingDataManager.validateFailedFilm(id: film.id)
+                    failedFilmToValidate = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { failedFilmToValidate = nil }
+        } message: {
+            Text("This film will be added to your training collection despite not meeting the quality threshold.")
+        }
+        .alert("Delete Failed Film?", isPresented: $showingFailedDeleteAlert) {
+            Button("Delete", role: .destructive) {
+                if let film = failedFilmToDelete {
+                    trainingDataManager.deleteFailedFilm(id: film.id)
+                    failedFilmToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { failedFilmToDelete = nil }
+        } message: {
+            Text("This failed film will be permanently removed.")
         }
     }
 
@@ -164,9 +195,14 @@ struct HandFilmsView: View {
                 Spacer()
 
                 if let film = currentFilm {
-                    Text(String(format: "%.0f ms", film.duration * 1000))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text(String(format: "%.2fs total", film.gestureDuration))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.2fs in-view", film.inViewDuration))
+                            .font(.caption2)
+                            .foregroundColor(film.inViewDuration < film.gestureDuration * 0.6 ? .orange : .secondary)
+                    }
                 }
             }
         }
@@ -356,6 +392,55 @@ struct HandFilmsView: View {
         currentFrameIndex = 0
     }
 
+    // MARK: - Failed Films Section
+
+    private var failedFilmsSection: some View {
+        let failed = trainingDataManager.failedExamples
+            .filter { filterGestureId == nil || $0.gestureId == filterGestureId }
+
+        return VStack(spacing: 0) {
+            if !failed.isEmpty {
+                Divider().padding(.top, 8)
+
+                Button {
+                    withAnimation { showFailedFilms.toggle() }
+                } label: {
+                    HStack {
+                        Image(systemName: showFailedFilms ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                        Text("Failed Films (\(failed.count))")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.orange)
+                        Spacer()
+                        Text("Not sent to server")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.plain)
+
+                if showFailedFilms {
+                    ForEach(failed) { film in
+                        FailedFilmRow(
+                            film: film,
+                            gestureName: gestureRegistry.gestures.first { $0.id == film.gestureId }?.name ?? film.gestureId
+                        ) {
+                            failedFilmToValidate = film
+                            showingValidateAlert = true
+                        } onDelete: {
+                            failedFilmToDelete = film
+                            showingFailedDeleteAlert = true
+                        }
+                        Divider().padding(.leading)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func relativeTime(_ timestamp: TimeInterval) -> String {
@@ -364,6 +449,71 @@ struct HandFilmsView: View {
         if diff < 3600 { return "\(Int(diff / 60))m ago" }
         if diff < 86400 { return "\(Int(diff / 3600))h ago" }
         return "\(Int(diff / 86400))d ago"
+    }
+}
+
+// MARK: - Failed Film Row
+
+private struct FailedFilmRow: View {
+    let film: FailedHandFilm
+    let gestureName: String
+    let onValidate: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Orange failure badge
+            VStack(spacing: 2) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                    .font(.subheadline)
+                Text("Failed")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+            .frame(width: 44)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(gestureName)
+                    .font(.subheadline.weight(.medium))
+                Text(film.failureReason.displayName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(film.failureDetail)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            // Actions
+            VStack(spacing: 6) {
+                Button(action: onValidate) {
+                    Text("Validate")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.green)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.green.opacity(0.12))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDelete) {
+                    Text("Delete")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.red.opacity(0.10))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
     }
 }
 

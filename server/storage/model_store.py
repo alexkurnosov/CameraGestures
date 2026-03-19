@@ -17,6 +17,7 @@ async def save_model(
     trainer: str,
     trained_on: int,
     metrics: dict | None = None,
+    min_in_view_duration: float | None = None,
 ) -> str:
     """
     Register a new model version. Prunes old versions to keep at most
@@ -36,6 +37,7 @@ async def save_model(
                 trainer=trainer,
                 trained_on=trained_on,
                 trained_at=time.time(),
+                min_in_view_duration=min_in_view_duration,
             )
         )
         await _prune(conn)
@@ -105,6 +107,7 @@ def _row_to_dict(row) -> dict:
         "trainer": row["trainer"],
         "trained_on": row["trained_on"],
         "trained_at": row["trained_at"],
+        "min_in_view_duration": row["min_in_view_duration"],
     }
 
 

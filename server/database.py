@@ -42,6 +42,9 @@ models_table = sa.Table(
     sa.Column("trainer", sa.String, nullable=False),
     sa.Column("trained_on", sa.Integer, nullable=False),
     sa.Column("trained_at", sa.Float, nullable=False),
+    # Minimum in-view duration (seconds) used when training examples were collected.
+    # Null for models trained before this feature was introduced.
+    sa.Column("min_in_view_duration", sa.Float, nullable=True),
 )
 
 

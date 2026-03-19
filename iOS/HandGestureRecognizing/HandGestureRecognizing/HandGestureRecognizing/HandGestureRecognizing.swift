@@ -191,6 +191,12 @@ public class HandGestureRecognizing {
         handsRecognizer.resetHandfilm()
     }
 
+    /// Return the accumulated handfilm and reset the buffer atomically.
+    /// Call this at the end of a capture window to get exactly what was recorded.
+    public func harvestHandfilm() -> HandFilm {
+        handsRecognizer.harvestHandfilm()
+    }
+
     /// Load (or reload) the gesture model from a file path without restarting the recognizer.
     /// Call this after downloading a new model from the server.
     public func loadModel(from path: String, gestureIds: [String] = []) throws {

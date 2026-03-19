@@ -15,6 +15,7 @@ class HandShot(BaseModel):
     landmarks: list[Point3D]  # always 21
     timestamp: float
     left_or_right: str  # "left" | "right" | "unknown"
+    is_absent: bool = False  # True when no hand was detected (zero landmarks placeholder)
 
 
 class HandFilm(BaseModel):
@@ -60,6 +61,10 @@ class ModelStatusResponse(BaseModel):
     error: str | None = None
 
 
+class TriggerTrainingRequest(BaseModel):
+    min_in_view_duration: float = 1.2
+
+
 class ModelInfoResponse(BaseModel):
     model_id: str
     trainer: str
@@ -69,3 +74,4 @@ class ModelInfoResponse(BaseModel):
     accuracy: float | None = None
     f1: float | None = None
     confusion_matrix: list[list[int]] | None = None
+    min_in_view_duration: float | None = None

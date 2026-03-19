@@ -175,24 +175,51 @@ struct CameraView: View {
             .cornerRadius(16)
 
         case .recording:
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 12, height: 12)
-                    .opacity(recPulse ? 1 : 0.25)
-                    .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recPulse)
-                    .onAppear { recPulse = true }
-                    .onDisappear { recPulse = false }
-                Text("REC — Perform gesture")
-                    .font(.subheadline.weight(.semibold))
+            VStack(spacing: 6) {
+                // Hand-absence warning (top of frame)
+                if seriesCoordinator.isHandAbsent {
+                    HStack(spacing: 6) {
+                        Image(systemName: "hand.raised.slash.fill")
+                            .font(.caption.weight(.semibold))
+                        Text("Hand not visible")
+                            .font(.caption.weight(.semibold))
+                    }
                     .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.85))
+                    .cornerRadius(10)
+                    .transition(.opacity)
+                }
+
+                Spacer()
+
+                // REC pill + stats (bottom of frame)
+                VStack(spacing: 4) {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 12, height: 12)
+                            .opacity(recPulse ? 1 : 0.25)
+                            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: recPulse)
+                            .onAppear { recPulse = true }
+                            .onDisappear { recPulse = false }
+                        Text("REC — Perform gesture")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                    }
+                    Text("Captured: \(seriesCoordinator.capturedCount)  Failed: \(seriesCoordinator.failedCount)")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.red.opacity(0.75))
+                .cornerRadius(12)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(Color.red.opacity(0.75))
-            .cornerRadius(12)
-            .padding(.bottom, 12)
-            .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .animation(.easeInOut(duration: 0.2), value: seriesCoordinator.isHandAbsent)
 
         case .pause(let remaining):
             VStack(spacing: 4) {
@@ -202,7 +229,7 @@ struct CameraView: View {
                 Text("\(remaining)s")
                     .font(.system(size: 40, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
-                Text("Captured: \(seriesCoordinator.capturedCount)")
+                Text("Captured: \(seriesCoordinator.capturedCount)  Failed: \(seriesCoordinator.failedCount)")
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.75))
             }
@@ -226,8 +253,15 @@ struct CameraView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "film.stack")
                         .foregroundColor(.blue)
-                    Text("Captured: \(seriesCoordinator.capturedCount)")
-                        .font(.subheadline.weight(.medium))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Captured: \(seriesCoordinator.capturedCount)")
+                            .font(.subheadline.weight(.medium))
+                        if seriesCoordinator.failedCount > 0 {
+                            Text("Failed: \(seriesCoordinator.failedCount)")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                    }
                     Spacer()
                     phasePill
                 }
@@ -515,15 +549,25 @@ struct CameraView: View {
                     return
                 }
             }
-            seriesCoordinator.start(using: gestureRecognizer.recognizer, captureWindow: captureWindow, pauseInterval: pauseInterval) { film in
-                let example = TrainingExample(
-                    handfilm: film,
-                    gestureId: gesture.id,
-                    userId: "current_user",
-                    sessionId: UUID().uuidString
-                )
-                trainingDataManager.addTrainingExample(example)
-            }
+            seriesCoordinator.start(
+                using: gestureRecognizer.recognizer,
+                captureWindow: captureWindow,
+                pauseInterval: pauseInterval,
+                minInViewDuration: appSettings.minInViewDuration,
+                gestureId: gesture.id,
+                onFilmCaptured: { film in
+                    let example = TrainingExample(
+                        handfilm: film,
+                        gestureId: gesture.id,
+                        userId: "current_user",
+                        sessionId: UUID().uuidString
+                    )
+                    trainingDataManager.addTrainingExample(example)
+                },
+                onFilmFailed: { failedFilm, _ in
+                    trainingDataManager.addFailedFilm(failedFilm)
+                }
+            )
         }
     }
 

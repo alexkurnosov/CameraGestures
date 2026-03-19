@@ -21,6 +21,7 @@ class TrainingState:
     gesture_ids: list[str] = field(default_factory=list)
     trained_at: Optional[float] = None
     error: Optional[str] = None
+    min_in_view_duration: float = 1.2
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     def is_running(self) -> bool:

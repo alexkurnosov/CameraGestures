@@ -38,6 +38,30 @@ struct TrainingJobResponse: Codable {
     }
 }
 
+struct ModelInfoResponse: Codable {
+    let modelId: String
+    let trainer: String
+    let trainedOn: Int
+    let trainedAt: TimeInterval
+    let gestureIds: [String]
+    let accuracy: Double?
+    let f1: Double?
+    let confusionMatrix: [[Int]]?
+    let minInViewDuration: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case modelId = "model_id"
+        case trainer
+        case trainedOn = "trained_on"
+        case trainedAt = "trained_at"
+        case gestureIds = "gesture_ids"
+        case accuracy
+        case f1
+        case confusionMatrix = "confusion_matrix"
+        case minInViewDuration = "min_in_view_duration"
+    }
+}
+
 struct ModelStatusResponse: Codable {
     let status: String          // "idle" | "training" | "ready" | "failed"
     let accuracy: Double?
@@ -134,7 +158,7 @@ class GestureModelAPIClient: ObservableObject {
 
     // MARK: - Trigger Training
 
-    func triggerTraining() async throws -> TrainingJobResponse {
+    func triggerTraining(minInViewDuration: Double = 1.2) async throws -> TrainingJobResponse {
         if Self.IS_MOCKING_SERVER {
             simulateLog("POST", path: "/train")
             return TrainingJobResponse(jobId: UUID().uuidString, status: "started")
@@ -142,8 +166,32 @@ class GestureModelAPIClient: ObservableObject {
 
         var request = URLRequest(url: baseURL.appendingPathComponent("train"))
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["min_in_view_duration": minInViewDuration]
+        request.httpBody = try? JSONEncoder().encode(body)
 
         return try await perform(request, decoding: TrainingJobResponse.self)
+    }
+
+    // MARK: - Model Info
+
+    func fetchModelInfo() async throws -> ModelInfoResponse {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("GET", path: "/model/info")
+            return ModelInfoResponse(
+                modelId: "mock",
+                trainer: "rf_mlp",
+                trainedOn: 0,
+                trainedAt: Date().timeIntervalSince1970,
+                gestureIds: [],
+                accuracy: nil,
+                f1: nil,
+                confusionMatrix: nil,
+                minInViewDuration: nil
+            )
+        }
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/info"))
+        return try await perform(request, decoding: ModelInfoResponse.self)
     }
 
     // MARK: - Model Status

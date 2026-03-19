@@ -95,12 +95,7 @@ public class HandsRecognizing: NSObject {
     public func stop() {
         isRunning = false
         stopCameraCapture()
-        
-        // Complete any pending handfilm
-        if !currentHandfilm.frames.isEmpty {
-            handfilmCallback?(currentHandfilm)
-            currentHandfilm = HandFilm()
-        }
+        currentHandfilm = HandFilm()
     }
     
     // MARK: - Status
@@ -204,54 +199,63 @@ public class HandsRecognizing: NSObject {
     }
     
     private func convertMediaPipeResults(_ result: HandLandmarkerResult, timestamp: TimeInterval) {
+        if result.landmarks.isEmpty {
+            // No hands detected — insert an absent frame to preserve temporal structure.
+            // Only insert if a session is already in progress (at least one real frame exists).
+            if !currentHandfilm.frames.isEmpty {
+                processAbsentFrame(timestamp: timestamp)
+            }
+            return
+        }
+
         // Process each detected hand
         for (handIndex, landmarks) in result.landmarks.enumerated() {
-            // Convert MediaPipe landmarks to our Point3D format
             let convertedLandmarks = landmarks.map { landmark in
                 Point3D(
                     x: landmark.x,
                     y: landmark.y,
-                    z: landmark.z ?? 0.0 // MediaPipe z might be nil
+                    z: landmark.z ?? 0.0
                 )
             }
-            
-            // Determine hand side (left/right)
+
             let handedness: LeftOrRight
             if handIndex < result.handedness.count,
-               let firstHandedness = result.handedness[handIndex].first, let categoryName = firstHandedness.categoryName {
+               let firstHandedness = result.handedness[handIndex].first,
+               let categoryName = firstHandedness.categoryName {
                 handedness = categoryName.lowercased() == "left" ? .left : .right
             } else {
-                handedness = .right // Default fallback
+                handedness = .right
             }
-            
+
             let handshot = HandShot(
                 landmarks: convertedLandmarks,
                 timestamp: timestamp,
                 leftOrRight: handedness
             )
-            
+
             processHandshot(handshot)
         }
     }
-    
+
+    /// Insert a placeholder frame for a timestamp where no hand was detected.
+    private func processAbsentFrame(timestamp: TimeInterval) {
+        let absent = HandShot.absent(timestamp: timestamp)
+        currentHandfilm.addFrame(absent)
+    }
+
     private func processHandshot(_ handshot: HandShot) {
-        // Call handshot callback
         handshotCallback?(handshot)
 
-        // Anchor the film's startTime to the first real frame so warm-up
-        // delay between start() and the first MediaPipe result doesn't inflate duration.
+        // Anchor the film's startTime to the first real (non-absent) frame so
+        // warm-up delay between start() and the first MediaPipe result doesn't
+        // inflate gestureDuration.
         if currentHandfilm.frames.isEmpty {
             currentHandfilm = HandFilm(startTime: handshot.timestamp)
         }
 
-        // Add to current handfilm
         currentHandfilm.addFrame(handshot)
-        
-        // Check if handfilm is complete
-        if currentHandfilm.duration >= config.handfilmMaxDuration {
-            handfilmCallback?(currentHandfilm)
-            currentHandfilm = HandFilm()
-        }
+        // Duration-based auto-emit removed — the TrainingSeriesCoordinator now
+        // owns session boundaries and harvests the film via harvestHandfilm().
     }
     
     // MARK: - Camera Utilities
@@ -296,6 +300,14 @@ extension HandsRecognizing {
     /// countdown/pause phases don't contaminate the captured film.
     public func resetHandfilm() {
         currentHandfilm = HandFilm()
+    }
+
+    /// Return the accumulated film and immediately reset the buffer.
+    /// Call this at the end of a capture window to snapshot exactly what was recorded.
+    public func harvestHandfilm() -> HandFilm {
+        let film = currentHandfilm
+        currentHandfilm = HandFilm()
+        return film
     }
 }
 
