@@ -26,8 +26,8 @@ struct CameraView: View {
     @State private var showModelNotTrainedBanner = false
 
     // Training series config
-    @State private var captureWindow: TimeInterval = 1.0
-    @State private var pauseInterval: TimeInterval = 5.0
+    @State private var captureWindow: TimeInterval = 2.0
+    @State private var pauseInterval: TimeInterval = 2.0
 
     // Which hand tracking points to show on the preview
     private var displayPoints: [Point3D] {
