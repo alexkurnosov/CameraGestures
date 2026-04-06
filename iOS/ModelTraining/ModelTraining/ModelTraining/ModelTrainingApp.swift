@@ -55,6 +55,13 @@ class TrainingDataManager: ObservableObject {
 
     weak var apiClient: GestureModelAPIClient?
 
+    // MARK: - Init
+
+    init() {
+        loadPendingExamples()
+        loadFailedExamples()
+    }
+
     // MARK: - Data Collection
 
     func startDataCollection(for gesture: GestureDefinition) {
@@ -75,6 +82,7 @@ class TrainingDataManager: ObservableObject {
             currentDataset?.addExample(example)
         }
         objectWillChange.send()
+        savePendingExamples()
     }
 
     // MARK: - Failed Film Management
@@ -82,6 +90,7 @@ class TrainingDataManager: ObservableObject {
     /// Store a film that did not meet quality requirements. Never added to `pendingExamples`.
     func addFailedFilm(_ film: FailedHandFilm) {
         failedExamples.append(film)
+        saveFailedExamples()
     }
 
     /// Promote a failed film to a valid training example (manual override).
@@ -90,6 +99,7 @@ class TrainingDataManager: ObservableObject {
         var film = failedExamples[idx]
         film.isManuallyValidated = true
         failedExamples.remove(at: idx)
+        saveFailedExamples()
         let example = TrainingExample(
             handfilm: film.handfilm,
             gestureId: film.gestureId,
@@ -102,6 +112,7 @@ class TrainingDataManager: ObservableObject {
     /// Permanently delete a failed film.
     func deleteFailedFilm(id: UUID) {
         failedExamples.removeAll { $0.id == id }
+        saveFailedExamples()
     }
 
     /// Upload all pending examples to the server (currently mocked).
@@ -111,6 +122,7 @@ class TrainingDataManager: ObservableObject {
         uploadState = .uploading
         let batch = pendingExamples
         pendingExamples = []
+        savePendingExamples()
         Task.detached { [weak self, weak client] in
             guard let client else { return }
             var lastTotal = 0
@@ -176,6 +188,7 @@ class TrainingDataManager: ObservableObject {
         trainingExamples.removeAll { $0.id == id }
         pendingExamples.removeAll { $0.id == id }
         currentDataset?.removeExample(id: id)
+        savePendingExamples()
     }
 
     func relabelExample(id: UUID, newGestureId: String) {
@@ -200,6 +213,7 @@ class TrainingDataManager: ObservableObject {
             )
         }
         currentDataset?.relabelExample(id: id, newGestureId: newGestureId)
+        savePendingExamples()
     }
 
     /// All dataset names currently saved on disk.
@@ -216,6 +230,50 @@ class TrainingDataManager: ObservableObject {
             .sorted()
     }
 
+    // MARK: - Pending & Failed Persistence
+
+    func savePendingExamples() {
+        let url = pendingExamplesFileURL()
+        do {
+            let dtos = pendingExamples.map { TrainingExampleDTO(from: $0) }
+            let data = try JSONEncoder().encode(dtos)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("TrainingDataManager: failed to save pending examples — \(error)")
+        }
+    }
+
+    private func loadPendingExamples() {
+        let url = pendingExamplesFileURL()
+        guard let data = try? Data(contentsOf: url),
+              let dtos = try? JSONDecoder().decode([TrainingExampleDTO].self, from: data) else {
+            return
+        }
+        let examples = dtos.map { $0.toTrainingExample() }
+        pendingExamples = examples
+        trainingExamples = examples
+    }
+
+    func saveFailedExamples() {
+        let url = failedExamplesFileURL()
+        do {
+            let dtos = failedExamples.map { FailedHandFilmDTO(from: $0) }
+            let data = try JSONEncoder().encode(dtos)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("TrainingDataManager: failed to save failed examples — \(error)")
+        }
+    }
+
+    private func loadFailedExamples() {
+        let url = failedExamplesFileURL()
+        guard let data = try? Data(contentsOf: url),
+              let dtos = try? JSONDecoder().decode([FailedHandFilmDTO].self, from: data) else {
+            return
+        }
+        failedExamples = dtos.map { $0.toFailedHandFilm() }
+    }
+
     // MARK: - File Paths
 
     private func datasetsDirectory() -> URL {
@@ -225,6 +283,16 @@ class TrainingDataManager: ObservableObject {
 
     private func datasetFileURL(name: String) -> URL {
         datasetsDirectory().appendingPathComponent("\(name).json")
+    }
+
+    private func pendingExamplesFileURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pending_examples.json")
+    }
+
+    private func failedExamplesFileURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("failed_examples.json")
     }
 }
 
@@ -579,5 +647,36 @@ struct TrainingDatasetDTO: Codable {
         var dataset = TrainingDataset(name: name)
         examples.map { $0.toTrainingExample() }.forEach { dataset.addExample($0) }
         return dataset
+    }
+}
+
+struct FailedHandFilmDTO: Codable {
+    let id: UUID
+    let handfilm: HandFilmDTO
+    let gestureId: String
+    let failureReason: HandFilmFailureReason
+    let failureDetail: String
+    let timestamp: TimeInterval
+    let isManuallyValidated: Bool
+
+    init(from film: FailedHandFilm) {
+        id = film.id
+        handfilm = HandFilmDTO(from: film.handfilm)
+        gestureId = film.gestureId
+        failureReason = film.failureReason
+        failureDetail = film.failureDetail
+        timestamp = film.timestamp
+        isManuallyValidated = film.isManuallyValidated
+    }
+
+    func toFailedHandFilm() -> FailedHandFilm {
+        FailedHandFilm(
+            id: id,
+            handfilm: handfilm.toHandFilm(),
+            gestureId: gestureId,
+            failureReason: failureReason,
+            failureDetail: failureDetail,
+            isManuallyValidated: isManuallyValidated
+        )
     }
 }
