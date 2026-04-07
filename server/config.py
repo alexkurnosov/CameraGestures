@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Model versioning
     max_model_versions: int = 5
 
+    # Authentication — both fields are required (no default); server refuses to start if absent
+    jwt_secret: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_days: int = 365
+    registration_token: str
+
     @property
     def examples_dir(self) -> Path:
         return self.data_dir / "examples"

@@ -6,13 +6,17 @@ import HandGestureRecognizingFramework
 struct SettingsView: View {
     @EnvironmentObject var appSettings: AppSettings
     @EnvironmentObject var gestureRecognizer: GestureRecognizerWrapper
-    
+    @EnvironmentObject var apiClient: GestureModelAPIClient
+
     @State private var showingResetAlert = false
     @State private var showingAbout = false
     
     var body: some View {
         NavigationView {
             Form {
+                // Server Settings Section
+                serverSection
+
                 // Camera Settings Section
                 cameraSettingsSection
                 
@@ -48,7 +52,38 @@ struct SettingsView: View {
     }
     
     // MARK: - Settings Sections
-    
+
+    private var serverSection: some View {
+        Section("Server") {
+            HStack {
+                Image(systemName: "network")
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+                TextField("Server URL", text: Binding(
+                    get: { apiClient.baseURL.absoluteString },
+                    set: { if let url = URL(string: $0) { apiClient.baseURL = url } }
+                ))
+                .keyboardType(.URL)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            }
+
+            HStack {
+                Image(systemName: "key.fill")
+                    .foregroundColor(.orange)
+                    .frame(width: 24)
+                SecureField("Registration Token", text: $apiClient.registrationToken)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+
+            Button("Re-register Device") {
+                apiClient.clearToken()
+            }
+            .foregroundColor(.red)
+        }
+    }
+
     private var cameraSettingsSection: some View {
         Section("Camera") {
             // Preferred Camera
@@ -587,5 +622,6 @@ struct SettingsView_Previews: PreviewProvider {
             .environmentObject(AppSettings())
             .environmentObject(GestureRecognizerWrapper(recognizer: HandGestureRecognizing()))
             .environmentObject(GestureRegistry())
+            .environmentObject(GestureModelAPIClient())
     }
 }

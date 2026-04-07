@@ -7,7 +7,9 @@ import asyncio
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from auth import get_current_device
 
 from config import settings
 from models import ModelStatusResponse, TrainingJobResponse, TriggerTrainingRequest
@@ -19,7 +21,10 @@ router = APIRouter(tags=["training"])
 
 
 @router.post("/train", response_model=TrainingJobResponse)
-async def trigger_training(body: TriggerTrainingRequest = TriggerTrainingRequest()) -> TrainingJobResponse:
+async def trigger_training(
+    body: TriggerTrainingRequest = TriggerTrainingRequest(),
+    _: str = Depends(get_current_device),
+) -> TrainingJobResponse:
     """Kick off a training job in the background (regardless of threshold)."""
     async with training_state._lock:
         if training_state.is_running():
@@ -37,7 +42,7 @@ async def trigger_training(body: TriggerTrainingRequest = TriggerTrainingRequest
 
 
 @router.get("/model/status", response_model=ModelStatusResponse)
-async def model_status() -> ModelStatusResponse:
+async def model_status(_: str = Depends(get_current_device)) -> ModelStatusResponse:
     return ModelStatusResponse(
         status=training_state.status,
         accuracy=training_state.accuracy,

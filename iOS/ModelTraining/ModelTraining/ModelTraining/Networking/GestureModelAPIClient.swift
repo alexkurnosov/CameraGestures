@@ -103,9 +103,22 @@ class GestureModelAPIClient: ObservableObject {
         }
     }
 
+    @Published var registrationToken: String {
+        didSet {
+            UserDefaults.standard.set(registrationToken, forKey: Self.registrationTokenKey)
+        }
+    }
+
     private static let IS_MOCKING_SERVER = false
     private static let baseURLKey = "GestureModelAPIClient.baseURL"
     private static let defaultBaseURL = "http://192.168.0.107:8000"
+    private static let registrationTokenKey = "GestureModelAPIClient.registrationToken"
+    private static let deviceIdKey = "GestureModelAPIClient.deviceId"
+
+    /// Stable UUID identifying this app installation. Generated once and persisted.
+    private let deviceId: String
+
+    private let tokenStorage = TokenStorage()
 
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -125,6 +138,53 @@ class GestureModelAPIClient: ObservableObject {
     init() {
         let stored = UserDefaults.standard.string(forKey: Self.baseURLKey) ?? Self.defaultBaseURL
         baseURL = URL(string: stored) ?? URL(string: Self.defaultBaseURL)!
+
+        registrationToken = UserDefaults.standard.string(forKey: Self.registrationTokenKey) ?? ""
+
+        if let existingId = UserDefaults.standard.string(forKey: Self.deviceIdKey) {
+            deviceId = existingId
+        } else {
+            let newId = UUID().uuidString
+            UserDefaults.standard.set(newId, forKey: Self.deviceIdKey)
+            deviceId = newId
+        }
+    }
+
+    // MARK: - Auth
+
+    /// Clears the stored JWT so the next request triggers fresh registration.
+    func clearToken() {
+        tokenStorage.delete()
+    }
+
+    /// Ensures a valid JWT is stored in the Keychain.
+    /// If no token exists, calls POST /auth/register and saves the returned token.
+    private func ensureAuthenticated() async throws {
+        guard tokenStorage.load() == nil else { return }
+
+        guard !registrationToken.isEmpty else {
+            throw APIError.missingRegistrationToken
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("auth/register"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = ["device_id": deviceId, "registration_token": registrationToken]
+        request.httpBody = try encoder.encode(body)
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let detail = (try? JSONDecoder().decode(ServerErrorDetail.self, from: data))?.detail
+                ?? "Registration failed (HTTP \(code))"
+            throw APIError.httpError(statusCode: code, detail: detail)
+        }
+        struct TokenResponse: Decodable {
+            let accessToken: String
+            enum CodingKeys: String, CodingKey { case accessToken = "access_token" }
+        }
+        let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+        tokenStorage.save(tokenResponse.accessToken)
     }
 
     // MARK: - Upload Example
@@ -304,10 +364,21 @@ class GestureModelAPIClient: ObservableObject {
     }
 
     private func perform<T: Decodable>(_ request: URLRequest, decoding type: T.Type) async throws -> T {
-        let (data, response) = try await session.data(for: request)
+        try await ensureAuthenticated()
+
+        var authedRequest = request
+        if let token = tokenStorage.load() {
+            authedRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await session.data(for: authedRequest)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
+        }
+        if httpResponse.statusCode == 401 {
+            tokenStorage.delete()
+            throw APIError.unauthorized
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             let detail = (try? JSONDecoder().decode(ServerErrorDetail.self, from: data))?.detail ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
@@ -326,11 +397,17 @@ class GestureModelAPIClient: ObservableObject {
 
 enum APIError: LocalizedError {
     case httpError(statusCode: Int, detail: String)
+    case unauthorized
+    case missingRegistrationToken
 
     var errorDescription: String? {
         switch self {
         case .httpError(let code, let detail):
             return "Server error \(code): \(detail)"
+        case .unauthorized:
+            return "Token rejected by server. Please re-register in Settings."
+        case .missingRegistrationToken:
+            return "No registration token set. Enter it in Settings → Server."
         }
     }
 }
