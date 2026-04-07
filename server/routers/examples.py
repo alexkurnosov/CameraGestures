@@ -4,8 +4,9 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
+from auth import get_current_device
 from models import (
     ExampleStatsResponse,
     GestureStats,
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/examples", tags=["examples"])
 async def upload_example(
     payload: TrainingExamplePayload,
     background_tasks: BackgroundTasks,
+    _: str = Depends(get_current_device),
 ) -> UploadExampleResponse:
     """
     Store one labelled HandFilm.
@@ -45,7 +47,7 @@ async def upload_example(
 
 
 @router.get("/stats", response_model=ExampleStatsResponse)
-async def example_stats() -> ExampleStatsResponse:
+async def example_stats(_: str = Depends(get_current_device)) -> ExampleStatsResponse:
     counts = await count_all_by_gesture()
     gestures = [GestureStats(gesture_id=gid, count=cnt) for gid, cnt in counts.items()]
     return ExampleStatsResponse(gestures=gestures, total=sum(counts.values()))
@@ -57,6 +59,7 @@ async def wipe_examples(
         default=None,
         description="Delete only examples for this gesture slug. Omit to delete everything.",
     ),
+    _: str = Depends(get_current_device),
 ) -> dict:
     """
     Delete training examples.

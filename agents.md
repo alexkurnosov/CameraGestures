@@ -154,6 +154,7 @@ HandGestureTypes          (no dependencies)
 - **ML backends are currently stubbed**: `GestureModel` CoreML and TensorFlow Lite code paths exist but return mock data pending real model integration. The mock backend returns empty predictions (no heuristics).
 - **Training pipeline is incomplete end-to-end**: the `ModelTraining` UI allows data collection and labeling, but persistent storage and actual model training are not yet implemented.
 - **Gesture set is dynamic**: gestures are defined at runtime as `GestureDefinition` values (name + description + slug ID) managed by `GestureRegistry`. The registry persists to `<AppSupport>/gestures.json`. There is no longer a fixed compile-time enum. The ModelTrainingApp provides an "Add Gesture" sheet (accessible from the Training and Gestures tabs) to define new gestures at runtime.
+- **Server authentication**: `GestureModelAPIClient` implements per-device JWT auth. On first use it calls `POST /auth/register` with a `REGISTRATION_TOKEN` (entered in Settings → Server) and saves the returned JWT to the iOS Keychain via `TokenStorage`. All subsequent requests include `Authorization: Bearer <token>`. A `401` response clears the stored token. The Settings screen has a "Re-register Device" button that forces fresh registration.
 
 ### Python Server (`/server`)
 
@@ -172,10 +173,12 @@ The Python server is the training backend for the client-server architecture. Th
 server/
 ├── main.py               — FastAPI app, CORS, DB init on startup
 ├── config.py             — Settings (HOST, PORT, DATA_DIR, AUTO_TRAIN_THRESHOLD, TRAINER, …)
-├── database.py           — SQLAlchemy engine + table definitions (examples, models)
+├── auth.py               — JWT creation (create_access_token) + FastAPI dependency (get_current_device)
+├── database.py           — SQLAlchemy engine + table definitions (examples, models, devices)
 ├── models.py             — Pydantic schemas mirroring HandGestureTypes Swift structs
 ├── training_state.py     — In-process training state singleton (idle/training/ready/failed)
 ├── routers/
+│   ├── auth.py           — POST /auth/register (device registration → JWT)
 │   ├── examples.py       — POST /examples, GET /examples/stats, DELETE /examples
 │   ├── training.py       — POST /train, GET /model/status + auto-train threshold logic
 │   └── model.py          — GET /model/download, GET /model/info, DELETE /model
@@ -196,17 +199,20 @@ server/
 
 #### API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Liveness check |
-| `POST` | `/examples` | Upload one labelled `HandFilm`; triggers auto-train check |
-| `GET` | `/examples/stats` | Per-gesture example counts |
-| `DELETE` | `/examples` | Wipe all examples (add `?gesture_id=slug` to wipe one gesture) |
-| `POST` | `/train` | Trigger training immediately |
-| `GET` | `/model/status` | Poll training state + latest accuracy |
-| `GET` | `/model/download` | Download `gesture_model.tflite` |
-| `GET` | `/model/info` | Model metadata (accuracy, F1, confusion matrix, gesture list) |
-| `DELETE` | `/model` | Wipe all model versions and reset training state |
+| Method | Path | Auth required | Description |
+|--------|------|---------------|-------------|
+| `GET` | `/health` | No | Liveness check (open for Docker health probe) |
+| `POST` | `/auth/register` | No | Exchange the pre-shared `REGISTRATION_TOKEN` for a per-device JWT |
+| `POST` | `/examples` | Yes | Upload one labelled `HandFilm`; triggers auto-train check |
+| `GET` | `/examples/stats` | Yes | Per-gesture example counts |
+| `DELETE` | `/examples` | Yes | Wipe all examples (add `?gesture_id=slug` to wipe one gesture) |
+| `POST` | `/train` | Yes | Trigger training immediately |
+| `GET` | `/model/status` | Yes | Poll training state + latest accuracy |
+| `GET` | `/model/download` | Yes | Download `gesture_model.tflite` |
+| `GET` | `/model/info` | Yes | Model metadata (accuracy, F1, confusion matrix, gesture list) |
+| `DELETE` | `/model` | Yes | Wipe all model versions and reset training state |
+
+All protected endpoints require an `Authorization: Bearer <token>` header. Requests without a valid JWT receive `401 Unauthorized`.
 
 Interactive docs available at `http://localhost:8000/docs` when the server is running.
 
@@ -214,7 +220,9 @@ Interactive docs available at `http://localhost:8000/docs` when the server is ru
 
 ```bash
 cd server
-cp .env.example .env       # adjust if needed
+cp .env.example .env
+# Required: set JWT_SECRET and REGISTRATION_TOKEN before starting
+# e.g. JWT_SECRET=$(openssl rand -hex 32)
 docker compose up --build
 ```
 
@@ -240,6 +248,12 @@ cd server
 | `AUTO_TRAIN_THRESHOLD` | `10` | Examples per gesture before auto-training fires |
 | `TRAINER` | `rf_mlp` | `rf_mlp` (MLP, working) or `lstm` (stub) |
 | `MAX_MODEL_VERSIONS` | `5` | Number of `.tflite` versions to retain on disk |
+| `JWT_SECRET` | **required** | Long random string used to sign tokens (`openssl rand -hex 32`) |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `JWT_EXPIRE_DAYS` | `365` | Token lifetime in days |
+| `REGISTRATION_TOKEN` | **required** | Pre-shared secret the iOS app presents to obtain a JWT |
+
+`JWT_SECRET` and `REGISTRATION_TOKEN` have no defaults — the server refuses to start if either is missing from `.env`.
 
 ---
 

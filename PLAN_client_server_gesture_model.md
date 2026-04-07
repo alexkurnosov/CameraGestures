@@ -125,12 +125,16 @@ class TrainingExamplePayload(BaseModel):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/examples` | Upload one `TrainingExamplePayload`. Saved to `data/examples/<gesture_id>/<uuid>.json`. Returns `{ "id": "<uuid>", "total_for_gesture": N }`. |
-| `GET` | `/examples/stats` | Returns per-gesture example counts and total. Used by the app to show server-side data summary. |
+| `GET` | `/health` | Liveness check — no auth required. |
+| `POST` | `/auth/register` | Exchange the pre-shared `REGISTRATION_TOKEN` for a per-device JWT. No auth required to call this. |
+| `POST` | `/examples` | Upload one `TrainingExamplePayload`. Returns `{ "id": "<uuid>", "total_for_gesture": N }`. |
+| `GET` | `/examples/stats` | Returns per-gesture example counts and total. |
 | `POST` | `/train` | Trigger training immediately (regardless of threshold). Runs as a background task. Returns `{ "job_id": "...", "status": "started" }`. |
 | `GET` | `/model/status` | Returns `{ "status": "idle|training|ready|failed", "accuracy": float|null, "trained_on": N, "gesture_ids": [...], "trained_at": timestamp|null, "error": str|null }`. |
-| `GET` | `/model/download` | Returns the latest `.tflite` binary file. 404 if no model trained yet. Sets `Content-Disposition: attachment; filename="gesture_model.tflite"`. |
+| `GET` | `/model/download` | Returns the latest `.tflite` binary file. 404 if no model trained yet. |
 | `GET` | `/model/info` | Returns model metadata (accuracy, F1, confusion matrix, gesture list, training date). |
+
+All endpoints except `/health` and `/auth/register` require `Authorization: Bearer <token>`.
 
 ### 1.3 Auto-training threshold
 
@@ -441,6 +445,6 @@ Stored in trainingExamples[]     apiClient.uploadExample(example)
 | Model download | Manual "Update Model" button | User controls when to update; avoids silent model swaps |
 | Auto-training | Threshold (default 10/gesture) + manual trigger | Balance between automation and control |
 | Upload granularity | Per-example, immediately after collection | Server always has fresh data; no manual sync step |
-| Authentication | None for now; designed to add later | API key / JWT as next step per user requirement |
+| Authentication | Per-device JWT (implemented) | iOS device registers once with a pre-shared `REGISTRATION_TOKEN`; receives a long-lived JWT stored in Keychain; all endpoints except `/health` and `/auth/register` require `Authorization: Bearer <token>` |
 | iOS min version | iOS 16.0 — no change | TFLite supports iOS 12+; no bump needed |
 | Server stack | FastAPI + uvicorn, Dockerised | Python-native ML tools; Docker-friendly for cloud deploy |

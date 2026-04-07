@@ -31,6 +31,14 @@ examples_table = sa.Table(
     sa.Column("created_at", sa.Float, nullable=False),
 )
 
+# Stores registered devices (device_id issued a JWT).
+devices_table = sa.Table(
+    "devices",
+    metadata,
+    sa.Column("device_id", sa.String, primary_key=True),
+    sa.Column("registered_at", sa.Float, nullable=False),
+)
+
 # Stores metadata for each trained model version.
 models_table = sa.Table(
     "models",

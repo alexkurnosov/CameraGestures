@@ -193,9 +193,62 @@ The ModelTraining app is a macOS/iOS application for collecting training data an
 
 - Live camera preview with hand tracking visualization
 - Training data collection and management
-- Model training with multiple backend support
+- Model training via remote Python server (server-side Keras MLP / LSTM)
 - Real-time testing and validation
 - Export trained models for production use
+- Per-device JWT authentication for the training server
+
+## Training Server (`/server`)
+
+The Python FastAPI server receives labelled hand gesture examples from the iOS app, trains a `.tflite` model, and serves it back for download.
+
+### Running the server
+
+```bash
+cd server
+cp .env.example .env
+```
+
+Edit `.env` and set the two required auth variables:
+
+```
+JWT_SECRET=<output of: openssl rand -hex 32>
+REGISTRATION_TOKEN=<any secret string you choose>
+```
+
+Then start with Docker:
+
+```bash
+docker compose up --build
+```
+
+Interactive API docs are available at `http://localhost:8000/docs`.
+
+### Authentication
+
+The server uses per-device JWT authentication. Every iOS device must register once before it can use any endpoint:
+
+1. **Server operator** sets `REGISTRATION_TOKEN` in `.env`
+2. **iOS user** enters the same value in Settings → Server → Registration Token
+3. On first request, the app calls `POST /auth/register` with the token, receives a JWT, and stores it in the device Keychain
+4. All subsequent requests include `Authorization: Bearer <token>`
+
+`/health` is open (no auth) for Docker health probes. Re-registering the same device is idempotent and issues a fresh token.
+
+### API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Liveness check |
+| `POST` | `/auth/register` | No | Register device, receive JWT |
+| `POST` | `/examples` | Yes | Upload one labelled HandFilm |
+| `GET` | `/examples/stats` | Yes | Per-gesture example counts |
+| `DELETE` | `/examples` | Yes | Wipe examples |
+| `POST` | `/train` | Yes | Trigger training job |
+| `GET` | `/model/status` | Yes | Poll training state |
+| `GET` | `/model/download` | Yes | Download `gesture_model.tflite` |
+| `GET` | `/model/info` | Yes | Model metadata |
+| `DELETE` | `/model` | Yes | Wipe all model versions |
 
 ## MediaPipe Integration
 

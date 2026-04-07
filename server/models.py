@@ -23,6 +23,16 @@ class HandFilm(BaseModel):
     start_time: float
 
 
+class DeviceRegisterRequest(BaseModel):
+    device_id: str
+    registration_token: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
 class TrainingExamplePayload(BaseModel):
     hand_film: HandFilm
     gesture_id: str  # slug, e.g. "thumbs_up"

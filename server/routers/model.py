@@ -4,8 +4,10 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+
+from auth import get_current_device
 
 from models import ModelInfoResponse
 from storage.model_store import delete_all_models, get_latest_model
@@ -15,7 +17,7 @@ router = APIRouter(prefix="/model", tags=["model"])
 
 
 @router.get("/download")
-async def download_model() -> FileResponse:
+async def download_model(_: str = Depends(get_current_device)) -> FileResponse:
     """
     Return the latest trained .tflite file.
     Sets Content-Disposition so the client saves it as 'gesture_model.tflite'.
@@ -41,7 +43,7 @@ async def download_model() -> FileResponse:
 
 
 @router.get("/info", response_model=ModelInfoResponse)
-async def model_info() -> ModelInfoResponse:
+async def model_info(_: str = Depends(get_current_device)) -> ModelInfoResponse:
     """Return metadata about the most recently trained model."""
     model = await get_latest_model()
     if model is None:
@@ -62,7 +64,7 @@ async def model_info() -> ModelInfoResponse:
 
 
 @router.delete("", status_code=200)
-async def wipe_models() -> dict:
+async def wipe_models(_: str = Depends(get_current_device)) -> dict:
     """Delete all trained model versions (DB rows + .tflite files) and reset training state."""
     if training_state.is_running():
         raise HTTPException(
