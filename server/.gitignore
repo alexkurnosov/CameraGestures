@@ -4,6 +4,9 @@ data/
 # Secrets
 .env
 
+# Generated Caddy config (contains your domain — use Caddyfile.example as reference)
+Caddyfile
+
 # Python
 __pycache__/
 *.py[cod]

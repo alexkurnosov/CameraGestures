@@ -87,15 +87,26 @@ The interactive API docs are at `http://localhost:8000/docs`.
 
 ## 5. Open the firewall port
 
+If you are **not** using the Caddy HTTPS proxy (plain HTTP, private network):
+
 ```bash
-# UFW (Ubuntu default)
 sudo ufw allow 8000
 sudo ufw status
 ```
 
+If you are using Caddy (recommended for public VPS — see step 7), open ports
+80 and your chosen HTTPS port instead. **Do not open 8000** — the app is bound
+to `127.0.0.1` and is only reachable via the Caddy proxy:
+
+```bash
+sudo ufw allow 80       # ACME HTTP-01 certificate issuance
+sudo ufw allow 9443     # HTTPS (replace 9443 with your chosen port)
+sudo ufw status
+```
+
 If your VPS provider has a separate network firewall panel (AWS Security Groups,
-DigitalOcean Firewall, Hetzner Firewall, etc.), add an inbound TCP rule for
-port 8000 there as well.
+DigitalOcean Firewall, Hetzner Firewall, etc.), add inbound TCP rules for the
+same ports there as well.
 
 ---
 
@@ -109,44 +120,77 @@ port 8000 there as well.
 
 ---
 
-## 7. (Optional) HTTPS with a reverse proxy
+## 7. (Optional) HTTPS with Caddy
 
-Exposing plain HTTP on port 8000 is acceptable on a private network, but for a
-public VPS HTTPS is recommended. The quickest way is **Caddy** — it handles
-TLS certificates automatically.
+For a public VPS, HTTPS is recommended. Caddy handles TLS certificates
+automatically. This setup runs Caddy as an additional Docker service alongside
+the app, so no separate installation is required.
 
-```bash
-sudo apt-get install -y caddy
-```
+Port 443 is occupied by another service, so Caddy listens on a configurable
+port (default **9443**). Certificates are issued via the ACME HTTP-01 challenge
+on port 80, which must be free and reachable from the internet.
 
-`/etc/caddy/Caddyfile`:
-
-```
-your-domain.com {
-    reverse_proxy localhost:8000
-}
-```
+### 7a. Generate the Caddyfile
 
 ```bash
-sudo systemctl restart caddy
+bash setup_caddy.sh
 ```
 
-With Caddy in front, keep port 8000 **closed** in the firewall and only expose
-443. Update the iOS **Server URL** to `https://your-domain.com`.
+The script will:
+- Ask for your **domain name** (required — Caddy's automatic TLS needs a domain)
+- Ask for the **HTTPS port** (default `9443`)
+- Write a `Caddyfile` configured for your domain
+- Add `HTTPS_PORT` to your `.env`
+- Print the firewall commands and the iOS Server URL to use
 
-iOS requires HTTPS for arbitrary network connections by default. If you use
-plain HTTP you must add an `NSExceptionDomain` entry for the VPS IP/hostname in
-the app's `Info.plist`.
+### 7b. Open firewall ports
+
+```bash
+sudo ufw allow 80      # ACME HTTP-01 — must be reachable from the internet
+sudo ufw allow 9443    # HTTPS (replace with your chosen port)
+```
+
+Apply the same rules in your VPS provider's network firewall panel if it has one.
+
+### 7c. Start with Caddy
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up --build -d
+```
+
+Caddy fetches a TLS certificate automatically on first startup. Check its logs
+if the certificate does not appear within a minute:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml logs caddy -f
+```
+
+### 7d. Update the iOS app
+
+Set **Server URL** to `https://your-domain.com:9443` (replace port if you chose
+a different one).
+
+> iOS requires HTTPS for arbitrary network connections by default. If you use
+> plain HTTP you must add an `NSExceptionDomain` entry for the VPS IP/hostname
+> in the app's `Info.plist`.
 
 ---
 
 ## Stopping and restarting
 
+Without Caddy:
 ```bash
 docker compose down          # stop (data is preserved in ./data volume)
 docker compose up -d         # start again
 docker compose restart       # restart without rebuilding
 docker compose up --build -d # rebuild image after a git pull
+```
+
+With Caddy (append `-f docker-compose.caddy.yml` to every command):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml down
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up --build -d
 ```
 
 ---
@@ -156,7 +200,10 @@ docker compose up --build -d # rebuild image after a git pull
 ```bash
 git pull
 cd server
+# Without Caddy:
 docker compose up --build -d
+# With Caddy:
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up --build -d
 ```
 
 Your examples and trained models are stored in `./data/` which is mounted as a

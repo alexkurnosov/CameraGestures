@@ -2,7 +2,7 @@ services:
   server:
     build: .
     ports:
-      - "${PORT:-8000}:8000"
+      - "127.0.0.1:${PORT:-8000}:8000"
     volumes:
       # Persist uploaded examples and trained models across container restarts
       - ./data:/app/data

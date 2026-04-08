@@ -1,0 +1,27 @@
+# Activates the Caddy HTTPS reverse proxy.
+#
+# Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+#
+# Requirements before first run:
+#   1. bash setup_env.sh    (if not done yet)
+#   2. bash setup_caddy.sh  — generates Caddyfile and writes HTTPS_PORT to .env
+#   3. Port 80 must be free and reachable from the internet (ACME HTTP-01 challenge)
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTPS_PORT:-9443}:443"   # HTTPS — external port set by HTTPS_PORT in .env
+      - "80:80"                     # ACME HTTP-01 challenge
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+volumes:
+  caddy_data:
+  caddy_config:
