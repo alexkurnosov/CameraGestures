@@ -28,18 +28,25 @@ ask() {
 
 ask_secret() {
     local label="$1" value
-    read -rsp "$(printf '%b  %s%b: ' "$CYAN" "$label" "$RESET")" value
+    printf '%b  %s%b (input hidden — paste and press Enter): ' "$CYAN" "$label" "$RESET"
+    read -rs value
     printf '\n'
+    if [[ -n "$value" ]]; then
+        printf '  %bReceived (%d chars) ✓%b\n' "$DIM" "${#value}" "$RESET"
+    fi
     printf '%s' "$value"
 }
 
+# set_env: safely writes or updates a key=value line in .env.
+# Uses grep -v + append to avoid sed special-character issues.
 set_env() {
-    local key="$1" val="$2"
+    local key="$1" val="$2" tmp
+    tmp="${ENV_FILE}.tmp"
     if grep -q "^${key}=" "$ENV_FILE"; then
-        sed -i.bak "s|^${key}=.*|${key}=${val}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
-    else
-        printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
+        grep -v "^${key}=" "$ENV_FILE" > "$tmp"
+        mv "$tmp" "$ENV_FILE"
     fi
+    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
 }
 
 section() {
