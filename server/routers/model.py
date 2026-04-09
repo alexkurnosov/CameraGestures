@@ -1,6 +1,7 @@
-"""GET    /model/download — serve latest .tflite binary.
-   GET    /model/info     — model metadata.
-   DELETE /model          — wipe all model versions."""
+"""GET    /model/download      — serve latest .tflite binary.
+   GET    /model/preprocessor — serve preprocessor.js.
+   GET    /model/info         — model metadata.
+   DELETE /model              — wipe all model versions."""
 
 from pathlib import Path
 
@@ -39,6 +40,19 @@ async def download_model(_: str = Depends(get_current_device)) -> FileResponse:
         media_type="application/octet-stream",
         filename="gesture_model.tflite",
         headers={"Content-Disposition": 'attachment; filename="gesture_model.tflite"'},
+    )
+
+
+@router.get("/preprocessor")
+async def download_preprocessor(_: str = Depends(get_current_device)) -> FileResponse:
+    """Return preprocessor.js — the shared feature-extraction source of truth."""
+    js_path = Path(__file__).parent.parent / "ml" / "preprocessor.js"
+    if not js_path.exists():
+        raise HTTPException(status_code=404, detail="preprocessor.js not found on server.")
+    return FileResponse(
+        path=str(js_path),
+        media_type="application/javascript",
+        filename="preprocessor.js",
     )
 
 
