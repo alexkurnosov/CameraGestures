@@ -28,13 +28,13 @@ ask() {
 
 ask_secret() {
     local label="$1" value
-    printf '%b  %s%b (input hidden — paste and press Enter): ' "$CYAN" "$label" "$RESET"
+    printf '%b  %s%b (input hidden — paste and press Enter): ' "$CYAN" "$label" "$RESET" >&2
     read -rs value
-    printf '\n'
+    printf '\n' >&2
     if [[ -n "$value" ]]; then
-        printf '  %bReceived (%d chars) ✓%b\n' "$DIM" "${#value}" "$RESET"
+        printf '  %bReceived (%d chars) ✓%b\n' "$DIM" "${#value}" "$RESET" >&2
     fi
-    printf '%s' "$value"
+    printf '%s' "$value"   # stdout only — this is what the caller captures
 }
 
 # set_env: safely writes or updates a key=value line in .env.
