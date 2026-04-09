@@ -796,13 +796,19 @@ struct TrainingView: View {
         isDownloadingModel = true
         Task {
             do {
-                let url = try await apiClient.downloadModel()
+                // Download model and preprocessor independently so one failure
+                // doesn't silently block the other.
+                async let modelURL = apiClient.downloadModel()
+                async let preprocessorURL = apiClient.downloadPreprocessor()
+
+                let (mURL, pURL) = try await (modelURL, preprocessorURL)
+
+                try JSPreprocessorWrapper.shared.load(from: pURL)
+
                 appSettings.updateModelConfig()
-
-                let sidecarURL = url.deletingLastPathComponent().appendingPathComponent("gesture_ids.json")
+                let sidecarURL = mURL.deletingLastPathComponent().appendingPathComponent("gesture_ids.json")
                 let gestureIds = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: sidecarURL))) ?? []
-
-                try gestureRecognizer.recognizer.loadModel(from: url.path, gestureIds: gestureIds)
+                try gestureRecognizer.recognizer.loadModel(from: mURL.path, gestureIds: gestureIds)
             } catch {
                 await MainActor.run {
                     serverActionError = error.localizedDescription

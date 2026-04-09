@@ -301,9 +301,7 @@ class GestureModelAPIClient: ObservableObject {
         }
         try FileManager.default.moveItem(at: tmpURL, to: destURL)
 
-        try JSPreprocessorWrapper.shared.load(from: destURL)
-
-        print("[GestureModelAPIClient] Preprocessor saved and loaded from \(destURL.path)")
+        print("[GestureModelAPIClient] Preprocessor saved to \(destURL.path)")
         return destURL
     }
 
