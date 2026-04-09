@@ -114,6 +114,9 @@ logs/
 *.h5
 *.pb
 
+# Claude Code local data (worktrees, settings, memory)
+.claude/
+
 # Temporary files
 *.swp
 *.swo
