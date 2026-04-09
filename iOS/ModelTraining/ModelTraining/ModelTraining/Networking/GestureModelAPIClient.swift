@@ -288,8 +288,12 @@ class GestureModelAPIClient: ObservableObject {
         }
 
         // 1. Download the binary
-        let downloadURL = baseURL.appendingPathComponent("model/download")
-        let (tmpURL, response) = try await session.download(from: downloadURL)
+        try await ensureAuthenticated()
+        var downloadRequest = URLRequest(url: baseURL.appendingPathComponent("model/download"))
+        if let token = tokenStorage.load() {
+            downloadRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (tmpURL, response) = try await session.download(for: downloadRequest)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
