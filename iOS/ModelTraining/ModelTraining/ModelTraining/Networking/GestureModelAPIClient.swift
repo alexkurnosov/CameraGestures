@@ -273,6 +273,44 @@ class GestureModelAPIClient: ObservableObject {
         return try await perform(request, decoding: ModelStatusResponse.self)
     }
 
+    // MARK: - Download Preprocessor
+
+    /// Download preprocessor.js from the server, save it alongside the model file,
+    /// and immediately load it into JSPreprocessorWrapper.
+    func downloadPreprocessor() async throws -> URL {
+        try await ensureAuthenticated()
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("model/preprocessor"))
+        if let token = tokenStorage.load() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (tmpURL, response) = try await session.download(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw APIError.httpError(statusCode: code, detail: "model/preprocessor download failed")
+        }
+
+        let destURL = preprocessorURL()
+        let destDir = destURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            try FileManager.default.removeItem(at: destURL)
+        }
+        try FileManager.default.moveItem(at: tmpURL, to: destURL)
+
+        print("[GestureModelAPIClient] Preprocessor saved to \(destURL.path)")
+        return destURL
+    }
+
+    func preprocessorURL() -> URL {
+        tfliteModelURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent("preprocessor.js")
+    }
+
     // MARK: - Download Model
 
     /// Download the latest .tflite model from the server.

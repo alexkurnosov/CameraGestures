@@ -1,0 +1,211 @@
+/**
+ * preprocessor.js — single source of truth for hand gesture feature extraction.
+ *
+ * Runs on:
+ *   - Server: via py_mini_racer (Python)
+ *   - iOS:    via JavaScriptCore (Swift)
+ *
+ * Input format (HandFilm JSON):
+ *   {
+ *     "frames": [
+ *       {
+ *         "landmarks": [{"x": 0.1, "y": 0.2, "z": 0.3}, ...],  // 21 items
+ *         "timestamp": 1234567890.123,
+ *         "left_or_right": "right"
+ *       },
+ *       ...
+ *     ],
+ *     "start_time": 1234567890.0
+ *   }
+ */
+
+var TARGET_FRAMES = 60;
+var LANDMARKS = 21;
+var COORDS = 3;
+var FEATURES_PER_FRAME = LANDMARKS * COORDS * 2; // 126
+var COORDS_PER_FRAME = LANDMARKS * COORDS;        // 63
+
+/**
+ * Build the (TARGET_FRAMES × 126) feature matrix.
+ * Returns a flat Float64 array of length TARGET_FRAMES * 126.
+ *
+ * Columns 0–62:  wrist-relative, scale-normalised landmark coords.
+ * Columns 63–125: frame-to-frame velocity of those coords (zero for first frame).
+ */
+function featureMatrix(handFilm) {
+    var frames = handFilm.frames;
+    var n = frames.length;
+
+    // Extract wrist-relative, scale-normalised coords: (n, 21, 3)
+    var normalised = [];
+    for (var i = 0; i < n; i++) {
+        var landmarks = frames[i].landmarks;
+        var wrist = landmarks[0];
+
+        // Wrist-relative
+        var rel = [];
+        for (var j = 0; j < LANDMARKS; j++) {
+            rel.push([
+                landmarks[j].x - wrist.x,
+                landmarks[j].y - wrist.y,
+                landmarks[j].z - wrist.z
+            ]);
+        }
+
+        // Scale by wrist-to-landmark-9 distance (middle finger MCP)
+        var lm9 = rel[9];
+        var scale = Math.sqrt(lm9[0]*lm9[0] + lm9[1]*lm9[1] + lm9[2]*lm9[2]);
+        if (scale < 1e-6) scale = 1.0;
+        for (var j = 0; j < LANDMARKS; j++) {
+            rel[j][0] /= scale;
+            rel[j][1] /= scale;
+            rel[j][2] /= scale;
+        }
+
+        normalised.push(rel);
+    }
+
+    // Velocity: frame-to-frame delta, zero for first frame
+    var velocity = [];
+    for (var i = 0; i < n; i++) {
+        var v = [];
+        if (i === 0) {
+            for (var j = 0; j < LANDMARKS; j++) v.push([0, 0, 0]);
+        } else {
+            for (var j = 0; j < LANDMARKS; j++) {
+                v.push([
+                    normalised[i][j][0] - normalised[i-1][j][0],
+                    normalised[i][j][1] - normalised[i-1][j][1],
+                    normalised[i][j][2] - normalised[i-1][j][2]
+                ]);
+            }
+        }
+        velocity.push(v);
+    }
+
+    // Flatten each frame into 126 values: [coords(63), velocity(63)]
+    var rows = [];
+    for (var i = 0; i < n; i++) {
+        var row = [];
+        for (var j = 0; j < LANDMARKS; j++) {
+            row.push(normalised[i][j][0], normalised[i][j][1], normalised[i][j][2]);
+        }
+        for (var j = 0; j < LANDMARKS; j++) {
+            row.push(velocity[i][j][0], velocity[i][j][1], velocity[i][j][2]);
+        }
+        rows.push(row);
+    }
+
+    // Pad (append zeros) or trim (keep last TARGET_FRAMES) to exactly TARGET_FRAMES rows
+    var zero = [];
+    for (var k = 0; k < FEATURES_PER_FRAME; k++) zero.push(0);
+
+    var result = [];
+    if (n >= TARGET_FRAMES) {
+        result = rows.slice(n - TARGET_FRAMES);
+    } else {
+        result = rows.slice();
+        while (result.length < TARGET_FRAMES) result.push(zero.slice());
+    }
+
+    // Flatten to a single array
+    var flat = [];
+    for (var i = 0; i < TARGET_FRAMES; i++) {
+        for (var k = 0; k < FEATURES_PER_FRAME; k++) flat.push(result[i][k]);
+    }
+    return flat;
+}
+
+/**
+ * Same as featureMatrix but returns an array of TARGET_FRAMES rows,
+ * each of length FEATURES_PER_FRAME (126).
+ */
+function featureRows(handFilm) {
+    var flat = featureMatrix(handFilm);
+    var rows = [];
+    for (var i = 0; i < TARGET_FRAMES; i++) {
+        rows.push(flat.slice(i * FEATURES_PER_FRAME, (i + 1) * FEATURES_PER_FRAME));
+    }
+    return rows;
+}
+
+/**
+ * 256-element statistical summary vector used as MLP input.
+ *
+ *   63  — column-wise mean of normalised coords across frames
+ *   63  — column-wise std  of normalised coords across frames
+ *   63  — column-wise mean of velocity across frames
+ *   63  — column-wise std  of velocity across frames
+ *    3  — net raw wrist displacement (last − first frame, pre-normalisation)
+ *    1  — dominant motion axis magnitude
+ */
+function summaryFeatures(handFilm) {
+    var flat = featureMatrix(handFilm); // length TARGET_FRAMES * 126
+
+    // Split into coords (cols 0–62) and velocities (cols 63–125) per frame
+    var coords = []; // TARGET_FRAMES × 63
+    var vels   = []; // TARGET_FRAMES × 63
+    for (var i = 0; i < TARGET_FRAMES; i++) {
+        var base = i * FEATURES_PER_FRAME;
+        coords.push(flat.slice(base, base + COORDS_PER_FRAME));
+        vels.push(flat.slice(base + COORDS_PER_FRAME, base + FEATURES_PER_FRAME));
+    }
+
+    // Column-wise mean
+    function colMean(m) {
+        var out = [];
+        for (var j = 0; j < COORDS_PER_FRAME; j++) {
+            var s = 0;
+            for (var i = 0; i < TARGET_FRAMES; i++) s += m[i][j];
+            out.push(s / TARGET_FRAMES);
+        }
+        return out;
+    }
+
+    // Column-wise population std
+    function colStd(m, means) {
+        var out = [];
+        for (var j = 0; j < COORDS_PER_FRAME; j++) {
+            var v = 0;
+            for (var i = 0; i < TARGET_FRAMES; i++) {
+                var d = m[i][j] - means[j];
+                v += d * d;
+            }
+            out.push(Math.sqrt(v / TARGET_FRAMES));
+        }
+        return out;
+    }
+
+    var coordMean = colMean(coords);
+    var coordStd  = colStd(coords, coordMean);
+    var velMean   = colMean(vels);
+    var velStd    = colStd(vels, velMean);
+
+    // Net raw wrist displacement (first vs last frame, before normalisation)
+    var displacement = [0, 0, 0];
+    var frames = handFilm.frames;
+    if (frames.length >= 2) {
+        var first = frames[0].landmarks[0];
+        var last  = frames[frames.length - 1].landmarks[0];
+        displacement = [last.x - first.x, last.y - first.y, last.z - first.z];
+    }
+
+    // Dominant motion axis: max |mean velocity| across x/y/z averaged over all landmarks
+    var axisSum = [0, 0, 0];
+    for (var i = 0; i < TARGET_FRAMES; i++) {
+        for (var lm = 0; lm < LANDMARKS; lm++) {
+            var b = lm * 3;
+            axisSum[0] += vels[i][b];
+            axisSum[1] += vels[i][b + 1];
+            axisSum[2] += vels[i][b + 2];
+        }
+    }
+    var total = TARGET_FRAMES * LANDMARKS;
+    var dominant = Math.max(
+        Math.abs(axisSum[0] / total),
+        Math.abs(axisSum[1] / total),
+        Math.abs(axisSum[2] / total)
+    );
+
+    return coordMean.concat(coordStd, velMean, velStd, displacement, [dominant]);
+}

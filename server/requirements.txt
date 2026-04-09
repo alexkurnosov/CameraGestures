@@ -21,3 +21,6 @@ tensorflow>=2.16
 # Feature engineering / evaluation
 numpy>=1.26
 scikit-learn>=1.4
+
+# JS preprocessor execution (shared source of truth with iOS)
+py-mini-racer>=0.6
