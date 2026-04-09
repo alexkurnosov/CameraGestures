@@ -1,0 +1,7 @@
+# Caddy with the Cloudflare DNS plugin for DNS-01 ACME challenge.
+# Required when ports 80 and 443 are occupied by another service.
+FROM caddy:2-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/cloudflare
+
+FROM caddy:2-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

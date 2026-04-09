@@ -94,12 +94,12 @@ sudo ufw allow 8000
 sudo ufw status
 ```
 
-If you are using Caddy (recommended for public VPS — see step 7), open ports
-80 and your chosen HTTPS port instead. **Do not open 8000** — the app is bound
-to `127.0.0.1` and is only reachable via the Caddy proxy:
+If you are using Caddy (recommended for public VPS — see step 7), only open
+your chosen HTTPS port. **Do not open 8000 or 80** — the app is bound to
+`127.0.0.1`, and certificates are issued via Cloudflare DNS-01 (no port 80
+needed):
 
 ```bash
-sudo ufw allow 80       # ACME HTTP-01 certificate issuance
 sudo ufw allow 9443     # HTTPS (replace 9443 with your chosen port)
 sudo ufw status
 ```
@@ -126,46 +126,57 @@ For a public VPS, HTTPS is recommended. Caddy handles TLS certificates
 automatically. This setup runs Caddy as an additional Docker service alongside
 the app, so no separate installation is required.
 
-Port 443 is occupied by another service, so Caddy listens on a configurable
-port (default **9443**). Certificates are issued via the ACME HTTP-01 challenge
-on port 80, which must be free and reachable from the internet.
+Port 443 is occupied by another service. Caddy therefore listens on a
+configurable port (default **9443**) and issues certificates via the
+**Cloudflare DNS-01 challenge** — ports 80 and 443 do not need to be free.
 
-### 7a. Generate the Caddyfile
+### 7a. Create a Cloudflare API token
+
+1. Go to <https://dash.cloudflare.com/profile/api-tokens>
+2. Click **Create Token → Use template: Edit zone DNS**
+3. Under **Zone Resources** select your domain (`akthesnp.com`)
+4. Create the token and copy it — you will paste it into `setup_caddy.sh`
+
+### 7b. Run the setup script
 
 ```bash
 bash setup_caddy.sh
 ```
 
 The script will:
-- Ask for your **domain name** (required — Caddy's automatic TLS needs a domain)
+- Ask for your **domain name** (e.g. `cameragesturesmodeltrain.akthesnp.com`)
 - Ask for the **HTTPS port** (default `9443`)
-- Write a `Caddyfile` configured for your domain
-- Add `HTTPS_PORT` to your `.env`
-- Print the firewall commands and the iOS Server URL to use
+- Ask for the **Cloudflare API token** (input is hidden)
+- Write the `Caddyfile` configured for DNS-01
+- Add `HTTPS_PORT` and `CF_API_TOKEN` to your `.env`
 
-### 7b. Open firewall ports
+### 7c. Open the firewall
+
+Only the HTTPS port needs to be open — no port 80 required:
 
 ```bash
-sudo ufw allow 80      # ACME HTTP-01 — must be reachable from the internet
-sudo ufw allow 9443    # HTTPS (replace with your chosen port)
+sudo ufw allow 9443    # replace with your chosen port
 ```
 
-Apply the same rules in your VPS provider's network firewall panel if it has one.
+Apply the same rule in your VPS provider's network firewall panel if it has one.
 
-### 7c. Start with Caddy
+### 7d. Start with Caddy
+
+The first run builds a custom Caddy image with the Cloudflare DNS plugin
+(~1 minute):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml up --build -d
 ```
 
-Caddy fetches a TLS certificate automatically on first startup. Check its logs
-if the certificate does not appear within a minute:
+Caddy fetches a TLS certificate automatically. Check its logs if the
+certificate does not appear within a minute:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.caddy.yml logs caddy -f
 ```
 
-### 7d. Update the iOS app
+### 7e. Update the iOS app
 
 Set **Server URL** to `https://your-domain.com:9443` (replace port if you chose
 a different one).

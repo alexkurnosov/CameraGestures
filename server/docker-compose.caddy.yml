@@ -1,20 +1,24 @@
-# Activates the Caddy HTTPS reverse proxy.
+# Activates the Caddy HTTPS reverse proxy (with Cloudflare DNS-01 challenge).
 #
 # Run with:
 #   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
 #
 # Requirements before first run:
 #   1. bash setup_env.sh    (if not done yet)
-#   2. bash setup_caddy.sh  — generates Caddyfile and writes HTTPS_PORT to .env
-#   3. Port 80 must be free and reachable from the internet (ACME HTTP-01 challenge)
+#   2. bash setup_caddy.sh  — generates Caddyfile and writes HTTPS_PORT + CF_API_TOKEN to .env
+#
+# Ports 80 and 443 do NOT need to be free — certificates are issued via Cloudflare DNS-01.
 
 services:
   caddy:
-    image: caddy:2-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
     restart: unless-stopped
     ports:
       - "${HTTPS_PORT:-9443}:443"   # HTTPS — external port set by HTTPS_PORT in .env
-      - "80:80"                     # ACME HTTP-01 challenge
+    environment:
+      CF_API_TOKEN: ${CF_API_TOKEN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
