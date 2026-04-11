@@ -50,10 +50,18 @@ class TrainingDataManager: ObservableObject {
     @Published var pendingExamples: [TrainingExample] = []
     @Published var isSendingToServer = false
 
+    /// Per-gesture example counts fetched from the server (already-uploaded examples).
+    @Published var serverExampleCounts: [String: Int] = [:]
+
+    /// Non-nil when the last attempt to fetch server counts failed.
+    @Published var serverSyncError: String?
+
     /// Films that failed the quality threshold. Stored locally only; never uploaded.
     @Published var failedExamples: [FailedHandFilm] = []
 
-    weak var apiClient: GestureModelAPIClient?
+    weak var apiClient: GestureModelAPIClient? {
+        didSet { Task { await fetchServerExampleCounts() } }
+    }
 
     // MARK: - Init
 
@@ -115,7 +123,7 @@ class TrainingDataManager: ObservableObject {
         saveFailedExamples()
     }
 
-    /// Upload all pending examples to the server (currently mocked).
+    /// Upload all pending examples to the server.
     func sendPendingToServer() {
         guard !pendingExamples.isEmpty, !isSendingToServer, let client = apiClient else { return }
         isSendingToServer = true
@@ -123,6 +131,7 @@ class TrainingDataManager: ObservableObject {
         let batch = pendingExamples
         pendingExamples = []
         savePendingExamples()
+        print("TrainingDataManager: uploading \(batch.count) example(s) to \(client.baseURL)")
         Task.detached { [weak self, weak client] in
             guard let client else { return }
             var lastTotal = 0
@@ -130,7 +139,9 @@ class TrainingDataManager: ObservableObject {
                 do {
                     let response = try await client.uploadExample(example)
                     lastTotal = response.totalForGesture
+                    print("TrainingDataManager: uploaded example id=\(response.id) gesture=\(example.gestureId) → server total for gesture: \(response.totalForGesture)")
                 } catch {
+                    print("TrainingDataManager: upload failed — \(error)")
                     await MainActor.run {
                         self?.uploadState = .failed(error.localizedDescription)
                         self?.isSendingToServer = false
@@ -142,6 +153,30 @@ class TrainingDataManager: ObservableObject {
                 self?.uploadState = .uploaded(total: lastTotal)
                 self?.isSendingToServer = false
             }
+            await self?.fetchServerExampleCounts()
+        }
+    }
+
+    // MARK: - Server Sync
+
+    /// Fetch per-gesture example counts from the server and update `serverExampleCounts`.
+    /// Called automatically when `apiClient` is set and after a successful upload.
+    func fetchServerExampleCounts() async {
+        guard let client = apiClient else {
+            print("TrainingDataManager: fetchServerExampleCounts skipped — apiClient is nil")
+            return
+        }
+        do {
+            let stats = try await client.fetchExampleStats()
+            print("TrainingDataManager: server stats — total=\(stats.total), gestures=\(stats.gestures.map { "\($0.gestureId):\($0.count)" })")
+            let counts = Dictionary(uniqueKeysWithValues: stats.gestures.map { ($0.gestureId, $0.count) })
+            await MainActor.run {
+                self.serverExampleCounts = counts
+                self.serverSyncError = nil
+            }
+        } catch {
+            print("TrainingDataManager: fetchServerExampleCounts error — \(error)")
+            await MainActor.run { self.serverSyncError = error.localizedDescription }
         }
     }
 

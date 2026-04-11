@@ -25,9 +25,9 @@ enum PreprocessorError: Error, LocalizedError {
 /// Usage:
 ///   1. Call `JSPreprocessorWrapper.shared.load(from: url)` once after downloading the JS file.
 ///   2. Then `FeaturePreprocessor` delegates all calls here automatically.
-final class JSPreprocessorWrapper {
+public final class JSPreprocessorWrapper {
 
-    static let shared = JSPreprocessorWrapper()
+    public static let shared = JSPreprocessorWrapper()
 
     private let context = JSContext()!
     private(set) var isLoaded = false
@@ -41,7 +41,7 @@ final class JSPreprocessorWrapper {
     // MARK: - Loading
 
     /// Evaluate preprocessor.js from disk. Safe to call again to hot-reload after an update.
-    func load(from url: URL) throws {
+    public func load(from url: URL) throws {
         let source = try String(contentsOf: url, encoding: .utf8)
         context.evaluateScript(source)
         if let exception = context.exception {

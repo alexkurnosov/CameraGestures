@@ -48,6 +48,21 @@ struct GestureListView: View {
             AddGestureSheet()
                 .environmentObject(gestureRegistry)
         }
+        .overlay(alignment: .bottom) {
+            if let error = trainingDataManager.serverSyncError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Server sync failed: \(error)")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                }
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .padding()
+            }
+        }
     }
 
     // MARK: - UI Components
@@ -82,7 +97,7 @@ struct GestureListView: View {
             Section("Overview") {
                 StatisticRow(
                     title: "Total Examples",
-                    value: "\(trainingDataManager.trainingExamples.count)",
+                    value: "\(trainingDataManager.trainingExamples.count + trainingDataManager.serverExampleCounts.values.reduce(0, +))",
                     icon: "chart.bar.fill",
                     color: .blue
                 )
@@ -161,7 +176,9 @@ struct GestureListView: View {
     // MARK: - Helper Methods
 
     private func getExampleCount(for gesture: GestureDefinition) -> Int {
-        trainingDataManager.trainingExamples.filter { $0.gestureId == gesture.id }.count
+        let pending = trainingDataManager.trainingExamples.filter { $0.gestureId == gesture.id }.count
+        let server = trainingDataManager.serverExampleCounts[gesture.id] ?? 0
+        return pending + server
     }
 
     private func getLastRecorded(for gesture: GestureDefinition) -> Date? {
