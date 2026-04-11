@@ -2,7 +2,7 @@
 
 ## Context
 
-The iOS ModelTraining app has ~2700 lines of View code (CameraView, TrainingView, HandFilmsView) containing business logic that should live in a Model layer: async networking, recognizer lifecycle, polling loops, state machines, and callback management. Additionally, `ModelTrainingApp.swift` (683 lines) bundles 5 classes + 6 DTOs that need splitting. There's also a **callback overwrite bug** where 3 views each set `gestureDetectionCallback` on the recognizer -- last one wins.
+The iOS ModelTraining app has ~3280 lines of View code (CameraView 892, TrainingView 1145, HandFilmsView 556, GestureListView 545, ContentView 142) containing business logic that should live in a Model layer: async networking, recognizer lifecycle, polling loops, state machines, and callback management. Additionally, `ModelTrainingApp.swift` (717 lines) bundles 5 classes + 6 DTOs that need splitting. There's also a **callback overwrite bug** where 3 views each set `gestureDetectionCallback` on the recognizer -- last one wins.
 
 ## New Directory Structure
 
@@ -35,12 +35,12 @@ Move each class/enum/struct to its own file under `Model/`:
 
 | Source (ModelTrainingApp.swift) | Destination |
 |---|---|
-| Lines 38-297: `TrainingDataManager` | `Model/TrainingDataManager.swift` |
-| Lines 301-315: `TrainingState` enum | `Model/TrainingState.swift` |
-| Lines 319-387: `AppSettings` | `Model/AppSettings.swift` |
-| Lines 392-403: `GestureRecognizerWrapper` | `Model/GestureRecognizerWrapper.swift` |
-| Lines 414-544: `TrainingSeriesCoordinator` | `Model/TrainingSeriesCoordinator.swift` |
-| Lines 549-682: All DTOs | `Model/DTOs/*.swift` (one file each) |
+| Lines 38-332: `TrainingDataManager` | `Model/TrainingDataManager.swift` |
+| Lines 336-350: `TrainingState` enum | `Model/TrainingState.swift` |
+| Lines 354-422: `AppSettings` | `Model/AppSettings.swift` |
+| Lines 427-438: `GestureRecognizerWrapper` | `Model/GestureRecognizerWrapper.swift` |
+| Lines 449-579: `TrainingSeriesCoordinator` | `Model/TrainingSeriesCoordinator.swift` |
+| Lines 584-717: All DTOs | `Model/DTOs/*.swift` (one file each) |
 
 `ModelTrainingApp.swift` becomes just the `@main struct` (~33 lines).
 
@@ -130,6 +130,8 @@ New `@MainActor class ServerTrainingManager: ObservableObject` that owns all ser
 - `startTraining()` (local model training)
 - `handleTrainingGesture()` (collection progress tracking -- add `@Published currentSamples`, `collectionProgress`, `targetSamples`)
 
+**Already done**: `TrainingDataManager` now has server sync logic (`serverExampleCounts`, `serverSyncError`, `fetchServerExampleCounts()`) -- these stay in `TrainingDataManager` as-is.
+
 **TrainingView keeps only**:
 - `@State` for sheets/alerts: `showingNewDatasetAlert`, `showingAddGestureSheet`, `showingMetricsSheet`, `showingTrainingError`, `showingServerError`, `showingWipeModelAlert`
 - All `@ViewBuilder` UI sections
@@ -137,13 +139,22 @@ New `@MainActor class ServerTrainingManager: ObservableObject` that owns all ser
 
 **Result**: TrainingView shrinks from ~1146 to ~550 lines.
 
-## Phase 2: Create FilmPlaybackManager (lower priority)
+## Phase 2A: Create FilmPlaybackManager (lower priority)
 
 New `@MainActor class FilmPlaybackManager: ObservableObject` for HandFilmsView.
 
 **Moves**: `currentFrameIndex`, `isPlaying`, `currentIndex`, `filterGestureId`, `filteredExamples`, `currentPoints`, playback Timer, `deleteCurrentExample()`, navigation logic.
 
-**Result**: HandFilmsView shrinks from ~557 to ~300 lines.
+**Result**: HandFilmsView shrinks from ~556 to ~300 lines.
+
+## Phase 2B: Clean up GestureListView (lower priority)
+
+GestureListView (545 lines) is mostly UI (`StatisticRow`, `GestureTypeRow`, `QualityIndicator`, `ExampleRow`, `GestureDetailView`, `ExampleDetailRow`, `SearchBar` -- 7 helper views). The main view struct (lines 5-211) is already thin -- business logic is limited to `getExampleCount` (sums local + server counts) and `exportTrainingData()`.
+
+**Action items**:
+- Extract helper view structs (`StatisticRow`, `GestureTypeRow`, `QualityIndicator`, `ExampleRow`, `GestureDetailView`, `ExampleDetailRow`) into separate files under `Views/Components/` to reduce file length.
+- Move `exportTrainingData()` to `TrainingDataManager` if export grows beyond a simple print statement.
+- No ViewModel needed -- the view is already a thin shell over `TrainingDataManager` and `GestureRegistry`.
 
 ## Summary of What Stays in Views
 
@@ -170,8 +181,9 @@ After each phase:
 
 ## Critical Files
 
-- `ModelTrainingApp.swift` -- split into Model/ files
-- `Views/ContentView.swift` -- simplify to pure TabView
-- `Views/CameraView.swift` -- extract to CameraViewModel
-- `Views/TrainingView.swift` -- extract to ServerTrainingManager + enrich TrainingDataManager
-- `Views/HandFilmsView.swift` -- Phase 2, extract to FilmPlaybackManager
+- `ModelTrainingApp.swift` (717 lines) -- split into Model/ files
+- `Views/ContentView.swift` (142 lines) -- simplify to pure TabView
+- `Views/CameraView.swift` (892 lines) -- extract to CameraViewModel
+- `Views/TrainingView.swift` (1145 lines) -- extract to ServerTrainingManager + enrich TrainingDataManager
+- `Views/HandFilmsView.swift` (556 lines) -- Phase 2A, extract to FilmPlaybackManager
+- `Views/GestureListView.swift` (545 lines) -- Phase 2B, extract helper views to Components/
