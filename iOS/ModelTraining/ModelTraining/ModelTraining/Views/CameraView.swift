@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Combine
 import GestureModelModule
 import HandGestureTypes
 import HandGestureRecognizingFramework
@@ -127,7 +128,7 @@ struct CameraView: View {
         }
         .onAppear {
             checkCameraPermission()
-            setupGestureCallbacks()
+            setupGestureSubscriptions()
             appSettings.updateModelConfig()
             showModelNotTrainedBanner = !isModelTrained
             if trainingDataManager.selectedGesture == nil {
@@ -590,28 +591,33 @@ struct CameraView: View {
 
     // MARK: - Setup
 
-    private func setupGestureCallbacks() {
-        gestureRecognizer.recognizer.gestureDetectionCallback = { gesture in
-            DispatchQueue.main.async {
+    @State private var cancellables = Set<AnyCancellable>()
+    @State private var statsTimer: AnyCancellable?
+
+    private func setupGestureSubscriptions() {
+        gestureRecognizer.gestureDetected
+            .receive(on: DispatchQueue.main)
+            .sink { gesture in
                 currentGesture = gesture
                 recentGestures.append(gesture)
                 if recentGestures.count > 50 { recentGestures.removeFirst() }
             }
-        }
+            .store(in: &cancellables)
 
-        gestureRecognizer.recognizer.handTrackingUpdateCallback = { handshot in
-            let callbackTime = Date().timeIntervalSince1970
-            DispatchQueue.main.async {
-                //print(String(format: "<<--render_timing-->> handshot_received=%.4f", callbackTime))
+        gestureRecognizer.handTrackingUpdate
+            .receive(on: DispatchQueue.main)
+            .sink { handshot in
                 recognitionHandPoints = handshot.landmarks
             }
-        }
+            .store(in: &cancellables)
 
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            if isRecognitionActive {
-                stats = gestureRecognizer.recognizer.getStatistics()
+        statsTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in
+                if isRecognitionActive {
+                    stats = gestureRecognizer.recognizer.getStatistics()
+                }
             }
-        }
     }
 
     private func checkCameraPermission() {

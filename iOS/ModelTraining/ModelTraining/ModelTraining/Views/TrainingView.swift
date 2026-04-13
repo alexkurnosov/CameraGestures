@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import HandGestureTypes
 import GestureModelModule
 import HandGestureRecognizingFramework
@@ -31,6 +32,7 @@ struct TrainingView: View {
     @State private var showingServerError = false
     @State private var showingWipeModelAlert = false
     @State private var statusPollingTask: Task<Void, Never>?
+    @State private var cancellables = Set<AnyCancellable>()
 
     var body: some View {
         NavigationView {
@@ -81,7 +83,7 @@ struct TrainingView: View {
             if trainingDataManager.selectedGesture == nil {
                 trainingDataManager.selectedGesture = gestureRegistry.gestures.first
             }
-            setupTrainingCallbacks()
+            setupTrainingSubscription()
         }
         .onChange(of: gestureRegistry.gestures) { gestures in
             if let current = trainingDataManager.selectedGesture, !gestures.contains(current) {
@@ -748,14 +750,15 @@ struct TrainingView: View {
         }
     }
 
-    private func setupTrainingCallbacks() {
-        gestureRecognizer.recognizer.gestureDetectionCallback = { detectedGesture in
-            DispatchQueue.main.async {
+    private func setupTrainingSubscription() {
+        gestureRecognizer.gestureDetected
+            .receive(on: DispatchQueue.main)
+            .sink { detectedGesture in
                 if isCollecting && detectedGesture.prediction.confidence > 0.6 {
                     handleTrainingGesture(detectedGesture)
                 }
             }
-        }
+            .store(in: &cancellables)
     }
 
     // MARK: - Server Actions
