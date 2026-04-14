@@ -1,6 +1,9 @@
 import Foundation
 import Combine
+import UIKit
 import HandGestureTypes
+import HandGestureRecognizingFramework
+import GestureModelModule
 
 class TrainingDataManager: ObservableObject {
     @Published var currentDataset: TrainingDataset?
@@ -26,9 +29,25 @@ class TrainingDataManager: ObservableObject {
     /// Films that failed the quality threshold. Stored locally only; never uploaded.
     @Published var failedExamples: [FailedHandFilm] = []
 
+    // MARK: - Collection Progress
+
+    @Published var currentSamples = 0
+    @Published var collectionProgress: Double = 0.0
+    @Published var targetSamples = 20
+
+    // MARK: - Dependencies
+
     weak var apiClient: GestureModelAPIClient? {
         didSet { Task { await fetchServerExampleCounts() } }
     }
+
+    weak var gestureRecognizer: GestureRecognizerWrapper? {
+        didSet { setupCollectionSubscription() }
+    }
+
+    weak var appSettings: AppSettings?
+
+    private var collectionCancellables = Set<AnyCancellable>()
 
     // MARK: - Init
 
@@ -41,12 +60,97 @@ class TrainingDataManager: ObservableObject {
 
     func startDataCollection(for gesture: GestureDefinition) {
         currentGestureId = gesture.id
+        currentSamples = 0
+        collectionProgress = 0.0
         isCollecting = true
+
+        if let recognizer = gestureRecognizer, !recognizer.recognizer.isActive {
+            Task {
+                try? await recognizer.recognizer.start()
+            }
+        }
     }
 
     func stopDataCollection() {
         isCollecting = false
         currentGestureId = nil
+
+        if appSettings?.enableHapticFeedback == true {
+            let feedback = UINotificationFeedbackGenerator()
+            feedback.notificationOccurred(.success)
+        }
+    }
+
+    // MARK: - Collection Subscription
+
+    private func setupCollectionSubscription() {
+        collectionCancellables.removeAll()
+        guard let gestureRecognizer else { return }
+
+        gestureRecognizer.gestureDetected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] detectedGesture in
+                self?.handleTrainingGesture(detectedGesture)
+            }
+            .store(in: &collectionCancellables)
+    }
+
+    func handleTrainingGesture(_ gesture: DetectedGesture) {
+        guard isCollecting,
+              let selected = selectedGesture,
+              currentGestureId == selected.id else { return }
+
+        let example = TrainingExample(
+            handfilm: gesture.handfilm,
+            gestureId: selected.id,
+            userId: "current_user",
+            sessionId: UUID().uuidString
+        )
+
+        addTrainingExample(example)
+
+        currentSamples += 1
+        collectionProgress = Double(currentSamples) / Double(targetSamples)
+
+        if currentSamples >= targetSamples {
+            stopDataCollection()
+        }
+
+        if appSettings?.enableHapticFeedback == true {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+        }
+    }
+
+    // MARK: - Local Model Training
+
+    func startLocalTraining() {
+        guard let dataset = currentDataset, let appSettings else { return }
+
+        trainingState = .training
+
+        let modelConfig = GestureModelConfig(
+            modelPath: nil,
+            backendType: .tensorFlow,
+            predictionThreshold: appSettings.confidenceThreshold,
+            maxPredictions: 5
+        )
+
+        Task.detached { [weak self] in
+            do {
+                let gestureModel = GestureModel(config: modelConfig)
+                let metrics = try await gestureModel.trainAsync(dataset: dataset)
+
+                await MainActor.run {
+                    self?.trainingState = .done(metrics)
+                    appSettings.updateModelConfig()
+                }
+            } catch {
+                await MainActor.run {
+                    self?.trainingState = .failed(error.localizedDescription)
+                }
+            }
+        }
     }
 
     /// Add an example to local collections. Does NOT auto-upload.
