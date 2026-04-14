@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import HandGestureTypes
 import GestureModelModule
 import HandGestureRecognizingFramework
@@ -9,28 +10,17 @@ struct TrainingView: View {
     @EnvironmentObject var appSettings: AppSettings
     @EnvironmentObject var gestureRegistry: GestureRegistry
     @EnvironmentObject var apiClient: GestureModelAPIClient
+    @EnvironmentObject var serverManager: ServerTrainingManager
 
-    @State private var isCollecting = false
-    @State private var collectionProgress: Double = 0.0
-    @State private var targetSamples = 20
-    @State private var currentSamples = 0
+    // UI-only state
     @State private var showingNewDatasetAlert = false
     @State private var newDatasetName = ""
     @State private var showingAddGestureSheet = false
     @State private var showingMetricsSheet = false
     @State private var completedMetrics: ModelMetrics?
-    @State private var trainingErrorMessage: String?
     @State private var showingTrainingError = false
-
-    // Server state
-    @State private var serverStatus: ModelStatusResponse?
-    @State private var isPollingStatus = false
-    @State private var isDownloadingModel = false
-    @State private var isWipingModel = false
-    @State private var serverActionError: String?
     @State private var showingServerError = false
     @State private var showingWipeModelAlert = false
-    @State private var statusPollingTask: Task<Void, Never>?
 
     var body: some View {
         NavigationView {
@@ -39,7 +29,7 @@ struct TrainingView: View {
                     datasetInfoSection
                     gestureSelectionSection
 
-                    if isCollecting {
+                    if trainingDataManager.isCollecting {
                         collectionProgressSection
                     }
 
@@ -81,13 +71,24 @@ struct TrainingView: View {
             if trainingDataManager.selectedGesture == nil {
                 trainingDataManager.selectedGesture = gestureRegistry.gestures.first
             }
-            setupTrainingCallbacks()
+            serverManager.refreshServerStatus()
         }
         .onChange(of: gestureRegistry.gestures) { gestures in
             if let current = trainingDataManager.selectedGesture, !gestures.contains(current) {
                 trainingDataManager.selectedGesture = gestures.first
             } else if trainingDataManager.selectedGesture == nil {
                 trainingDataManager.selectedGesture = gestures.first
+            }
+        }
+        .onChange(of: trainingDataManager.trainingState) { newState in
+            if case .done(let metrics) = newState {
+                completedMetrics = metrics
+                showingMetricsSheet = true
+            }
+        }
+        .onChange(of: serverManager.serverActionError) { error in
+            if error != nil {
+                showingServerError = true
             }
         }
         .sheet(isPresented: $showingAddGestureSheet) {
@@ -112,27 +113,29 @@ struct TrainingView: View {
         .alert("Training Failed", isPresented: $showingTrainingError) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(trainingErrorMessage ?? "An unknown error occurred.")
+            if case .failed(let msg) = trainingDataManager.trainingState {
+                Text(msg)
+            } else {
+                Text("An unknown error occurred.")
+            }
         }
         .alert("Server Error", isPresented: $showingServerError) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) {
+                serverManager.serverActionError = nil
+            }
         } message: {
-            Text(serverActionError ?? "An unknown error occurred.")
+            Text(serverManager.serverActionError ?? "An unknown error occurred.")
         }
         .alert("Wipe Server Model?", isPresented: $showingWipeModelAlert) {
             Button("Wipe Model", role: .destructive) {
-                wipeServerModel()
+                serverManager.wipeServerModel()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This will delete the trained model. This action cannot be undone.")
         }
         .onDisappear {
-            statusPollingTask?.cancel()
-            statusPollingTask = nil
-        }
-        .onAppear {
-            refreshServerStatus()
+            serverManager.stopPolling()
         }
     }
 
@@ -225,13 +228,13 @@ struct TrainingView: View {
 
                 Spacer()
 
-                Text("\(currentSamples)/\(targetSamples)")
+                Text("\(trainingDataManager.currentSamples)/\(trainingDataManager.targetSamples)")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(.blue)
             }
 
-            ProgressView(value: collectionProgress, total: 1.0)
+            ProgressView(value: trainingDataManager.collectionProgress, total: 1.0)
                 .progressViewStyle(LinearProgressViewStyle(tint: .green))
                 .scaleEffect(y: 2.0)
 
@@ -246,8 +249,11 @@ struct TrainingView: View {
 
     private var collectionControlsSection: some View {
         VStack(spacing: 12) {
-            if !isCollecting {
-                Button(action: startCollection) {
+            if !trainingDataManager.isCollecting {
+                Button(action: {
+                    guard let gesture = trainingDataManager.selectedGesture else { return }
+                    trainingDataManager.startDataCollection(for: gesture)
+                }) {
                     HStack {
                         Image(systemName: "record.circle")
                         Text("Start Collecting")
@@ -266,8 +272,8 @@ struct TrainingView: View {
 
                     Spacer()
 
-                    Stepper(value: $targetSamples, in: 5...50, step: 5) {
-                        Text("\(targetSamples)")
+                    Stepper(value: $trainingDataManager.targetSamples, in: 5...50, step: 5) {
+                        Text("\(trainingDataManager.targetSamples)")
                             .font(.title3)
                             .fontWeight(.medium)
                     }
@@ -277,7 +283,7 @@ struct TrainingView: View {
                 .cornerRadius(8)
 
             } else {
-                Button(action: stopCollection) {
+                Button(action: { trainingDataManager.stopDataCollection() }) {
                     HStack {
                         Image(systemName: "stop.circle")
                         Text("Stop Collecting")
@@ -335,7 +341,7 @@ struct TrainingView: View {
         VStack(spacing: 12) {
             switch trainingDataManager.trainingState {
             case .idle:
-                Button(action: startTraining) {
+                Button(action: { trainingDataManager.startLocalTraining() }) {
                     HStack {
                         Image(systemName: "brain")
                         Text("Train Model")
@@ -390,7 +396,7 @@ struct TrainingView: View {
                         }
                         .buttonStyle(.bordered)
 
-                        Button(action: startTraining) {
+                        Button(action: { trainingDataManager.startLocalTraining() }) {
                             Label("Retrain", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.bordered)
@@ -415,7 +421,7 @@ struct TrainingView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Button(action: startTraining) {
+                    Button(action: { trainingDataManager.startLocalTraining() }) {
                         Label("Retry", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity)
                     }
@@ -435,8 +441,6 @@ struct TrainingView: View {
             }
         }
     }
-
-    // MARK: - Server Controls Section
 
     // MARK: - In-View Threshold Section
 
@@ -497,13 +501,15 @@ struct TrainingView: View {
         .cornerRadius(8)
     }
 
+    // MARK: - Server Controls Section
+
     private var serverControlsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Server Training")
                     .font(.headline)
                 Spacer()
-                if let status = serverStatus {
+                if let status = serverManager.serverStatus {
                     ServerStatusBadge(status: status.status)
                 }
             }
@@ -525,16 +531,16 @@ struct TrainingView: View {
 
             // Action buttons
             HStack(spacing: 12) {
-                Button(action: triggerServerTraining) {
+                Button(action: { serverManager.triggerServerTraining() }) {
                     Label("Train on Server", systemImage: "brain.head.profile")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
-                .disabled(isPollingStatus)
+                .disabled(serverManager.isPollingStatus)
 
-                Button(action: downloadModelFromServer) {
-                    if isDownloadingModel {
+                Button(action: { serverManager.downloadModelFromServer() }) {
+                    if serverManager.isDownloadingModel {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                     } else {
@@ -544,11 +550,11 @@ struct TrainingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
-                .disabled(isDownloadingModel)
+                .disabled(serverManager.isDownloadingModel)
             }
 
             // Training progress / status details
-            if let status = serverStatus {
+            if let status = serverManager.serverStatus {
                 serverStatusDetailView(status: status)
             }
         }
@@ -565,7 +571,7 @@ struct TrainingView: View {
 
             Button(action: { showingWipeModelAlert = true }) {
                 HStack {
-                    if isWipingModel {
+                    if serverManager.isWipingModel {
                         ProgressView()
                             .scaleEffect(0.8)
                             .frame(width: 20, height: 20)
@@ -573,7 +579,7 @@ struct TrainingView: View {
                         Image(systemName: "trash.fill")
                             .frame(width: 20, height: 20)
                     }
-                    Text(isWipingModel ? "Wiping…" : "Wipe Server Model")
+                    Text(serverManager.isWipingModel ? "Wiping…" : "Wipe Server Model")
                 }
                 .font(.subheadline)
                 .foregroundColor(.red)
@@ -586,7 +592,7 @@ struct TrainingView: View {
                         .stroke(Color.red.opacity(0.3), lineWidth: 1)
                 )
             }
-            .disabled(isWipingModel)
+            .disabled(serverManager.isWipingModel)
         }
         .padding()
         .background(Color.red.opacity(0.04))
@@ -690,200 +696,6 @@ struct TrainingView: View {
         guard !newDatasetName.isEmpty else { return }
         trainingDataManager.createNewDataset(name: newDatasetName)
         newDatasetName = ""
-    }
-
-    private func startCollection() {
-        guard let gesture = trainingDataManager.selectedGesture else { return }
-        isCollecting = true
-        currentSamples = 0
-        collectionProgress = 0.0
-
-        trainingDataManager.startDataCollection(for: gesture)
-
-        if !gestureRecognizer.recognizer.isActive {
-            Task {
-                try await gestureRecognizer.recognizer.start()
-            }
-        }
-    }
-
-    private func stopCollection() {
-        isCollecting = false
-        trainingDataManager.stopDataCollection()
-
-        if appSettings.enableHapticFeedback {
-            let notificationFeedback = UINotificationFeedbackGenerator()
-            notificationFeedback.notificationOccurred(.success)
-        }
-    }
-
-    private func startTraining() {
-        guard let dataset = trainingDataManager.currentDataset else { return }
-
-        trainingDataManager.trainingState = .training
-
-        let modelConfig = GestureModelConfig(
-            modelPath: nil,
-            backendType: .tensorFlow,
-            predictionThreshold: appSettings.confidenceThreshold,
-            maxPredictions: 5
-        )
-
-        Task {
-            do {
-                let gestureModel = GestureModel(config: modelConfig)
-                let metrics = try await gestureModel.trainAsync(dataset: dataset)
-
-                await MainActor.run {
-                    trainingDataManager.trainingState = .done(metrics)
-                    completedMetrics = metrics
-                    showingMetricsSheet = true
-                    appSettings.updateModelConfig()
-                }
-            } catch {
-                await MainActor.run {
-                    trainingDataManager.trainingState = .failed(error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    private func setupTrainingCallbacks() {
-        gestureRecognizer.recognizer.gestureDetectionCallback = { detectedGesture in
-            DispatchQueue.main.async {
-                if isCollecting && detectedGesture.prediction.confidence > 0.6 {
-                    handleTrainingGesture(detectedGesture)
-                }
-            }
-        }
-    }
-
-    // MARK: - Server Actions
-
-    private func refreshServerStatus() {
-        Task {
-            do {
-                let status = try await apiClient.fetchModelStatus()
-                await MainActor.run { serverStatus = status }
-
-                if status.status == "training" {
-                    startPollingStatus()
-                }
-            } catch {
-                print("[TrainingView] fetchModelStatus failed: \(error)")
-            }
-        }
-    }
-
-    private func triggerServerTraining() {
-        Task {
-            do {
-                let job = try await apiClient.triggerTraining(minInViewDuration: appSettings.minInViewDuration)
-                print("[TrainingView] Training job started: \(job.jobId)")
-                // Lock the in-view threshold now that the first training job has fired.
-                appSettings.lockThresholdIfNeeded()
-                startPollingStatus()
-            } catch {
-                await MainActor.run {
-                    serverActionError = error.localizedDescription
-                    showingServerError = true
-                }
-            }
-        }
-    }
-
-    private func downloadModelFromServer() {
-        isDownloadingModel = true
-        Task {
-            do {
-                // Download model and preprocessor independently so one failure
-                // doesn't silently block the other.
-                async let modelURL = apiClient.downloadModel()
-                async let preprocessorURL = apiClient.downloadPreprocessor()
-
-                let (mURL, pURL) = try await (modelURL, preprocessorURL)
-
-                try JSPreprocessorWrapper.shared.load(from: pURL)
-
-                appSettings.updateModelConfig()
-                let sidecarURL = mURL.deletingLastPathComponent().appendingPathComponent("gesture_ids.json")
-                let gestureIds = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: sidecarURL))) ?? []
-                try gestureRecognizer.recognizer.loadModel(from: mURL.path, gestureIds: gestureIds)
-            } catch {
-                await MainActor.run {
-                    serverActionError = error.localizedDescription
-                    showingServerError = true
-                }
-            }
-            await MainActor.run { isDownloadingModel = false }
-        }
-    }
-
-    private func wipeServerModel() {
-        isWipingModel = true
-        Task {
-            do {
-                try await apiClient.wipeModel()
-                await MainActor.run {
-                    serverStatus = nil
-                    appSettings.updateModelConfig()
-                    // Unlock the in-view threshold so the user can reconfigure before retraining.
-                    appSettings.isThresholdLocked = false
-                }
-            } catch {
-                await MainActor.run {
-                    serverActionError = error.localizedDescription
-                    showingServerError = true
-                }
-            }
-            await MainActor.run { isWipingModel = false }
-        }
-    }
-
-    private func startPollingStatus() {
-        statusPollingTask?.cancel()
-        isPollingStatus = true
-        statusPollingTask = Task {
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(nanoseconds: 3_000_000_000)
-                    guard !Task.isCancelled else { break }
-                    let status = try await apiClient.fetchModelStatus()
-                    await MainActor.run { serverStatus = status }
-                    if status.status != "training" { break }
-                } catch {
-                    break
-                }
-            }
-            await MainActor.run { isPollingStatus = false }
-        }
-    }
-
-    private func handleTrainingGesture(_ gesture: DetectedGesture) {
-        guard trainingDataManager.isCollecting,
-              let selected = trainingDataManager.selectedGesture,
-              trainingDataManager.currentGestureId == selected.id else { return }
-
-        let example = TrainingExample(
-            handfilm: gesture.handfilm,
-            gestureId: selected.id,
-            userId: "current_user",
-            sessionId: UUID().uuidString
-        )
-
-        trainingDataManager.addTrainingExample(example)
-
-        currentSamples += 1
-        collectionProgress = Double(currentSamples) / Double(targetSamples)
-
-        if currentSamples >= targetSamples {
-            stopCollection()
-        }
-
-        if appSettings.enableHapticFeedback {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-        }
     }
 }
 
@@ -1141,5 +953,6 @@ struct TrainingView_Previews: PreviewProvider {
             .environmentObject(AppSettings())
             .environmentObject(GestureRegistry())
             .environmentObject(GestureModelAPIClient())
+            .environmentObject(ServerTrainingManager())
     }
 }

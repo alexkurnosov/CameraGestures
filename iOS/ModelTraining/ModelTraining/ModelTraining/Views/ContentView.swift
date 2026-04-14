@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import HandGestureTypes
 import HandGestureRecognizingFramework
 
@@ -6,38 +7,35 @@ struct ContentView: View {
     @EnvironmentObject var gestureRecognizer: GestureRecognizerWrapper
     @EnvironmentObject var trainingDataManager: TrainingDataManager
     @EnvironmentObject var appSettings: AppSettings
-    
+
     @State private var selectedTab = 0
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    
+    @State private var cancellables = Set<AnyCancellable>()
+
     var body: some View {
         TabView(selection: $selectedTab) {
-            // Camera and Live Recognition
             CameraView()
                 .tabItem {
                     Image(systemName: "camera.fill")
                     Text("Camera")
                 }
                 .tag(0)
-            
-            // Training Data Collection
+
             TrainingView()
                 .tabItem {
                     Image(systemName: "hand.raised.fill")
                     Text("Training")
                 }
                 .tag(1)
-            
-            // Gesture Management
+
             GestureListView()
                 .tabItem {
                     Image(systemName: "list.bullet")
                     Text("Gestures")
                 }
                 .tag(2)
-            
-            // Settings
+
             SettingsView()
                 .tabItem {
                     Image(systemName: "gear")
@@ -47,7 +45,8 @@ struct ContentView: View {
         }
         .accentColor(.blue)
         .onAppear {
-            setupGestureRecognizer()
+            subscribeToStatus()
+            initializeRecognizer()
         }
         .alert("System Alert", isPresented: $showingAlert) {
             Button("OK") { }
@@ -55,33 +54,13 @@ struct ContentView: View {
             Text(alertMessage)
         }
     }
-    
-    private func setupGestureRecognizer() {
-        // Configure gesture recognition callbacks
-        gestureRecognizer.recognizer.gestureDetectionCallback = { detectedGesture in
-            DispatchQueue.main.async {
-                handleGestureDetection(detectedGesture)
-            }
-        }
-        
-        gestureRecognizer.recognizer.statusChangeCallback = { status in
-            DispatchQueue.main.async {
-                handleStatusChange(status)
-            }
-        }
-        
-        // Initialize with current settings
-        let config = HandGestureRecognizingConfig(
-            handsRecognizingConfig: appSettings.cameraConfig,
-            gestureModelConfig: appSettings.modelConfig,
-            enableRealTimeProcessing: true,
-            gestureBufferSize: 10,
-            confidenceThreshold: appSettings.confidenceThreshold
-        )
-        
+
+    // MARK: - Private
+
+    private func initializeRecognizer() {
         Task {
             do {
-                try await gestureRecognizer.recognizer.initialize(config: config)
+                try await gestureRecognizer.initialize(appSettings: appSettings)
             } catch {
                 await MainActor.run {
                     showAlert("Initialization failed: \(error.localizedDescription)")
@@ -89,40 +68,25 @@ struct ContentView: View {
             }
         }
     }
-    
-    private func handleGestureDetection(_ gesture: DetectedGesture) {
-        if trainingDataManager.isCollecting,
-           let gestureId = trainingDataManager.currentGestureId {
 
-            let example = TrainingExample(
-                handfilm: gesture.handfilm,
-                gestureId: gestureId,
-                userId: "current_user",
-                sessionId: UUID().uuidString
-            )
-
-            trainingDataManager.addTrainingExample(example)
-
-            if appSettings.enableHapticFeedback {
-                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                impactFeedback.impactOccurred()
+    private func subscribeToStatus() {
+        gestureRecognizer.statusChanged
+            .receive(on: DispatchQueue.main)
+            .sink { [self] status in
+                switch status {
+                case .error(let error):
+                    showAlert("Error: \(error)")
+                case .running:
+                    print("Gesture recognition started")
+                case .idle:
+                    print("Gesture recognition stopped")
+                default:
+                    break
+                }
             }
-        }
+            .store(in: &cancellables)
     }
-    
-    private func handleStatusChange(_ status: GestureRecognizingStatus) {
-        switch status {
-        case .error(let error):
-            showAlert("Error: \(error)")
-        case .running:
-            print("Gesture recognition started")
-        case .idle:
-            print("Gesture recognition stopped")
-        default:
-            break
-        }
-    }
-    
+
     private func showAlert(_ message: String) {
         alertMessage = message
         showingAlert = true
