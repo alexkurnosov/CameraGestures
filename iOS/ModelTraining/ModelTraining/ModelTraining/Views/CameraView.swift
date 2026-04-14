@@ -12,49 +12,17 @@ struct CameraView: View {
     @EnvironmentObject var gestureRegistry: GestureRegistry
     @EnvironmentObject var apiClient: GestureModelAPIClient
 
-    @StateObject private var seriesCoordinator = TrainingSeriesCoordinator()
+    @StateObject private var viewModel = CameraViewModel()
 
-    // Recognition state
-    @State private var isRecognitionActive = false
-    @State private var currentGesture: DetectedGesture?
-    @State private var recentGestures: [DetectedGesture] = []
-    @State private var recognitionHandPoints: [Point3D] = []
-    @State private var stats = GestureRecognizingStats()
-
-    // Permissions & banners
+    // Pure UI state
     @State private var showingPermissionAlert = false
-    @State private var cameraPermissionGranted = false
-    @State private var showModelNotTrainedBanner = false
-
-    // Training series config
-    @State private var captureWindow: TimeInterval = 2.0
-    @State private var pauseInterval: TimeInterval = 2.0
-
-    // Which hand tracking points to show on the preview
-    private var displayPoints: [Point3D] {
-        seriesCoordinator.isRunning
-            ? seriesCoordinator.handTrackingPoints
-            : recognitionHandPoints
-    }
-
-    private var previewIsActive: Bool { isRecognitionActive || seriesCoordinator.isRunning }
-
-    private var isModelTrained: Bool {
-#if DEBUG
-        //Test:
-        return true
-#else
-#error ("test")
-#endif
-        guard let path = appSettings.modelConfig.modelPath else { return false }
-        return FileManager.default.fileExists(atPath: path)
-    }
+    @State private var recPulse = false
 
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
                 // Model not trained banner
-                if showModelNotTrainedBanner {
+                if viewModel.showModelNotTrainedBanner {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
@@ -63,7 +31,7 @@ struct CameraView: View {
                             .foregroundColor(.primary)
                         Spacer()
                         Button {
-                            showModelNotTrainedBanner = false
+                            viewModel.showModelNotTrainedBanner = false
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.caption)
@@ -80,8 +48,8 @@ struct CameraView: View {
                 // Camera preview with capture overlay
                 ZStack {
                     CameraPreviewView(
-                        handTrackingPoints: .constant(displayPoints),
-                        isActive: .constant(previewIsActive)
+                        handTrackingPoints: .constant(viewModel.displayPoints),
+                        isActive: .constant(viewModel.previewIsActive)
                     )
                     .cornerRadius(12)
 
@@ -94,7 +62,7 @@ struct CameraView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         // Recognised gesture (prediction mode)
-                        if let currentGesture, !seriesCoordinator.isRunning {
+                        if let currentGesture = viewModel.currentGesture, !viewModel.seriesCoordinator.isRunning {
                             CurrentGestureView(gesture: currentGesture)
                                 .padding()
                                 .background(Color.blue.opacity(0.1))
@@ -105,7 +73,7 @@ struct CameraView: View {
                         controlsSection
 
                         // Recent gestures list (prediction mode)
-                        if !recentGestures.isEmpty && !seriesCoordinator.isRunning {
+                        if !viewModel.recentGestures.isEmpty && !viewModel.seriesCoordinator.isRunning {
                             recentGesturesSection
                         }
 
@@ -121,27 +89,26 @@ struct CameraView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear") { clearGestures() }
-                        .disabled(recentGestures.isEmpty)
+                    Button("Clear") { viewModel.clearGestures() }
+                        .disabled(viewModel.recentGestures.isEmpty)
                 }
             }
         }
         .onAppear {
-            checkCameraPermission()
-            setupGestureSubscriptions()
-            appSettings.updateModelConfig()
-            showModelNotTrainedBanner = !isModelTrained
-            if trainingDataManager.selectedGesture == nil {
-                trainingDataManager.selectedGesture = gestureRegistry.gestures.first
-            }
-            trainingDataManager.apiClient = apiClient
+            viewModel.configure(
+                recognizer: gestureRecognizer,
+                dataManager: trainingDataManager,
+                settings: appSettings,
+                registry: gestureRegistry,
+                apiClient: apiClient
+            )
+            viewModel.checkCameraPermission()
         }
         .onChange(of: gestureRegistry.gestures) { gestures in
-            if let current = trainingDataManager.selectedGesture, !gestures.contains(current) {
-                trainingDataManager.selectedGesture = gestures.first
-            } else if trainingDataManager.selectedGesture == nil {
-                trainingDataManager.selectedGesture = gestures.first
-            }
+            viewModel.handleGestureRegistryChange(gestures)
+        }
+        .onChange(of: viewModel.cameraPermissionGranted) { granted in
+            if !granted { showingPermissionAlert = true }
         }
         .alert("Camera Permission Required", isPresented: $showingPermissionAlert) {
             Button("Settings") { openAppSettings() }
@@ -150,7 +117,7 @@ struct CameraView: View {
             Text("Please enable camera access in Settings to use gesture recognition.")
         }
         .onDisappear {
-            seriesCoordinator.stop()
+            viewModel.seriesCoordinator.stop()
         }
     }
 
@@ -158,7 +125,7 @@ struct CameraView: View {
 
     @ViewBuilder
     private var capturePhaseOverlay: some View {
-        switch seriesCoordinator.phase {
+        switch viewModel.seriesCoordinator.phase {
         case .idle:
             EmptyView()
 
@@ -178,7 +145,7 @@ struct CameraView: View {
         case .recording:
             VStack(spacing: 6) {
                 // Hand-absence warning (top of frame)
-                if seriesCoordinator.isHandAbsent {
+                if viewModel.seriesCoordinator.isHandAbsent {
                     HStack(spacing: 6) {
                         Image(systemName: "hand.raised.slash.fill")
                             .font(.caption.weight(.semibold))
@@ -209,7 +176,7 @@ struct CameraView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(.white)
                     }
-                    Text("Captured: \(seriesCoordinator.capturedCount)  Failed: \(seriesCoordinator.failedCount)")
+                    Text("Captured: \(viewModel.seriesCoordinator.capturedCount)  Failed: \(viewModel.seriesCoordinator.failedCount)")
                         .font(.caption2)
                         .foregroundColor(.white.opacity(0.8))
                 }
@@ -220,7 +187,7 @@ struct CameraView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .animation(.easeInOut(duration: 0.2), value: seriesCoordinator.isHandAbsent)
+            .animation(.easeInOut(duration: 0.2), value: viewModel.seriesCoordinator.isHandAbsent)
 
         case .pause(let remaining):
             VStack(spacing: 4) {
@@ -230,7 +197,7 @@ struct CameraView: View {
                 Text("\(remaining)s")
                     .font(.system(size: 40, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
-                Text("Captured: \(seriesCoordinator.capturedCount)  Failed: \(seriesCoordinator.failedCount)")
+                Text("Captured: \(viewModel.seriesCoordinator.capturedCount)  Failed: \(viewModel.seriesCoordinator.failedCount)")
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.75))
             }
@@ -240,8 +207,6 @@ struct CameraView: View {
         }
     }
 
-    @State private var recPulse = false
-
     // MARK: - Controls Section
 
     private var controlsSection: some View {
@@ -249,16 +214,16 @@ struct CameraView: View {
             // Gesture picker (always visible)
             gesturePicker
 
-            if seriesCoordinator.isRunning {
+            if viewModel.seriesCoordinator.isRunning {
                 // Running: show capture count + Stop button
                 HStack(spacing: 10) {
                     Image(systemName: "film.stack")
                         .foregroundColor(.blue)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Captured: \(seriesCoordinator.capturedCount)")
+                        Text("Captured: \(viewModel.seriesCoordinator.capturedCount)")
                             .font(.subheadline.weight(.medium))
-                        if seriesCoordinator.failedCount > 0 {
-                            Text("Failed: \(seriesCoordinator.failedCount)")
+                        if viewModel.seriesCoordinator.failedCount > 0 {
+                            Text("Failed: \(viewModel.seriesCoordinator.failedCount)")
                                 .font(.caption2)
                                 .foregroundColor(.orange)
                         }
@@ -273,7 +238,7 @@ struct CameraView: View {
 
                 stopButton
 
-            } else if isRecognitionActive {
+            } else if viewModel.isRecognitionActive {
                 // Prediction running: Stop button only
                 stopButton
 
@@ -306,7 +271,7 @@ struct CameraView: View {
                         ForEach(gestureRegistry.gestures) { gesture in
                             let isSelected = trainingDataManager.selectedGesture == gesture
                             Button {
-                                if !seriesCoordinator.isRunning {
+                                if !viewModel.seriesCoordinator.isRunning {
                                     trainingDataManager.selectedGesture = gesture
                                 }
                             } label: {
@@ -319,7 +284,7 @@ struct CameraView: View {
                                     .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                            .disabled(seriesCoordinator.isRunning)
+                            .disabled(viewModel.seriesCoordinator.isRunning)
                         }
                     }
                 }
@@ -334,10 +299,10 @@ struct CameraView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 HStack(spacing: 4) {
-                    Text("\(Int(captureWindow))s")
+                    Text("\(Int(viewModel.captureWindow))s")
                         .font(.subheadline.weight(.medium))
                         .frame(width: 28, alignment: .leading)
-                    Stepper("", value: $captureWindow, in: 1...5, step: 1)
+                    Stepper("", value: $viewModel.captureWindow, in: 1...5, step: 1)
                         .labelsHidden()
                 }
             }
@@ -347,10 +312,10 @@ struct CameraView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 HStack(spacing: 4) {
-                    Text("\(Int(pauseInterval))s")
+                    Text("\(Int(viewModel.pauseInterval))s")
                         .font(.subheadline.weight(.medium))
                         .frame(width: 28, alignment: .leading)
-                    Stepper("", value: $pauseInterval, in: 2...15, step: 1)
+                    Stepper("", value: $viewModel.pauseInterval, in: 2...15, step: 1)
                         .labelsHidden()
                 }
             }
@@ -363,7 +328,7 @@ struct CameraView: View {
     }
 
     private var startPredictionButton: some View {
-        Button(action: startRecognition) {
+        Button(action: { viewModel.startRecognition() }) {
             HStack(spacing: 6) {
                 Image(systemName: "play.fill")
                 Text("Start Prediction")
@@ -372,14 +337,14 @@ struct CameraView: View {
             .foregroundColor(.white)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
-            .background(isModelTrained && cameraPermissionGranted ? Color.green : Color.gray)
+            .background(viewModel.isModelTrained && viewModel.cameraPermissionGranted ? Color.green : Color.gray)
             .cornerRadius(10)
         }
-        .disabled(!isModelTrained || !cameraPermissionGranted)
+        .disabled(!viewModel.isModelTrained || !viewModel.cameraPermissionGranted)
     }
 
     private var startTrainingButton: some View {
-        Button(action: startTrainingSeries) {
+        Button(action: { viewModel.startTrainingSeries() }) {
             HStack(spacing: 6) {
                 Image(systemName: "record.circle")
                 Text("Start Training")
@@ -388,14 +353,14 @@ struct CameraView: View {
             .foregroundColor(.white)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
-            .background(canStartTraining ? Color.red : Color.gray)
+            .background(viewModel.canStartTraining ? Color.red : Color.gray)
             .cornerRadius(10)
         }
-        .disabled(!canStartTraining)
+        .disabled(!viewModel.canStartTraining)
     }
 
     private var stopButton: some View {
-        Button(action: stopAll) {
+        Button(action: { viewModel.stopAll() }) {
             HStack(spacing: 6) {
                 Image(systemName: "stop.fill")
                 Text("Stop")
@@ -411,7 +376,7 @@ struct CameraView: View {
 
     @ViewBuilder
     private var phasePill: some View {
-        switch seriesCoordinator.phase {
+        switch viewModel.seriesCoordinator.phase {
         case .countdown: Text("Countdown").font(.caption).foregroundColor(.orange)
         case .recording: Text("Recording").font(.caption.weight(.semibold)).foregroundColor(.red)
         case .pause:     Text("Pausing").font(.caption).foregroundColor(.secondary)
@@ -428,8 +393,8 @@ struct CameraView: View {
 
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    ForEach(recentGestures.reversed().indices, id: \.self) { index in
-                        RecentGestureRow(gesture: recentGestures.reversed()[index])
+                    ForEach(viewModel.recentGestures.reversed().indices, id: \.self) { index in
+                        RecentGestureRow(gesture: viewModel.recentGestures.reversed()[index])
                     }
                 }
             }
@@ -513,122 +478,7 @@ struct CameraView: View {
         }
     }
 
-    // MARK: - Computed Properties
-
-    private var canStartTraining: Bool {
-        cameraPermissionGranted && trainingDataManager.selectedGesture != nil
-    }
-
-    // MARK: - Actions
-
-    private func startRecognition() {
-        guard isModelTrained else {
-            showModelNotTrainedBanner = true
-            return
-        }
-        Task {
-            do {
-                try await gestureRecognizer.recognizer.start()
-                await MainActor.run { isRecognitionActive = true }
-            } catch {
-                print("Failed to start recognition: \(error)")
-            }
-        }
-    }
-
-    private func startTrainingSeries() {
-        guard let gesture = trainingDataManager.selectedGesture else { return }
-        trainingDataManager.startDataCollection(for: gesture)
-
-        Task {
-            if !gestureRecognizer.recognizer.isActive {
-                do {
-                    try await gestureRecognizer.recognizer.start()
-                } catch {
-                    print("Failed to start recognizer for training: \(error)")
-                    trainingDataManager.stopDataCollection()
-                    return
-                }
-            }
-            seriesCoordinator.start(
-                using: gestureRecognizer.recognizer,
-                captureWindow: captureWindow,
-                pauseInterval: pauseInterval,
-                minInViewDuration: appSettings.minInViewDuration,
-                gestureId: gesture.id,
-                onFilmCaptured: { film in
-                    let example = TrainingExample(
-                        handfilm: film,
-                        gestureId: gesture.id,
-                        userId: "current_user",
-                        sessionId: UUID().uuidString
-                    )
-                    trainingDataManager.addTrainingExample(example)
-                },
-                onFilmFailed: { failedFilm, _ in
-                    trainingDataManager.addFailedFilm(failedFilm)
-                }
-            )
-        }
-    }
-
-    private func stopAll() {
-        if isRecognitionActive {
-            gestureRecognizer.recognizer.stop()
-            isRecognitionActive = false
-        }
-        if seriesCoordinator.isRunning {
-            seriesCoordinator.stop()
-            trainingDataManager.stopDataCollection()
-        }
-    }
-
-    private func clearGestures() {
-        recentGestures.removeAll()
-        currentGesture = nil
-        gestureRecognizer.recognizer.clearHistory()
-    }
-
-    // MARK: - Setup
-
-    @State private var cancellables = Set<AnyCancellable>()
-    @State private var statsTimer: AnyCancellable?
-
-    private func setupGestureSubscriptions() {
-        gestureRecognizer.gestureDetected
-            .receive(on: DispatchQueue.main)
-            .sink { gesture in
-                currentGesture = gesture
-                recentGestures.append(gesture)
-                if recentGestures.count > 50 { recentGestures.removeFirst() }
-            }
-            .store(in: &cancellables)
-
-        gestureRecognizer.handTrackingUpdate
-            .receive(on: DispatchQueue.main)
-            .sink { handshot in
-                recognitionHandPoints = handshot.landmarks
-            }
-            .store(in: &cancellables)
-
-        statsTimer = Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { _ in
-                if isRecognitionActive {
-                    stats = gestureRecognizer.recognizer.getStatistics()
-                }
-            }
-    }
-
-    private func checkCameraPermission() {
-        Task {
-            let permission = await HandsRecognizing.requestCameraPermission()
-            await MainActor.run {
-                cameraPermissionGranted = permission
-                if !permission { showingPermissionAlert = true }
-            }
-        }
-    }
+    // MARK: - Helpers
 
     private func openAppSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -642,14 +492,14 @@ struct CameraView: View {
 struct CameraPreviewView: UIViewControllerRepresentable {
     @Binding var handTrackingPoints: [Point3D]
     @Binding var isActive: Bool
-    
+
     func makeUIViewController(context: Context) -> CameraPreviewController {
         return CameraPreviewController()
     }
-    
+
     func updateUIViewController(_ uiViewController: CameraPreviewController, context: Context) {
         uiViewController.updateHandTrackingPoints(handTrackingPoints)
-        
+
         if isActive {
             uiViewController.startCamera()
         } else {
@@ -662,16 +512,16 @@ class CameraPreviewController: UIViewController {
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var handTrackingOverlay: HandTrackingOverlayView?
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         setupOverlay()
     }
-    
+
     private func setupOverlay() {
         handTrackingOverlay = HandTrackingOverlayView()
         handTrackingOverlay?.backgroundColor = .clear
-        
+
         if let overlay = handTrackingOverlay {
             view.addSubview(overlay)
             overlay.translatesAutoresizingMaskIntoConstraints = false
@@ -683,24 +533,24 @@ class CameraPreviewController: UIViewController {
             ])
         }
     }
-    
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         previewLayer?.frame = view.bounds
     }
-    
+
     func startCamera() {
         DispatchQueue.global(qos: .background).async { [weak self] in
             self?.captureSession?.startRunning()
         }
     }
-    
+
     func stopCamera() {
         DispatchQueue.global(qos: .background).async { [weak self] in
             self?.captureSession?.stopRunning()
         }
     }
-    
+
     func updateHandTrackingPoints(_ points: [Point3D]) {
         DispatchQueue.main.async { [weak self] in
             self?.handTrackingOverlay?.updatePoints(points)
@@ -738,22 +588,22 @@ class HandTrackingOverlayView: UIView {
         pointsReceivedTime = Date().timeIntervalSince1970
         setNeedsDisplay()
     }
-    
+
     override func draw(_ rect: CGRect) {
         let drawTime = Date().timeIntervalSince1970
         guard let context = UIGraphicsGetCurrentContext(), !handPoints.isEmpty else { return }
         framesRendered += 1
         //print(String(format: "<<--render_timing-->> frame=%d  draw_start=%.4f  render_lag=%.4f s", framesRendered, drawTime, drawTime - pointsReceivedTime))
-        
+
         context.setStrokeColor(UIColor.green.cgColor)
         context.setLineWidth(2.0)
-        
+
         // Draw hand landmarks
         for point in handPoints {
             let x = CGFloat(point.x) * rect.width
             let y = CGFloat(point.y) * rect.height
             let adjustedPoint = CGPoint(x: x, y: y)
-            
+
             context.addEllipse(in: CGRect(
                 x: adjustedPoint.x - 3,
                 y: adjustedPoint.y - 3,
@@ -761,15 +611,15 @@ class HandTrackingOverlayView: UIView {
                 height: 6
             ))
         }
-        
+
         context.strokePath()
-        
+
         drawHandConnections(context: context, rect: rect)
     }
-    
+
     private func drawHandConnections(context: CGContext, rect: CGRect) {
         guard handPoints.count >= 21 else { return }
-        
+
         let connections: [(Int, Int)] = [
             // Thumb
             (0, 1), (1, 2), (2, 3), (3, 4),
@@ -782,15 +632,15 @@ class HandTrackingOverlayView: UIView {
             // Pinky
             (0, 17), (17, 18), (18, 19), (19, 20)
         ]
-        
+
         context.setStrokeColor(UIColor.blue.cgColor)
         context.setLineWidth(1.0)
-        
+
         for (start, end) in connections {
             if start < handPoints.count && end < handPoints.count {
                 let startPoint = handPoints[start]
                 let endPoint = handPoints[end]
-                
+
                 let startCG = CGPoint(
                     x: CGFloat(startPoint.x) * rect.width,
                     y: CGFloat(startPoint.y) * rect.height
@@ -799,12 +649,12 @@ class HandTrackingOverlayView: UIView {
                     x: CGFloat(endPoint.x) * rect.width,
                     y: CGFloat(endPoint.y) * rect.height
                 )
-                
+
                 context.move(to: startCG)
                 context.addLine(to: endCG)
             }
         }
-        
+
         context.strokePath()
     }
 }
@@ -813,25 +663,25 @@ class HandTrackingOverlayView: UIView {
 
 struct CurrentGestureView: View {
     let gesture: DetectedGesture
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Image(systemName: "hand.raised.fill")
                     .foregroundColor(.blue)
-                
+
                 Text(gesture.prediction.gestureName)
                     .font(.headline)
                     .foregroundColor(.primary)
-                
+
                 Spacer()
-                
+
                 Text("\(Int(gesture.prediction.confidence * 100))%")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(.green)
             }
-            
+
             Text("Latency: \(String(format: "%.1f", gesture.processingLatency * 1000))ms")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -843,22 +693,22 @@ struct CurrentGestureView: View {
 
 struct RecentGestureRow: View {
     let gesture: DetectedGesture
-    
+
     var body: some View {
         HStack {
             Circle()
                 .fill(confidenceColor)
                 .frame(width: 8, height: 8)
-            
+
             Text(gesture.prediction.gestureName)
                 .font(.system(.body, design: .monospaced))
-            
+
             Spacer()
-            
+
             Text("\(Int(gesture.prediction.confidence * 100))%")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             Text(timeAgo)
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -866,7 +716,7 @@ struct RecentGestureRow: View {
         .padding(.horizontal)
         .padding(.vertical, 2)
     }
-    
+
     private var confidenceColor: Color {
         if gesture.prediction.confidence > 0.8 {
             return .green
@@ -876,7 +726,7 @@ struct RecentGestureRow: View {
             return .red
         }
     }
-    
+
     private var timeAgo: String {
         let interval = Date().timeIntervalSince1970 - gesture.detectionTimestamp
         if interval < 60 {
