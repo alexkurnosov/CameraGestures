@@ -5,58 +5,25 @@ struct HandFilmsView: View {
     @EnvironmentObject var trainingDataManager: TrainingDataManager
     @EnvironmentObject var gestureRegistry: GestureRegistry
 
-    @State private var filterGestureId: String? = nil
-    @State private var currentIndex: Int = 0
+    @StateObject private var playbackManager = FilmPlaybackManager()
+
     @State private var showingRelabelSheet = false
     @State private var showingDeleteAlert = false
-    @State private var currentFrameIndex: Int = 0
-    @State private var isPlaying = false
-    @State private var playTimer: Timer? = nil
     @State private var showFailedFilms = false
     @State private var failedFilmToValidate: FailedHandFilm? = nil
     @State private var showingValidateAlert = false
     @State private var failedFilmToDelete: FailedHandFilm? = nil
     @State private var showingFailedDeleteAlert = false
 
-    // MARK: - Derived data
-
-    private var filteredExamples: [TrainingExample] {
-        trainingDataManager.trainingExamples
-            .filter { filterGestureId == nil || $0.gestureId == filterGestureId }
-            .sorted { $0.handfilm.startTime > $1.handfilm.startTime }
-    }
-
-    private var currentExample: TrainingExample? {
-        guard !filteredExamples.isEmpty, currentIndex < filteredExamples.count else { return nil }
-        return filteredExamples[currentIndex]
-    }
-
-    private var currentFilm: HandFilm? { currentExample?.handfilm }
-
-    private var frameCount: Int { currentFilm?.frames.count ?? 0 }
-
-    private var currentPoints: [Point3D] {
-        guard let film = currentFilm, !film.frames.isEmpty else { return [] }
-        let safe = min(currentFrameIndex, film.frames.count - 1)
-        return film.frames[safe].landmarks
-    }
-
-    private var currentHandedness: String {
-        guard let film = currentFilm, let first = film.frames.first else { return "—" }
-        switch first.leftOrRight {
-        case .left: return "Left"
-        case .right: return "Right"
-        case .unknown: return "Unknown"
-        }
-    }
+    // MARK: - Display helpers
 
     private var currentGestureName: String {
-        guard let example = currentExample else { return "—" }
+        guard let example = playbackManager.currentExample else { return "—" }
         return gestureRegistry.gestures.first { $0.id == example.gestureId }?.name ?? example.gestureId
     }
 
     private var filterLabel: String {
-        guard let id = filterGestureId else { return "All" }
+        guard let id = playbackManager.filterGestureId else { return "All" }
         return gestureRegistry.gestures.first { $0.id == id }?.name ?? id
     }
 
@@ -65,7 +32,7 @@ struct HandFilmsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                if filteredExamples.isEmpty {
+                if playbackManager.filteredExamples.isEmpty {
                     emptyState
                 } else {
                     skeletonSection
@@ -83,21 +50,15 @@ struct HandFilmsView: View {
                 filterMenu
             }
         }
-        .onChange(of: filterGestureId) { _ in
-            stopPlayback()
-            currentIndex = 0
-            currentFrameIndex = 0
+        .onAppear {
+            playbackManager.configure(dataManager: trainingDataManager)
         }
-        .onChange(of: currentIndex) { _ in
-            stopPlayback()
-            currentFrameIndex = 0
-        }
-        .onDisappear { stopPlayback() }
+        .onDisappear { playbackManager.stopPlayback() }
         .sheet(isPresented: $showingRelabelSheet) {
             RelabelSheet(
-                currentGestureId: currentExample?.gestureId ?? "",
+                currentGestureId: playbackManager.currentExample?.gestureId ?? "",
                 onSelect: { newId in
-                    if let example = currentExample {
+                    if let example = playbackManager.currentExample {
                         trainingDataManager.relabelExample(id: example.id, newGestureId: newId)
                     }
                 }
@@ -105,7 +66,7 @@ struct HandFilmsView: View {
             .environmentObject(gestureRegistry)
         }
         .alert("Delete Film?", isPresented: $showingDeleteAlert) {
-            Button("Delete", role: .destructive) { deleteCurrentExample() }
+            Button("Delete", role: .destructive) { playbackManager.deleteCurrentExample() }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This HandFilm will be permanently removed from the local collection.")
@@ -141,10 +102,10 @@ struct HandFilmsView: View {
             ZStack {
                 Color.black.opacity(0.85)
                     .cornerRadius(12)
-                HandSkeletonView(points: currentPoints)
+                HandSkeletonView(points: playbackManager.currentPoints)
                     .cornerRadius(12)
 
-                if frameCount == 0 {
+                if playbackManager.frameCount == 0 {
                     Text("No frames")
                         .foregroundColor(.secondary)
                 }
@@ -162,22 +123,22 @@ struct HandFilmsView: View {
 
     private var playerControls: some View {
         VStack(spacing: 6) {
-            if frameCount > 1 {
+            if playbackManager.frameCount > 1 {
                 Slider(
                     value: Binding(
-                        get: { Double(currentFrameIndex) },
+                        get: { Double(playbackManager.currentFrameIndex) },
                         set: { newValue in
-                            currentFrameIndex = Int(newValue)
-                            if isPlaying { stopPlayback() }
+                            playbackManager.currentFrameIndex = Int(newValue)
+                            if playbackManager.isPlaying { playbackManager.stopPlayback() }
                         }
                     ),
-                    in: 0...Double(max(frameCount - 1, 1)),
+                    in: 0...Double(max(playbackManager.frameCount - 1, 1)),
                     step: 1
                 )
             }
 
             HStack(spacing: 16) {
-                Text("\(currentFrameIndex + 1) / \(frameCount)")
+                Text("\(playbackManager.currentFrameIndex + 1) / \(playbackManager.frameCount)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .monospacedDigit()
@@ -185,16 +146,16 @@ struct HandFilmsView: View {
                 Spacer()
 
                 Button {
-                    isPlaying ? stopPlayback() : startPlayback()
+                    playbackManager.isPlaying ? playbackManager.stopPlayback() : playbackManager.startPlayback()
                 } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: playbackManager.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title3)
                 }
-                .disabled(frameCount < 2)
+                .disabled(playbackManager.frameCount < 2)
 
                 Spacer()
 
-                if let film = currentFilm {
+                if let film = playbackManager.currentFilm {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(String(format: "%.2fs total", film.gestureDuration))
                             .font(.caption)
@@ -215,34 +176,32 @@ struct HandFilmsView: View {
             // Prev / counter / Next
             HStack {
                 Button {
-                    stopPlayback()
-                    currentIndex -= 1
+                    playbackManager.goToPrevious()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
                         Text("Prev")
                     }
                 }
-                .disabled(currentIndex <= 0)
+                .disabled(playbackManager.currentIndex <= 0)
 
                 Spacer()
 
-                Text("\(currentIndex + 1) / \(filteredExamples.count)")
+                Text("\(playbackManager.currentIndex + 1) / \(playbackManager.filteredExamples.count)")
                     .font(.subheadline.monospacedDigit())
                     .foregroundColor(.secondary)
 
                 Spacer()
 
                 Button {
-                    stopPlayback()
-                    currentIndex += 1
+                    playbackManager.goToNext()
                 } label: {
                     HStack(spacing: 4) {
                         Text("Next")
                         Image(systemName: "chevron.right")
                     }
                 }
-                .disabled(currentIndex >= filteredExamples.count - 1)
+                .disabled(playbackManager.currentIndex >= playbackManager.filteredExamples.count - 1)
             }
             .padding(.horizontal)
 
@@ -278,10 +237,10 @@ struct HandFilmsView: View {
             .padding(.horizontal)
 
             // Metadata row
-            if let example = currentExample, let film = currentFilm {
+            if let example = playbackManager.currentExample, let film = playbackManager.currentFilm {
                 HStack(spacing: 16) {
                     metaChip(label: "Frames", value: "\(film.frames.count)")
-                    metaChip(label: "Hand", value: currentHandedness)
+                    metaChip(label: "Hand", value: playbackManager.currentHandedness)
                     metaChip(label: "Captured", value: relativeTime(example.timestamp))
                 }
                 .padding(.horizontal)
@@ -309,11 +268,11 @@ struct HandFilmsView: View {
     private var filterMenu: some View {
         Menu {
             Button {
-                filterGestureId = nil
+                playbackManager.setFilter(nil)
             } label: {
                 HStack {
                     Text("All")
-                    if filterGestureId == nil { Image(systemName: "checkmark") }
+                    if playbackManager.filterGestureId == nil { Image(systemName: "checkmark") }
                 }
             }
 
@@ -321,11 +280,11 @@ struct HandFilmsView: View {
 
             ForEach(gestureRegistry.gestures) { gesture in
                 Button {
-                    filterGestureId = gesture.id
+                    playbackManager.setFilter(gesture.id)
                 } label: {
                     HStack {
                         Text(gesture.name)
-                        if filterGestureId == gesture.id { Image(systemName: "checkmark") }
+                        if playbackManager.filterGestureId == gesture.id { Image(systemName: "checkmark") }
                     }
                 }
             }
@@ -346,11 +305,11 @@ struct HandFilmsView: View {
             Image(systemName: "film.stack")
                 .font(.system(size: 56))
                 .foregroundColor(.gray)
-            Text(filterGestureId == nil ? "No films collected yet" : "No films for this gesture")
+            Text(playbackManager.filterGestureId == nil ? "No films collected yet" : "No films for this gesture")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            if filterGestureId != nil {
-                Button("Show All") { filterGestureId = nil }
+            if playbackManager.filterGestureId != nil {
+                Button("Show All") { playbackManager.setFilter(nil) }
                     .buttonStyle(.bordered)
             }
             Spacer()
@@ -358,45 +317,11 @@ struct HandFilmsView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Playback
-
-    private func startPlayback() {
-        guard frameCount > 1 else { return }
-        isPlaying = true
-        playTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { _ in
-            DispatchQueue.main.async {
-                if currentFrameIndex < frameCount - 1 {
-                    currentFrameIndex += 1
-                } else {
-                    stopPlayback()
-                }
-            }
-        }
-    }
-
-    private func stopPlayback() {
-        isPlaying = false
-        playTimer?.invalidate()
-        playTimer = nil
-    }
-
-    // MARK: - Actions
-
-    private func deleteCurrentExample() {
-        guard let example = currentExample else { return }
-        let total = filteredExamples.count
-        trainingDataManager.deleteExample(id: example.id)
-        if currentIndex >= total - 1 {
-            currentIndex = max(0, total - 2)
-        }
-        currentFrameIndex = 0
-    }
-
     // MARK: - Failed Films Section
 
     private var failedFilmsSection: some View {
         let failed = trainingDataManager.failedExamples
-            .filter { filterGestureId == nil || $0.gestureId == filterGestureId }
+            .filter { playbackManager.filterGestureId == nil || $0.gestureId == playbackManager.filterGestureId }
 
         return VStack(spacing: 0) {
             if !failed.isEmpty {
