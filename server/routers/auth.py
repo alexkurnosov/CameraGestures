@@ -4,7 +4,7 @@ import hmac
 import time
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from auth import create_access_token
 from config import settings
@@ -32,7 +32,7 @@ async def register_device(body: DeviceRegisterRequest) -> TokenResponse:
     async with engine.begin() as conn:
         now = time.time()
         await conn.execute(
-            sqlite_insert(devices_table)
+            pg_insert(devices_table)
             .values(device_id=body.device_id, registered_at=now)
             .on_conflict_do_update(
                 index_elements=["device_id"],

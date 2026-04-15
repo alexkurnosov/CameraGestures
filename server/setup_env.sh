@@ -63,10 +63,13 @@ section "Server"
 HOST=$(ask "Bind address" "0.0.0.0")
 PORT=$(ask "Port" "8000")
 
-# ── Storage ───────────────────────────────────────────────────────────────────
+# ── Database ──────────────────────────────────────────────────────────────────
 
-section "Storage"
-DATA_DIR=$(ask "Data directory (use an absolute path on a VPS)" "data")
+section "Database (PostgreSQL)"
+POSTGRES_DB=$(ask "Database name" "gestures")
+POSTGRES_USER=$(ask "Database user" "gestures")
+POSTGRES_PASSWORD=$(generate_secret)
+printf '  %bPOSTGRES_PASSWORD%b  auto-generated ✓\n' "$DIM" "$RESET"
 
 # ── Training ──────────────────────────────────────────────────────────────────
 
@@ -109,9 +112,10 @@ cat > "$ENV_FILE" <<EOF
 HOST=$HOST
 PORT=$PORT
 
-# ── Storage ───────────────────────────────────────────────────────────────────
-# Use an absolute path when deploying to a VPS, e.g. /opt/cameragestures/data
-DATA_DIR=$DATA_DIR
+# ── Database (PostgreSQL) ────────────────────────────────────────────────────
+POSTGRES_DB=$POSTGRES_DB
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 
 # ── Training ──────────────────────────────────────────────────────────────────
 AUTO_TRAIN_THRESHOLD=$AUTO_TRAIN_THRESHOLD
@@ -137,6 +141,7 @@ printf '%b│  Credentials — save these somewhere safe                    │%
 printf '%b└─────────────────────────────────────────────────────────────┘%b\n' "$BOLD" "$RESET"
 printf '\n  %bREGISTRATION_TOKEN%b\n  %s\n' "$YELLOW" "$RESET" "$REGISTRATION_TOKEN"
 printf '\n  %bJWT_SECRET%b\n  %s\n' "$YELLOW" "$RESET" "$JWT_SECRET"
+printf '\n  %bPOSTGRES_PASSWORD%b\n  %s\n' "$YELLOW" "$RESET" "$POSTGRES_PASSWORD"
 printf '\n%b──────────────────────────────────────────────────────────────%b\n' "$DIM" "$RESET"
 printf 'Enter the REGISTRATION_TOKEN in the iOS app:\n'
 printf '  %bSettings → Server → Registration Token%b\n\n' "$CYAN" "$RESET"

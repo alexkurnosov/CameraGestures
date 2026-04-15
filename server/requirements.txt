@@ -9,9 +9,9 @@ python-jose[cryptography]>=3.3
 pydantic>=2.0
 pydantic-settings>=2.0
 
-# Database
+# Database (PostgreSQL)
 sqlalchemy>=2.0
-aiosqlite>=0.20
+asyncpg>=0.29
 
 # ML — TensorFlow with Keras + tf.lite converter
 # tensorflow-cpu has no linux/arm64 wheel (Apple Silicon Docker).

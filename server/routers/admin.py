@@ -1,38 +1,26 @@
-"""POST /admin/update — pull latest code from git and rebuild/restart via Docker Compose."""
+"""POST /admin/update — request a git pull + server rebuild from the host."""
 
 from __future__ import annotations
 
-import asyncio
-import subprocess
+import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from auth import get_current_device
+from config import settings
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-_UPDATE_SCRIPT = Path(__file__).parent.parent / "update_and_restart.sh"
+_TRIGGER_FILE = settings.data_dir / ".update_trigger"
 
 
 @router.post("/update")
 async def update_server(_: str = Depends(get_current_device)) -> dict:
-    """Pull latest code from origin/main and rebuild + restart the server.
+    """Write a trigger file that the host-side watcher picks up.
 
-    Returns immediately with {"status": "updating"} — the server will restart
-    in the background so the caller should not expect a follow-up response.
+    The host systemd path unit detects the file, runs update_and_restart.sh
+    (git pull + docker compose up --build -d), then deletes the trigger.
     """
-    if not _UPDATE_SCRIPT.exists():
-        raise HTTPException(status_code=500, detail="update script not found")
-
-    asyncio.create_task(_run_update())
+    _TRIGGER_FILE.write_text(f"triggered_at={time.time()}\n")
     return {"status": "updating"}
-
-
-async def _run_update() -> None:
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _run_update_sync)
-
-
-def _run_update_sync() -> None:
-    subprocess.run(["bash", str(_UPDATE_SCRIPT)], check=True)

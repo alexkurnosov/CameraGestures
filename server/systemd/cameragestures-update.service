@@ -1,0 +1,11 @@
+# Runs the update script when triggered by cameragestures-update.path.
+# Install: see setup instructions in DEPLOY.md
+[Unit]
+Description=CameraGestures git pull and server restart
+
+[Service]
+Type=oneshot
+# Adjust the path to match your deployment.
+WorkingDirectory=/opt/cameragestures/server
+ExecStart=/opt/cameragestures/server/update_and_restart.sh
+ExecStartPost=/bin/rm -f /opt/cameragestures/server/data/.update_trigger

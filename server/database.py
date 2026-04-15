@@ -1,4 +1,4 @@
-"""SQLAlchemy Core database setup and table definitions."""
+"""SQLAlchemy Core database setup and table definitions (PostgreSQL)."""
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -11,8 +11,7 @@ _engine: AsyncEngine | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        db_url = f"sqlite+aiosqlite:///{settings.db_path}"
-        _engine = create_async_engine(db_url, echo=False)
+        _engine = create_async_engine(settings.database_url, echo=False)
     return _engine
 
 

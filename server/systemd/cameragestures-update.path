@@ -1,0 +1,13 @@
+# Watches for the update trigger file written by POST /admin/update.
+# Install: see setup instructions in DEPLOY.md
+[Unit]
+Description=Watch for CameraGestures server update trigger
+
+[Path]
+# The API endpoint writes this file; systemd detects it via inotify.
+# Adjust the path to match your deployment (must match docker-compose ./data mount).
+PathExists=/opt/cameragestures/server/data/.update_trigger
+Unit=cameragestures-update.service
+
+[Install]
+WantedBy=multi-user.target
