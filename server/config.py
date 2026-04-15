@@ -13,8 +13,15 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Data storage
+    # Data storage (on-disk files: trained models, update trigger)
     data_dir: Path = Path("data")
+
+    # PostgreSQL
+    postgres_host: str = "db"
+    postgres_port: int = 5432
+    postgres_db: str = "gestures"
+    postgres_user: str = "gestures"
+    postgres_password: str
 
     # Training
     auto_train_threshold: int = 10
@@ -30,19 +37,17 @@ class Settings(BaseSettings):
     registration_token: str
 
     @property
-    def examples_dir(self) -> Path:
-        return self.data_dir / "examples"
+    def database_url(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
     @property
     def models_dir(self) -> Path:
         return self.data_dir / "models"
 
-    @property
-    def db_path(self) -> Path:
-        return self.data_dir / "gestures.db"
-
     def ensure_dirs(self) -> None:
-        self.examples_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
 
