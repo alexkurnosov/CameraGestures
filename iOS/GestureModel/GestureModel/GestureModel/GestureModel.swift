@@ -2,6 +2,10 @@ import Foundation
 import HandGestureTypes
 import TensorFlowLite
 
+/// Gesture ID used by the server trainer for the synthetic negative class.
+/// Predictions for this class are filtered out — they indicate "not a known gesture".
+private let noneGestureID = "_none"
+
 /// Neural network abstraction layer for gesture classification.
 public class GestureModel {
 
@@ -226,6 +230,8 @@ public class GestureModel {
             let predictions = probabilities.enumerated().compactMap { (index, confidence) -> GesturePrediction? in
                 guard confidence >= config.predictionThreshold else { return nil }
                 let gestureId = supportedGestureIds[index]
+                // Skip the synthetic negative class — it means "not a known gesture".
+                guard gestureId != noneGestureID else { return nil }
                 return GesturePrediction(gestureId: gestureId, gestureName: gestureId, confidence: confidence, timestamp: timestamp)
             }
 
