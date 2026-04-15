@@ -81,15 +81,33 @@ async def maybe_auto_train() -> None:
 
 async def _run_training(job_id: str) -> None:
     """
-    Runs the selected trainer in a thread pool executor so it doesn't block
-    the event loop during heavy Keras/TF computation.
+    Three-phase pipeline that keeps asyncpg happy:
+      1. Load examples   — async, on the main event loop (asyncpg-safe)
+      2. Train the model — sync, in a thread pool (CPU-heavy, no DB access)
+      3. Save the model  — async, on the main event loop (asyncpg-safe)
     """
     loop = asyncio.get_running_loop()
-    # Snapshot the threshold before entering the thread so we don't need the lock there.
     async with training_state._lock:
         min_in_view = training_state.min_in_view_duration
     try:
-        result: dict[str, Any] = await loop.run_in_executor(None, _train_sync)
+        # Phase 1 — DB read on the main event loop
+        examples = await load_all_examples()
+
+        # Phase 2 — CPU-heavy training in a thread (no DB calls inside)
+        result: dict[str, Any] = await loop.run_in_executor(
+            None, _train_sync, examples, settings.trainer
+        )
+
+        # Phase 3 — DB write on the main event loop
+        await save_model(
+            tflite_path=result["tflite_path"],
+            gesture_ids=result["gesture_ids"],
+            trainer=settings.trainer,
+            trained_on=result["trained_on"],
+            metrics=result["metrics"],
+            min_in_view_duration=min_in_view,
+        )
+
         async with training_state._lock:
             if training_state.job_id == job_id:
                 training_state.status = "ready"
@@ -98,8 +116,6 @@ async def _run_training(job_id: str) -> None:
                 training_state.gesture_ids = result["gesture_ids"]
                 training_state.trained_at = result.get("trained_at")
                 training_state.error = None
-        # Persist min_in_view_duration alongside the model record.
-        result["min_in_view_duration"] = min_in_view
     except Exception as exc:
         async with training_state._lock:
             if training_state.job_id == job_id:
@@ -107,33 +123,15 @@ async def _run_training(job_id: str) -> None:
                 training_state.error = str(exc)
 
 
-def _train_sync() -> dict[str, Any]:
-    """Synchronous training call — runs in a thread pool."""
+def _train_sync(examples: list[dict], trainer: str) -> dict[str, Any]:
+    """Pure CPU training — no DB access, safe to run in a thread pool."""
     import time
-    from storage.example_store import load_all_examples as _load  # sync wrapper
-    import asyncio as _asyncio
 
-    # We're in a thread, so we need a fresh event loop to run the async load
-    examples = _asyncio.run(_load())
-
-    if settings.trainer == "lstm":
+    if trainer == "lstm":
         from ml.trainer_lstm import train
     else:
         from ml.trainer_rf_mlp import train
 
     result = train(examples)
-
-    # Persist model metadata to DB (also needs its own loop)
-    import asyncio as _asyncio2
-    model_id = _asyncio2.run(
-        save_model(
-            tflite_path=result["tflite_path"],
-            gesture_ids=result["gesture_ids"],
-            trainer=settings.trainer,
-            trained_on=result["trained_on"],
-            metrics=result["metrics"],
-            min_in_view_duration=result.get("min_in_view_duration"),
-        )
-    )
-    result["trained_at"] = __import__("time").time()
+    result["trained_at"] = time.time()
     return result
