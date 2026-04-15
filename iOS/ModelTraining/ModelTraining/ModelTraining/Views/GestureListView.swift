@@ -5,6 +5,7 @@ import GestureModelModule
 struct GestureListView: View {
     @EnvironmentObject var trainingDataManager: TrainingDataManager
     @EnvironmentObject var gestureRegistry: GestureRegistry
+    @EnvironmentObject var apiClient: GestureModelAPIClient
 
     @State private var selectedGesture: GestureDefinition?
     @State private var showingGestureDetail = false
@@ -42,6 +43,8 @@ struct GestureListView: View {
             if let gesture = selectedGesture {
                 GestureDetailView(gesture: gesture)
                     .environmentObject(trainingDataManager)
+                    .environmentObject(gestureRegistry)
+                    .environmentObject(apiClient)
             }
         }
         .sheet(isPresented: $showingAddGestureSheet) {
@@ -217,5 +220,6 @@ struct GestureListView_Previews: PreviewProvider {
         GestureListView()
             .environmentObject(TrainingDataManager())
             .environmentObject(GestureRegistry())
+            .environmentObject(GestureModelAPIClient())
     }
 }

@@ -5,6 +5,8 @@ import GestureModelModule
 struct GestureDetailView: View {
     let gesture: GestureDefinition
     @EnvironmentObject var trainingDataManager: TrainingDataManager
+    @EnvironmentObject var gestureRegistry: GestureRegistry
+    @EnvironmentObject var apiClient: GestureModelAPIClient
     @Environment(\.dismiss) private var dismiss
 
     private var examples: [TrainingExample] {
@@ -39,6 +41,15 @@ struct GestureDetailView: View {
                         color: .blue
                     )
 
+                    if let serverCount = trainingDataManager.serverExampleCounts[gesture.id] {
+                        StatisticRow(
+                            title: "On Server",
+                            value: "\(serverCount)",
+                            icon: "cloud.fill",
+                            color: .purple
+                        )
+                    }
+
                     if !examples.isEmpty {
                         StatisticRow(
                             title: "Average Duration",
@@ -53,6 +64,28 @@ struct GestureDetailView: View {
                             icon: "film.fill",
                             color: .green
                         )
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        ServerExamplesView(gesture: gesture)
+                            .environmentObject(trainingDataManager)
+                            .environmentObject(gestureRegistry)
+                            .environmentObject(apiClient)
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .foregroundColor(.blue)
+                                .frame(width: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Sync Examples")
+                                    .font(.subheadline.weight(.medium))
+                                Text("Download, review, relabel, or delete server examples")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                 }
 

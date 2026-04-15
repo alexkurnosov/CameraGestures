@@ -156,13 +156,13 @@ public struct TrainingExample: Identifiable {
     public let sessionId: String
     public let timestamp: TimeInterval
     
-    public init(id: UUID = UUID(), handfilm: HandFilm, gestureId: String, userId: String? = nil, sessionId: String) {
+    public init(id: UUID = UUID(), handfilm: HandFilm, gestureId: String, userId: String? = nil, sessionId: String, timestamp: TimeInterval = Date().timeIntervalSince1970) {
         self.id = id
         self.handfilm = handfilm
         self.gestureId = gestureId
         self.userId = userId
         self.sessionId = sessionId
-        self.timestamp = Date().timeIntervalSince1970
+        self.timestamp = timestamp
     }
 }
 

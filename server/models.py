@@ -34,6 +34,7 @@ class TokenResponse(BaseModel):
 
 
 class TrainingExamplePayload(BaseModel):
+    id: str | None = None  # client-provided UUID; server generates one when absent
     hand_film: HandFilm
     gesture_id: str  # slug, e.g. "thumbs_up"
     session_id: str
@@ -54,6 +55,24 @@ class GestureStats(BaseModel):
 
 class ExampleStatsResponse(BaseModel):
     gestures: list[GestureStats]
+    total: int
+
+
+class UpdateExampleRequest(BaseModel):
+    gesture_id: str
+
+
+class ExampleResponse(BaseModel):
+    id: str
+    gesture_id: str
+    session_id: str
+    user_id: str | None = None
+    hand_film: HandFilm
+    created_at: float
+
+
+class ExampleListResponse(BaseModel):
+    examples: list[ExampleResponse]
     total: int
 
 

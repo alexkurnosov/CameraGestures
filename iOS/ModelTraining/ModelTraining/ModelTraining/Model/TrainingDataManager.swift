@@ -26,6 +26,12 @@ class TrainingDataManager: ObservableObject {
     /// Non-nil when the last attempt to fetch server counts failed.
     @Published var serverSyncError: String?
 
+    /// UUIDs of server examples that should be deleted on the next sync.
+    @Published var pendingDeletions: [UUID] = []
+
+    /// Server examples whose gesture_id was changed locally (UUID → new gesture_id).
+    @Published var pendingRelabels: [UUID: String] = [:]
+
     /// Films that failed the quality threshold. Stored locally only; never uploaded.
     @Published var failedExamples: [FailedHandFilm] = []
 
@@ -54,6 +60,8 @@ class TrainingDataManager: ObservableObject {
     init() {
         loadPendingExamples()
         loadFailedExamples()
+        loadPendingDeletions()
+        loadPendingRelabels()
     }
 
     // MARK: - Data Collection
@@ -194,18 +202,35 @@ class TrainingDataManager: ObservableObject {
         saveFailedExamples()
     }
 
-    /// Upload all pending examples to the server.
+    /// Upload all pending examples, push relabels, and push deletions to the server.
     func sendPendingToServer() {
-        guard !pendingExamples.isEmpty, !isSendingToServer, let client = apiClient else { return }
+        let hasWork = !pendingExamples.isEmpty || !pendingDeletions.isEmpty || !pendingRelabels.isEmpty
+        guard hasWork, !isSendingToServer, let client = apiClient else { return }
         isSendingToServer = true
         uploadState = .uploading
+
         let batch = pendingExamples
+        let deletions = pendingDeletions
+        let relabels = pendingRelabels
         pendingExamples = []
+        pendingDeletions = []
+        pendingRelabels = [:]
         savePendingExamples()
-        print("TrainingDataManager: uploading \(batch.count) example(s) to \(client.baseURL)")
+        savePendingDeletions()
+        savePendingRelabels()
+
+        let parts = [
+            batch.isEmpty ? nil : "\(batch.count) upload(s)",
+            relabels.isEmpty ? nil : "\(relabels.count) relabel(s)",
+            deletions.isEmpty ? nil : "\(deletions.count) deletion(s)",
+        ].compactMap { $0 }.joined(separator: ", ")
+        print("TrainingDataManager: syncing \(parts) to \(client.baseURL)")
+
         Task.detached { [weak self, weak client] in
             guard let client else { return }
             var lastTotal = 0
+
+            // 1. Upload new examples
             for example in batch {
                 do {
                     let response = try await client.uploadExample(example)
@@ -220,6 +245,37 @@ class TrainingDataManager: ObservableObject {
                     return
                 }
             }
+
+            // 2. Push relabels
+            for (id, newGestureId) in relabels {
+                do {
+                    try await client.updateExample(id: id.uuidString, gestureId: newGestureId)
+                    print("TrainingDataManager: relabeled example \(id) → \(newGestureId)")
+                } catch {
+                    print("TrainingDataManager: relabel failed for \(id) — \(error)")
+                    await MainActor.run {
+                        self?.uploadState = .failed(error.localizedDescription)
+                        self?.isSendingToServer = false
+                    }
+                    return
+                }
+            }
+
+            // 3. Push deletions
+            for id in deletions {
+                do {
+                    try await client.deleteExample(id: id.uuidString)
+                    print("TrainingDataManager: deleted example \(id) on server")
+                } catch {
+                    print("TrainingDataManager: delete failed for \(id) — \(error)")
+                    await MainActor.run {
+                        self?.uploadState = .failed(error.localizedDescription)
+                        self?.isSendingToServer = false
+                    }
+                    return
+                }
+            }
+
             await MainActor.run {
                 self?.uploadState = .uploaded(total: lastTotal)
                 self?.isSendingToServer = false
@@ -291,10 +347,19 @@ class TrainingDataManager: ObservableObject {
     // MARK: - Example Mutation
 
     func deleteExample(id: UUID) {
+        let isPending = pendingExamples.contains { $0.id == id }
         trainingExamples.removeAll { $0.id == id }
         pendingExamples.removeAll { $0.id == id }
         currentDataset?.removeExample(id: id)
         savePendingExamples()
+
+        // If this was a server-downloaded example, schedule deletion on next sync
+        if !isPending {
+            pendingDeletions.append(id)
+            pendingRelabels.removeValue(forKey: id)
+            savePendingDeletions()
+            savePendingRelabels()
+        }
     }
 
     func relabelExample(id: UUID, newGestureId: String) {
@@ -305,9 +370,11 @@ class TrainingDataManager: ObservableObject {
                 handfilm: old.handfilm,
                 gestureId: newGestureId,
                 userId: old.userId,
-                sessionId: old.sessionId
+                sessionId: old.sessionId,
+                timestamp: old.timestamp
             )
         }
+        let isPending: Bool
         if let idx = pendingExamples.firstIndex(where: { $0.id == id }) {
             let old = pendingExamples[idx]
             pendingExamples[idx] = TrainingExample(
@@ -315,11 +382,21 @@ class TrainingDataManager: ObservableObject {
                 handfilm: old.handfilm,
                 gestureId: newGestureId,
                 userId: old.userId,
-                sessionId: old.sessionId
+                sessionId: old.sessionId,
+                timestamp: old.timestamp
             )
+            isPending = true
+        } else {
+            isPending = false
         }
         currentDataset?.relabelExample(id: id, newGestureId: newGestureId)
         savePendingExamples()
+
+        // If this was a server-downloaded example, schedule relabel on next sync
+        if !isPending {
+            pendingRelabels[id] = newGestureId
+            savePendingRelabels()
+        }
     }
 
     /// All dataset names currently saved on disk.
@@ -334,6 +411,89 @@ class TrainingDataManager: ObservableObject {
             .filter { $0.pathExtension == "json" }
             .map { $0.deletingPathExtension().lastPathComponent }
             .sorted()
+    }
+
+    // MARK: - Download Examples from Server
+
+    /// Download all examples for a gesture from the server, replacing local copies for that gesture.
+    /// Returns the downloaded examples count.
+    @discardableResult
+    func downloadExamplesFromServer(gestureId: String) async throws -> Int {
+        guard let client = apiClient else {
+            throw NSError(domain: "TrainingDataManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "API client not configured"])
+        }
+
+        let response = try await client.downloadExamples(gestureId: gestureId)
+
+        let downloaded: [TrainingExample] = response.examples.compactMap { serverExample in
+            guard let uuid = UUID(uuidString: serverExample.id) else { return nil }
+            let handFilm = self.convertServerHandFilm(serverExample.handFilm)
+            return TrainingExample(
+                id: uuid,
+                handfilm: handFilm,
+                gestureId: serverExample.gestureId,
+                userId: serverExample.userId,
+                sessionId: serverExample.sessionId,
+                timestamp: serverExample.createdAt
+            )
+        }
+
+        await MainActor.run {
+            // Remove existing local examples for this gesture (both pending and synced)
+            trainingExamples.removeAll { $0.gestureId == gestureId }
+            pendingExamples.removeAll { $0.gestureId == gestureId }
+            // Clear any pending operations for this gesture's examples
+            pendingDeletions.removeAll { id in
+                !trainingExamples.contains { $0.id == id }
+            }
+            for key in pendingRelabels.keys {
+                if !trainingExamples.contains(where: { $0.id == key }) {
+                    pendingRelabels.removeValue(forKey: key)
+                }
+            }
+
+            // Add downloaded examples
+            trainingExamples.append(contentsOf: downloaded)
+            if currentDataset != nil {
+                currentDataset?.examples.removeAll { $0.gestureId == gestureId }
+                for example in downloaded {
+                    currentDataset?.addExample(example)
+                }
+            }
+
+            savePendingExamples()
+            savePendingDeletions()
+            savePendingRelabels()
+            objectWillChange.send()
+        }
+
+        await fetchServerExampleCounts()
+        return downloaded.count
+    }
+
+    /// Convert server hand film response to a HandFilm domain object.
+    private func convertServerHandFilm(_ serverFilm: ServerHandFilmResponse) -> HandFilm {
+        var film = HandFilm(startTime: serverFilm.startTime)
+        for serverShot in serverFilm.frames {
+            let landmarks = serverShot.landmarks.map {
+                Point3D(x: $0.x, y: $0.y, z: $0.z)
+            }
+            let side: LeftOrRight = {
+                switch serverShot.leftOrRight {
+                case "left": return .left
+                case "right": return .right
+                default: return .unknown
+                }
+            }()
+            let shot = HandShot(
+                landmarks: landmarks,
+                timestamp: serverShot.timestamp,
+                leftOrRight: side,
+                isAbsent: serverShot.isAbsent ?? false
+            )
+            film.addFrame(shot)
+        }
+        return film
     }
 
     // MARK: - Pending & Failed Persistence
@@ -380,6 +540,53 @@ class TrainingDataManager: ObservableObject {
         failedExamples = dtos.map { $0.toFailedHandFilm() }
     }
 
+    // MARK: - Pending Deletions Persistence
+
+    func savePendingDeletions() {
+        let url = pendingDeletionsFileURL()
+        do {
+            let strings = pendingDeletions.map { $0.uuidString }
+            let data = try JSONEncoder().encode(strings)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("TrainingDataManager: failed to save pending deletions — \(error)")
+        }
+    }
+
+    private func loadPendingDeletions() {
+        let url = pendingDeletionsFileURL()
+        guard let data = try? Data(contentsOf: url),
+              let strings = try? JSONDecoder().decode([String].self, from: data) else {
+            return
+        }
+        pendingDeletions = strings.compactMap { UUID(uuidString: $0) }
+    }
+
+    // MARK: - Pending Relabels Persistence
+
+    func savePendingRelabels() {
+        let url = pendingRelabelsFileURL()
+        do {
+            let stringKeyed = Dictionary(uniqueKeysWithValues: pendingRelabels.map { ($0.key.uuidString, $0.value) })
+            let data = try JSONEncoder().encode(stringKeyed)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("TrainingDataManager: failed to save pending relabels — \(error)")
+        }
+    }
+
+    private func loadPendingRelabels() {
+        let url = pendingRelabelsFileURL()
+        guard let data = try? Data(contentsOf: url),
+              let stringKeyed = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return
+        }
+        pendingRelabels = Dictionary(uniqueKeysWithValues: stringKeyed.compactMap { key, value in
+            guard let uuid = UUID(uuidString: key) else { return nil }
+            return (uuid, value)
+        })
+    }
+
     // MARK: - File Paths
 
     private func datasetsDirectory() -> URL {
@@ -399,5 +606,15 @@ class TrainingDataManager: ObservableObject {
     private func failedExamplesFileURL() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("failed_examples.json")
+    }
+
+    private func pendingDeletionsFileURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pending_deletions.json")
+    }
+
+    private func pendingRelabelsFileURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pending_relabels.json")
     }
 }
