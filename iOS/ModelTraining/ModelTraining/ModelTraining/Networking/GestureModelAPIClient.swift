@@ -80,6 +80,10 @@ struct ModelStatusResponse: Codable {
     }
 }
 
+struct UpdateServerResponse: Codable {
+    let status: String
+}
+
 // MARK: - Upload State
 
 enum UploadState: Equatable {
@@ -358,6 +362,16 @@ class GestureModelAPIClient: ObservableObject {
 
         print("[GestureModelAPIClient] Model saved to \(destURL.path), gesture_ids: \(status.gestureIds)")
         return destURL
+    }
+
+    // MARK: - Update Server
+
+    /// POST /admin/update — triggers git pull + docker compose up --build -d on the VPS.
+    /// The server will restart shortly after; the response arrives before it goes down.
+    func updateServer() async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("admin/update"))
+        request.httpMethod = "POST"
+        let _: UpdateServerResponse = try await perform(request, decoding: UpdateServerResponse.self)
     }
 
     // MARK: - Wipe Model

@@ -10,12 +10,18 @@ struct SettingsView: View {
 
     @State private var showingResetAlert = false
     @State private var showingAbout = false
+    @State private var isUpdatingServer = false
+    @State private var updateServerResult: Result<Void, Error>? = nil
+    @State private var showingUpdateAlert = false
     
     var body: some View {
         NavigationView {
             Form {
                 // Server Settings Section
                 serverSection
+
+                // Server Admin Section
+                serverAdminSection
 
                 // Camera Settings Section
                 cameraSettingsSection
@@ -49,6 +55,18 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAbout) {
             AboutView()
         }
+        .alert("Server Update", isPresented: $showingUpdateAlert) {
+            Button("OK", role: .cancel) { updateServerResult = nil }
+        } message: {
+            switch updateServerResult {
+            case .success:
+                Text("Update started. The server will restart shortly.")
+            case .failure(let error):
+                Text("Update failed: \(error.localizedDescription)")
+            case .none:
+                Text("")
+            }
+        }
     }
     
     // MARK: - Settings Sections
@@ -81,6 +99,26 @@ struct SettingsView: View {
                 apiClient.clearToken()
             }
             .foregroundColor(.red)
+        }
+    }
+
+    private var serverAdminSection: some View {
+        Section("Server Admin") {
+            Button(action: triggerServerUpdate) {
+                HStack {
+                    if isUpdatingServer {
+                        ProgressView()
+                            .frame(width: 24)
+                    } else {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundColor(.orange)
+                            .frame(width: 24)
+                    }
+                    Text("Update & Restart Server")
+                        .foregroundColor(isUpdatingServer ? .secondary : .orange)
+                }
+            }
+            .disabled(isUpdatingServer)
         }
     }
 
@@ -411,7 +449,21 @@ struct SettingsView: View {
     }
     
     // MARK: - Actions
-    
+
+    private func triggerServerUpdate() {
+        isUpdatingServer = true
+        Task {
+            do {
+                try await apiClient.updateServer()
+                updateServerResult = .success(())
+            } catch {
+                updateServerResult = .failure(error)
+            }
+            isUpdatingServer = false
+            showingUpdateAlert = true
+        }
+    }
+
     private func resetAllSettings() {
         appSettings.colorScheme = nil
         appSettings.preferredCamera = 0

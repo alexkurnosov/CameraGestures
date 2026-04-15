@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db
-from routers import auth, examples, model, training
+from routers import admin, auth, examples, model, training
 
 
 @asynccontextmanager
@@ -41,6 +41,7 @@ app.include_router(auth.router)
 app.include_router(examples.router)
 app.include_router(training.router)
 app.include_router(model.router)
+app.include_router(admin.router)
 
 
 @app.get("/health", tags=["meta"])
