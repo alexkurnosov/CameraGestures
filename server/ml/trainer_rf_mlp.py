@@ -19,10 +19,66 @@ import numpy as np
 from config import settings
 from ml.preprocessor import summary_features
 
+NONE_GESTURE_ID = "_none"
+
+
+def _generate_none_examples(
+    X: np.ndarray, y: np.ndarray, per_class_count: int, rng: np.random.Generator
+) -> np.ndarray:
+    """
+    Synthesise negative ("none") examples so the model learns to reject
+    hand poses that don't match any trained gesture.
+
+    Three strategies, each contributing a third of the samples:
+      1. **Interpolation** — lerp between examples of *different* classes.
+         Produces realistic but ambiguous "in-between" hand poses.
+      2. **Jitter** — add Gaussian noise to random real examples.
+         Teaches the model that slightly-off poses aren't valid.
+      3. **Shuffle** — randomly permute feature values.
+         Creates unrealistic feature vectors well outside the real manifold.
+    """
+    n_total = per_class_count
+    n_interp = n_total // 3
+    n_jitter = n_total // 3
+    n_shuffle = n_total - n_interp - n_jitter
+
+    parts: list[np.ndarray] = []
+
+    # 1. Interpolation between different classes
+    if len(np.unique(y)) >= 2 and n_interp > 0:
+        interp = np.empty((n_interp, X.shape[1]), dtype=np.float32)
+        for i in range(n_interp):
+            c1, c2 = rng.choice(np.unique(y), size=2, replace=False)
+            a = X[rng.choice(np.where(y == c1)[0])]
+            b = X[rng.choice(np.where(y == c2)[0])]
+            alpha = rng.uniform(0.3, 0.7)
+            interp[i] = a * alpha + b * (1 - alpha)
+        parts.append(interp)
+
+    # 2. Jittered copies
+    if n_jitter > 0:
+        idxs = rng.choice(len(X), size=n_jitter)
+        std = np.std(X, axis=0, keepdims=True).clip(min=1e-6)
+        noise = rng.normal(0, 0.5, size=(n_jitter, X.shape[1])).astype(np.float32)
+        parts.append(X[idxs] + noise * std)
+
+    # 3. Feature-shuffled
+    if n_shuffle > 0:
+        idxs = rng.choice(len(X), size=n_shuffle)
+        shuffled = X[idxs].copy()
+        for i in range(n_shuffle):
+            rng.shuffle(shuffled[i])
+        parts.append(shuffled)
+
+    return np.concatenate(parts, axis=0)
+
 
 def train(examples: list[dict]) -> dict:
     """
     Train an MLP on the supplied examples and export a .tflite file.
+
+    A synthetic ``_none`` class is added automatically so the model can
+    reject hand poses that don't match any trained gesture.
 
     Parameters
     ----------
@@ -46,15 +102,35 @@ def train(examples: list[dict]) -> dict:
         raise ValueError("Need at least 2 training examples.")
 
     gesture_ids_ordered = sorted({e["gesture_id"] for e in examples})
-    label_enc = LabelEncoder()
-    label_enc.fit(gesture_ids_ordered)
+
+    X_real = np.array([summary_features(e["hand_film"]) for e in examples], dtype=np.float32)
+    y_labels = np.array([e["gesture_id"] for e in examples])
+
+    if len(np.unique(y_labels)) < 2:
+        raise ValueError("Need examples for at least 2 different gestures to train.")
+
+    # --- Add synthetic "_none" class ---
+    # Encode real labels first so we can pass integer labels to the generator.
+    real_label_enc = LabelEncoder()
+    real_label_enc.fit(gesture_ids_ordered)
+    y_real_int = real_label_enc.transform(y_labels)
+
+    rng = np.random.default_rng(42)
+    per_class_count = max(int(np.mean(np.bincount(y_real_int))), 5)
+    X_none = _generate_none_examples(X_real, y_real_int, per_class_count, rng)
+
+    # Combine real + none
+    gesture_ids_ordered = sorted({e["gesture_id"] for e in examples}) + [NONE_GESTURE_ID]
     n_classes = len(gesture_ids_ordered)
 
-    X = np.array([summary_features(e["hand_film"]) for e in examples], dtype=np.float32)
-    y = label_enc.transform([e["gesture_id"] for e in examples])
+    label_enc = LabelEncoder()
+    label_enc.fit(gesture_ids_ordered)
 
-    if len(np.unique(y)) < 2:
-        raise ValueError("Need examples for at least 2 different gestures to train.")
+    X = np.concatenate([X_real, X_none], axis=0)
+    y = np.concatenate([
+        label_enc.transform([e["gesture_id"] for e in examples]),
+        np.full(len(X_none), label_enc.transform([NONE_GESTURE_ID])[0], dtype=int),
+    ])
 
     # Split for evaluation (80/20); fall back to no split if dataset is tiny
     if len(X) >= 10:
