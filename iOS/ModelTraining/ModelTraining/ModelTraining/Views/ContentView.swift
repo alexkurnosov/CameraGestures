@@ -102,5 +102,6 @@ struct ContentView_Previews: PreviewProvider {
             .environmentObject(TrainingDataManager())
             .environmentObject(AppSettings())
             .environmentObject(GestureRegistry())
+            .environmentObject(GestureModelAPIClient())
     }
 }

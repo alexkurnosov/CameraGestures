@@ -24,7 +24,8 @@ struct TrainingExampleDTO: Codable {
             handfilm: handfilm.toHandFilm(),
             gestureId: gestureId,
             userId: userId,
-            sessionId: sessionId
+            sessionId: sessionId,
+            timestamp: timestamp
         )
     }
 }

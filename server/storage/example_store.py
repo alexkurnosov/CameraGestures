@@ -11,10 +11,34 @@ from models import TrainingExamplePayload
 
 
 async def save_example(payload: TrainingExamplePayload) -> str:
-    """Insert one training example. Returns its generated UUID."""
-    example_id = str(uuid.uuid4())
+    """Insert or update one training example. Returns its UUID.
+
+    When ``payload.id`` is supplied and already exists the row is updated
+    (upsert); otherwise a new row is created.
+    """
+    example_id = payload.id or str(uuid.uuid4())
     engine = get_engine()
     async with engine.begin() as conn:
+        # Check if this id already exists
+        if payload.id:
+            existing = await conn.execute(
+                sa.select(examples_table.c.id).where(
+                    examples_table.c.id == example_id
+                )
+            )
+            if existing.first() is not None:
+                await conn.execute(
+                    examples_table.update()
+                    .where(examples_table.c.id == example_id)
+                    .values(
+                        gesture_id=payload.gesture_id,
+                        session_id=payload.session_id,
+                        user_id=payload.user_id,
+                        hand_film_json=payload.hand_film.model_dump_json(),
+                    )
+                )
+                return example_id
+
         await conn.execute(
             examples_table.insert().values(
                 id=example_id,
@@ -63,6 +87,52 @@ async def delete_all_examples(gesture_id: str | None = None) -> int:
             stmt = stmt.where(examples_table.c.gesture_id == gesture_id)
         result = await conn.execute(stmt)
     return result.rowcount
+
+
+async def get_examples_by_gesture(gesture_id: str) -> list[dict]:
+    """Return all examples for a given gesture slug, ordered by created_at."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            sa.select(examples_table)
+            .where(examples_table.c.gesture_id == gesture_id)
+            .order_by(examples_table.c.created_at)
+        )
+        rows = result.mappings().all()
+
+    return [
+        {
+            "id": row["id"],
+            "gesture_id": row["gesture_id"],
+            "session_id": row["session_id"],
+            "user_id": row["user_id"],
+            "hand_film": json.loads(row["hand_film_json"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+async def delete_example_by_id(example_id: str) -> bool:
+    """Delete a single example by UUID. Returns True if a row was deleted."""
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            examples_table.delete().where(examples_table.c.id == example_id)
+        )
+    return result.rowcount > 0
+
+
+async def update_example_gesture(example_id: str, new_gesture_id: str) -> bool:
+    """Update the gesture_id of a single example. Returns True if a row was updated."""
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            examples_table.update()
+            .where(examples_table.c.id == example_id)
+            .values(gesture_id=new_gesture_id)
+        )
+    return result.rowcount > 0
 
 
 async def load_all_examples() -> list[dict]:

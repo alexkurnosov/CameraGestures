@@ -84,6 +84,61 @@ struct UpdateServerResponse: Codable {
     let status: String
 }
 
+// MARK: - Sync Response Types
+
+struct ServerExampleResponse: Codable {
+    let id: String
+    let gestureId: String
+    let sessionId: String
+    let userId: String?
+    let handFilm: ServerHandFilmResponse
+    let createdAt: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case gestureId = "gesture_id"
+        case sessionId = "session_id"
+        case userId = "user_id"
+        case handFilm = "hand_film"
+        case createdAt = "created_at"
+    }
+}
+
+struct ServerHandFilmResponse: Codable {
+    let frames: [ServerHandShotResponse]
+    let startTime: Double
+
+    enum CodingKeys: String, CodingKey {
+        case frames
+        case startTime = "start_time"
+    }
+}
+
+struct ServerHandShotResponse: Codable {
+    let landmarks: [ServerPoint3DResponse]
+    let timestamp: Double
+    let leftOrRight: String
+    let isAbsent: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case landmarks
+        case timestamp
+        case leftOrRight = "left_or_right"
+        case isAbsent = "is_absent"
+    }
+}
+
+struct ServerPoint3DResponse: Codable {
+    let x: Float
+    let y: Float
+    let z: Float
+}
+
+struct ExampleListResponse: Codable {
+    let examples: [ServerExampleResponse]
+    let total: Int
+}
+
 // MARK: - Upload State
 
 enum UploadState: Equatable {
@@ -206,6 +261,55 @@ class GestureModelAPIClient: ObservableObject {
         request.httpBody = try encoder.encode(payload)
 
         return try await perform(request, decoding: UploadExampleResponse.self)
+    }
+
+    // MARK: - Download Examples
+
+    func downloadExamples(gestureId: String) async throws -> ExampleListResponse {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("GET", path: "/examples?gesture_id=\(gestureId)")
+            return ExampleListResponse(examples: [], total: 0)
+        }
+
+        var components = URLComponents(url: baseURL.appendingPathComponent("examples"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "gesture_id", value: gestureId)]
+        let request = URLRequest(url: components.url!)
+        return try await perform(request, decoding: ExampleListResponse.self)
+    }
+
+    // MARK: - Update Example (Relabel)
+
+    func updateExample(id: String, gestureId: String) async throws {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("PUT", path: "/examples/\(id)")
+            return
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("examples/\(id)"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["gesture_id": gestureId]
+        request.httpBody = try encoder.encode(body)
+
+        let _: [String: String] = try await perform(request, decoding: [String: String].self)
+    }
+
+    // MARK: - Delete Single Example
+
+    func deleteExample(id: String) async throws {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("DELETE", path: "/examples/\(id)")
+            return
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("examples/\(id)"))
+        request.httpMethod = "DELETE"
+
+        struct DeleteResponse: Decodable {
+            let id: String
+            let deleted: Bool
+        }
+        let _: DeleteResponse = try await perform(request, decoding: DeleteResponse.self)
     }
 
     // MARK: - Example Stats
@@ -477,12 +581,14 @@ private struct ServerErrorDetail: Decodable {
 /// Codable wrapper for TrainingExample to send over the network.
 /// HandGestureTypes structs are not Codable by design; this wrapper lives in the app target.
 private struct TrainingExamplePayload: Encodable {
+    let id: String
     let handFilm: HandFilmPayload
     let gestureId: String
     let sessionId: String
     let userId: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case handFilm = "hand_film"
         case gestureId = "gesture_id"
         case sessionId = "session_id"
@@ -490,6 +596,7 @@ private struct TrainingExamplePayload: Encodable {
     }
 
     init(from example: TrainingExample) {
+        id = example.id.uuidString
         handFilm = HandFilmPayload(from: example.handfilm)
         gestureId = example.gestureId
         sessionId = example.sessionId
