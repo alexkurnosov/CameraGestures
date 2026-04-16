@@ -82,6 +82,13 @@ async def list_examples(
     return ExampleListResponse(examples=examples, total=len(examples))
 
 
+@router.get("/stats", response_model=ExampleStatsResponse)
+async def example_stats(_: str = Depends(get_current_device)) -> ExampleStatsResponse:
+    counts = await count_all_by_gesture()
+    gestures = [GestureStats(gesture_id=gid, count=cnt) for gid, cnt in counts.items()]
+    return ExampleStatsResponse(gestures=gestures, total=sum(counts.values()))
+
+
 @router.put("/{example_id}", status_code=200)
 async def update_example(
     example_id: str = Path(..., description="UUID of the example to update."),
@@ -105,13 +112,6 @@ async def delete_single_example(
     if not deleted:
         raise HTTPException(status_code=404, detail="Example not found.")
     return {"id": example_id, "deleted": True}
-
-
-@router.get("/stats", response_model=ExampleStatsResponse)
-async def example_stats(_: str = Depends(get_current_device)) -> ExampleStatsResponse:
-    counts = await count_all_by_gesture()
-    gestures = [GestureStats(gesture_id=gid, count=cnt) for gid, cnt in counts.items()]
-    return ExampleStatsResponse(gestures=gestures, total=sum(counts.values()))
 
 
 @router.delete("", status_code=200)
