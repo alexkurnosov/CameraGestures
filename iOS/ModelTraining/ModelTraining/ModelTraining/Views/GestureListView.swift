@@ -8,7 +8,6 @@ struct GestureListView: View {
     @EnvironmentObject var apiClient: GestureModelAPIClient
 
     @State private var selectedGesture: GestureDefinition?
-    @State private var showingGestureDetail = false
     @State private var showingAddGestureSheet = false
     @State private var searchText = ""
 
@@ -39,13 +38,11 @@ struct GestureListView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingGestureDetail) {
-            if let gesture = selectedGesture {
-                GestureDetailView(gesture: gesture)
-                    .environmentObject(trainingDataManager)
-                    .environmentObject(gestureRegistry)
-                    .environmentObject(apiClient)
-            }
+        .sheet(item: $selectedGesture) { gesture in
+            GestureDetailView(gesture: gesture)
+                .environmentObject(trainingDataManager)
+                .environmentObject(gestureRegistry)
+                .environmentObject(apiClient)
         }
         .sheet(isPresented: $showingAddGestureSheet) {
             AddGestureSheet()
@@ -128,7 +125,6 @@ struct GestureListView: View {
                         lastRecorded: getLastRecorded(for: gesture)
                     ) {
                         selectedGesture = gesture
-                        showingGestureDetail = true
                     }
                 }
                 .onDelete { offsets in
