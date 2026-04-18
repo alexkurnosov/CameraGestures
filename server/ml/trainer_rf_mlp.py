@@ -120,7 +120,7 @@ def train(examples: list[dict]) -> dict:
     X_none = _generate_none_examples(X_real, y_real_int, per_class_count, rng)
 
     # Combine real + none
-    gesture_ids_ordered = sorted({e["gesture_id"] for e in examples}) + [NONE_GESTURE_ID]
+    gesture_ids_ordered = sorted({e["gesture_id"] for e in examples} | {NONE_GESTURE_ID})
     n_classes = len(gesture_ids_ordered)
 
     label_enc = LabelEncoder()
