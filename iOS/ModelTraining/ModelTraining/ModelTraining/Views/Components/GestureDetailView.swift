@@ -16,7 +16,7 @@ struct GestureDetailView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 Section("Gesture Info") {
                     LabeledContent("Name", value: gesture.name)
