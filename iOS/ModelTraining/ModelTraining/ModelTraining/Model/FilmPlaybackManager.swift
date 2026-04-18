@@ -25,6 +25,7 @@ class FilmPlaybackManager: ObservableObject {
         guard !isConfigured else { return }
         isConfigured = true
         self.trainingDataManager = dataManager
+        objectWillChange.send()
     }
 
     // MARK: - Computed Properties
