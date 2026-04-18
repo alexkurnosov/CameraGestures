@@ -92,6 +92,7 @@ class FilmPlaybackManager: ObservableObject {
         if currentIndex > 0 {
             currentIndex -= 1
         }
+        currentFrameIndex = 0
     }
 
     func goToNext() {
@@ -100,6 +101,7 @@ class FilmPlaybackManager: ObservableObject {
         if currentIndex < count - 1 {
             currentIndex += 1
         }
+        currentFrameIndex = 0
     }
 
     func setFilter(_ gestureId: String?) {
