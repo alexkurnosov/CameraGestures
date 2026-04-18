@@ -77,8 +77,8 @@ struct CameraView: View {
                             recentGesturesSection
                         }
 
-                        // Send to server (shown when there are pending examples)
-                        if !trainingDataManager.pendingExamples.isEmpty || trainingDataManager.isSendingToServer {
+                        // Send to server (shown when there are pending or collected examples)
+                        if !trainingDataManager.pendingExamples.isEmpty || trainingDataManager.isSendingToServer || !trainingDataManager.trainingExamples.isEmpty {
                             sendToServerSection
                         }
                     }
