@@ -202,6 +202,12 @@ class TrainingDataManager: ObservableObject {
         saveFailedExamples()
     }
 
+    /// Permanently delete all failed films.
+    func deleteAllFailedFilms() {
+        failedExamples.removeAll()
+        saveFailedExamples()
+    }
+
     /// Upload all pending examples, push relabels, and push deletions to the server.
     func sendPendingToServer() {
         let hasWork = !pendingExamples.isEmpty || !pendingDeletions.isEmpty || !pendingRelabels.isEmpty

@@ -14,6 +14,7 @@ struct HandFilmsView: View {
     @State private var showingValidateAlert = false
     @State private var failedFilmToDelete: FailedHandFilm? = nil
     @State private var showingFailedDeleteAlert = false
+    @State private var showingClearAllFailedAlert = false
 
     // MARK: - Display helpers
 
@@ -81,6 +82,14 @@ struct HandFilmsView: View {
             Button("Cancel", role: .cancel) { failedFilmToValidate = nil }
         } message: {
             Text("This film will be added to your training collection despite not meeting the quality threshold.")
+        }
+        .alert("Clear All Failed Films?", isPresented: $showingClearAllFailedAlert) {
+            Button("Clear All", role: .destructive) {
+                trainingDataManager.deleteAllFailedFilms()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("All failed films will be permanently removed.")
         }
         .alert("Delete Failed Film?", isPresented: $showingFailedDeleteAlert) {
             Button("Delete", role: .destructive) {
@@ -327,25 +336,37 @@ struct HandFilmsView: View {
             if !failed.isEmpty {
                 Divider().padding(.top, 8)
 
-                Button {
-                    withAnimation { showFailedFilms.toggle() }
-                } label: {
-                    HStack {
-                        Image(systemName: showFailedFilms ? "chevron.down" : "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(.secondary)
-                        Text("Failed Films (\(failed.count))")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.orange)
-                        Spacer()
-                        Text("Not sent to server")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                HStack {
+                    Button {
+                        withAnimation { showFailedFilms.toggle() }
+                    } label: {
+                        HStack {
+                            Image(systemName: showFailedFilms ? "chevron.down" : "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                            Text("Failed Films (\(failed.count))")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.orange)
+                            Spacer()
+                            Text("Not sent to server")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 10)
+                    .buttonStyle(.plain)
+
+                    Button {
+                        showingClearAllFailedAlert = true
+                    } label: {
+                        Text("Clear All")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 16)
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal)
+                .padding(.vertical, 10)
 
                 if showFailedFilms {
                     ForEach(failed) { film in
