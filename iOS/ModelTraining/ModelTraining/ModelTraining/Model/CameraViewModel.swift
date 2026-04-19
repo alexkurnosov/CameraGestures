@@ -111,6 +111,7 @@ class CameraViewModel: ObservableObject {
             showModelNotTrainedBanner = true
             return
         }
+        recentGestures.removeAll()
         Task {
             do {
                 try await gestureRecognizer.recognizer.start()
@@ -159,14 +160,12 @@ class CameraViewModel: ObservableObject {
     }
 
     func stopAll() {
-        if isRecognitionActive {
-            gestureRecognizer?.recognizer.stop()
-            isRecognitionActive = false
-        }
         if seriesCoordinator.isRunning {
             seriesCoordinator.stop()
             trainingDataManager?.stopDataCollection()
         }
+        gestureRecognizer?.recognizer.stop()
+        isRecognitionActive = false
     }
 
     func clearGestures() {
