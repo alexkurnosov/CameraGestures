@@ -92,6 +92,8 @@ class ModelStatusResponse(BaseModel):
 
 class TriggerTrainingRequest(BaseModel):
     min_in_view_duration: float = 1.2
+    # Class-imbalance strategy — see ml.trainer_rf_mlp.BALANCE_STRATEGIES.
+    balance_strategy: str = "class_weight"
 
 
 class ModelInfoResponse(BaseModel):

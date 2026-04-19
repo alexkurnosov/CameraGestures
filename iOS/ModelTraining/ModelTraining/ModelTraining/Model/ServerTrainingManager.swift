@@ -55,7 +55,10 @@ class ServerTrainingManager: ObservableObject {
         guard let apiClient, let appSettings else { return }
         Task {
             do {
-                let job = try await apiClient.triggerTraining(minInViewDuration: appSettings.minInViewDuration)
+                let job = try await apiClient.triggerTraining(
+                    minInViewDuration: appSettings.minInViewDuration,
+                    balanceStrategy: appSettings.balanceStrategy.rawValue
+                )
                 print("[ServerTrainingManager] Training job started: \(job.jobId)")
                 appSettings.lockThresholdIfNeeded()
                 startPollingStatus()

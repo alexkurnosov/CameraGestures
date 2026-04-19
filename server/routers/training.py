@@ -35,6 +35,7 @@ async def trigger_training(
         training_state.job_id = job_id
         training_state.status = "training"
         training_state.min_in_view_duration = body.min_in_view_duration
+        training_state.balance_strategy = body.balance_strategy
         training_state.error = None
 
     asyncio.create_task(_run_training(job_id))
@@ -89,13 +90,14 @@ async def _run_training(job_id: str) -> None:
     loop = asyncio.get_running_loop()
     async with training_state._lock:
         min_in_view = training_state.min_in_view_duration
+        balance_strategy = training_state.balance_strategy
     try:
         # Phase 1 — DB read on the main event loop
         examples = await load_all_examples()
 
         # Phase 2 — CPU-heavy training in a thread (no DB calls inside)
         result: dict[str, Any] = await loop.run_in_executor(
-            None, _train_sync, examples, settings.trainer
+            None, _train_sync, examples, settings.trainer, balance_strategy
         )
 
         # Phase 3 — DB write on the main event loop
@@ -123,15 +125,18 @@ async def _run_training(job_id: str) -> None:
                 training_state.error = str(exc)
 
 
-def _train_sync(examples: list[dict], trainer: str) -> dict[str, Any]:
+def _train_sync(
+    examples: list[dict], trainer: str, balance_strategy: str
+) -> dict[str, Any]:
     """Pure CPU training — no DB access, safe to run in a thread pool."""
     import time
 
     if trainer == "lstm":
         from ml.trainer_lstm import train
+        result = train(examples)
     else:
         from ml.trainer_rf_mlp import train
+        result = train(examples, balance_strategy=balance_strategy)
 
-    result = train(examples)
     result["trained_at"] = time.time()
     return result
