@@ -111,6 +111,7 @@ class CameraViewModel: ObservableObject {
             showModelNotTrainedBanner = true
             return
         }
+        recentGestures.removeAll()
         Task {
             do {
                 try await gestureRecognizer.recognizer.start()
