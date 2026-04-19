@@ -22,6 +22,7 @@ class TrainingState:
     trained_at: Optional[float] = None
     error: Optional[str] = None
     min_in_view_duration: float = 1.2
+    balance_strategy: str = "class_weight"
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     def is_running(self) -> bool:

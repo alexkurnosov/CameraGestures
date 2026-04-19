@@ -529,6 +529,8 @@ struct TrainingView: View {
             // Upload state indicator
             uploadStatusRow
 
+            balanceStrategyRow
+
             // Action buttons
             HStack(spacing: 12) {
                 Button(action: { serverManager.triggerServerTraining() }) {
@@ -561,6 +563,29 @@ struct TrainingView: View {
         .padding()
         .background(Color.purple.opacity(0.06))
         .cornerRadius(8)
+    }
+
+    private var balanceStrategyRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Class-balance strategy")
+                        .font(.subheadline)
+                    Text(appSettings.balanceStrategy.caption)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Picker("", selection: $appSettings.balanceStrategy) {
+                    ForEach(BalanceStrategy.allCases) { strategy in
+                        Text(strategy.title).tag(strategy)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .disabled(serverManager.isPollingStatus)
+            }
+        }
     }
 
     private var dangerZoneSection: some View {

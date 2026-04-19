@@ -326,7 +326,10 @@ class GestureModelAPIClient: ObservableObject {
 
     // MARK: - Trigger Training
 
-    func triggerTraining(minInViewDuration: Double = 1.2) async throws -> TrainingJobResponse {
+    func triggerTraining(
+        minInViewDuration: Double = 1.2,
+        balanceStrategy: String = "class_weight"
+    ) async throws -> TrainingJobResponse {
         if Self.IS_MOCKING_SERVER {
             simulateLog("POST", path: "/train")
             return TrainingJobResponse(jobId: UUID().uuidString, status: "started")
@@ -335,8 +338,11 @@ class GestureModelAPIClient: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("train"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = ["min_in_view_duration": minInViewDuration]
-        request.httpBody = try? JSONEncoder().encode(body)
+        let body: [String: Any] = [
+            "min_in_view_duration": minInViewDuration,
+            "balance_strategy": balanceStrategy,
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         return try await perform(request, decoding: TrainingJobResponse.self)
     }

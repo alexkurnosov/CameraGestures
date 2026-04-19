@@ -21,6 +21,51 @@ from ml.preprocessor import summary_features
 
 NONE_GESTURE_ID = "_none"
 
+# Strategies to counter class imbalance (fewer examples for some gestures).
+#   "class_weight": scale loss per-class by inverse frequency (sklearn 'balanced').
+#                   Cheap, no new data, doesn't affect val split.
+#   "jitter":       oversample minority classes with Gaussian-noise copies,
+#                   applied only to X_train so validation metrics stay honest.
+#   "none":         no balancing — useful as a baseline.
+BALANCE_STRATEGIES = ("class_weight", "jitter", "none")
+DEFAULT_BALANCE_STRATEGY = "class_weight"
+
+
+def _jitter_augment_minority_classes(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Oversample minority classes in the training set up to the majority count
+    by adding Gaussian-noise copies of existing real examples.
+
+    Only applied to training data; the validation split is never augmented,
+    so val metrics reflect performance on real examples only.
+    """
+    classes, counts = np.unique(y_train, return_counts=True)
+    target = int(counts.max())
+    std = np.std(X_train, axis=0, keepdims=True).clip(min=1e-6)
+
+    extra_X: list[np.ndarray] = []
+    extra_y: list[np.ndarray] = []
+    for c, count in zip(classes, counts):
+        deficit = target - int(count)
+        if deficit <= 0:
+            continue
+        idxs = rng.choice(np.where(y_train == c)[0], size=deficit)
+        noise = rng.normal(0, 0.5, size=(deficit, X_train.shape[1])).astype(np.float32)
+        extra_X.append(X_train[idxs] + noise * std)
+        extra_y.append(np.full(deficit, c, dtype=y_train.dtype))
+
+    if not extra_X:
+        return X_train, y_train
+
+    return (
+        np.concatenate([X_train, *extra_X], axis=0),
+        np.concatenate([y_train, *extra_y], axis=0),
+    )
+
 
 def _generate_none_examples(
     X: np.ndarray, y: np.ndarray, per_class_count: int, rng: np.random.Generator
@@ -73,7 +118,10 @@ def _generate_none_examples(
     return np.concatenate(parts, axis=0)
 
 
-def train(examples: list[dict]) -> dict:
+def train(
+    examples: list[dict],
+    balance_strategy: str = DEFAULT_BALANCE_STRATEGY,
+) -> dict:
     """
     Train an MLP on the supplied examples and export a .tflite file.
 
@@ -83,6 +131,7 @@ def train(examples: list[dict]) -> dict:
     Parameters
     ----------
     examples : list of dicts with keys {gesture_id, hand_film}
+    balance_strategy : one of BALANCE_STRATEGIES — how to counter class imbalance.
 
     Returns
     -------
@@ -97,6 +146,13 @@ def train(examples: list[dict]) -> dict:
     from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
     from sklearn.preprocessing import LabelEncoder
     from sklearn.model_selection import train_test_split
+    from sklearn.utils.class_weight import compute_class_weight
+
+    if balance_strategy not in BALANCE_STRATEGIES:
+        raise ValueError(
+            f"Unknown balance_strategy {balance_strategy!r}; "
+            f"expected one of {BALANCE_STRATEGIES}."
+        )
 
     if len(examples) < 2:
         raise ValueError("Need at least 2 training examples.")
@@ -140,6 +196,15 @@ def train(examples: list[dict]) -> dict:
     else:
         X_train, X_val, y_train, y_val = X, X, y, y
 
+    # --- Apply class-imbalance strategy (post-split so val stays untouched) ---
+    class_weight_dict: dict[int, float] | None = None
+    if balance_strategy == "class_weight":
+        unique = np.unique(y_train)
+        weights = compute_class_weight("balanced", classes=unique, y=y_train)
+        class_weight_dict = {int(c): float(w) for c, w in zip(unique, weights)}
+    elif balance_strategy == "jitter":
+        X_train, y_train = _jitter_augment_minority_classes(X_train, y_train, rng)
+
     # --- Build Keras MLP ---
     model = tf.keras.Sequential(
         [
@@ -163,6 +228,7 @@ def train(examples: list[dict]) -> dict:
         epochs=epochs,
         batch_size=min(32, len(X_train)),
         validation_data=(X_val, y_val),
+        class_weight=class_weight_dict,
         verbose=0,
     )
 
@@ -177,6 +243,7 @@ def train(examples: list[dict]) -> dict:
         "f1_weighted": float(f1),
         "confusion_matrix": cm,
         "gesture_ids": gesture_ids_ordered,
+        "balance_strategy": balance_strategy,
     }
 
     # --- Export to TFLite ---

@@ -3,6 +3,30 @@ import Combine
 import HandGestureRecognizingFramework
 import GestureModelModule
 
+enum BalanceStrategy: String, CaseIterable, Identifiable {
+    case classWeight = "class_weight"
+    case jitter
+    case none
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .classWeight: return "Class weight"
+        case .jitter:      return "Jitter oversample"
+        case .none:        return "None"
+        }
+    }
+
+    var caption: String {
+        switch self {
+        case .classWeight: return "Weight loss by inverse class frequency. Safe default."
+        case .jitter:      return "Oversample minority classes with noisy copies (train only)."
+        case .none:        return "No balancing — baseline for comparison."
+        }
+    }
+}
+
 class AppSettings: ObservableObject {
     @Published var colorScheme: ColorScheme? = nil
     @Published var preferredCamera: Int = 0
@@ -18,6 +42,7 @@ class AppSettings: ObservableObject {
 
     private static let minInViewDurationKey = "minInViewDuration"
     private static let isThresholdLockedKey = "isThresholdLocked"
+    private static let balanceStrategyKey = "balanceStrategy"
 
     /// Minimum seconds the hand must be visible within a capture window for the
     /// resulting HandFilm to be accepted as a training example.
@@ -32,10 +57,18 @@ class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(isThresholdLocked, forKey: Self.isThresholdLockedKey) }
     }
 
+    /// Strategy the server uses to counter class-imbalance during training.
+    /// Sent with every `POST /train`.
+    @Published var balanceStrategy: BalanceStrategy {
+        didSet { UserDefaults.standard.set(balanceStrategy.rawValue, forKey: Self.balanceStrategyKey) }
+    }
+
     init() {
         let stored = UserDefaults.standard.double(forKey: Self.minInViewDurationKey)
         minInViewDuration = stored > 0 ? stored : 1.2
         isThresholdLocked = UserDefaults.standard.bool(forKey: Self.isThresholdLockedKey)
+        let storedStrategy = UserDefaults.standard.string(forKey: Self.balanceStrategyKey) ?? ""
+        balanceStrategy = BalanceStrategy(rawValue: storedStrategy) ?? .classWeight
     }
 
     /// Call after the first training job fires to permanently lock the threshold.
