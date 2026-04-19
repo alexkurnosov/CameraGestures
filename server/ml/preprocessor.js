@@ -29,30 +29,39 @@ var COORDS_PER_FRAME = LANDMARKS * COORDS;        // 63
  * Build the (TARGET_FRAMES × 126) feature matrix.
  * Returns a flat Float64 array of length TARGET_FRAMES * 126.
  *
- * Columns 0–62:  wrist-relative, scale-normalised landmark coords.
+ * Per-frame normalisation pipeline (makes features invariant to hand pose):
+ *   1. Handedness flip   — mirror x for left hands so they match right hands.
+ *   2. Wrist-relative    — subtract wrist position (translation-invariant).
+ *   3. Scale-normalised  — divide by |wrist → middle_MCP| (size-invariant).
+ *   4. Rotation-aligned  — rotate into a hand-local frame built from palm
+ *                          knuckles (forearm-orientation-invariant).
+ *
+ * Columns 0–62:  normalised landmark coords.
  * Columns 63–125: frame-to-frame velocity of those coords (zero for first frame).
  */
 function featureMatrix(handFilm) {
     var frames = handFilm.frames;
     var n = frames.length;
 
-    // Extract wrist-relative, scale-normalised coords: (n, 21, 3)
     var normalised = [];
     for (var i = 0; i < n; i++) {
         var landmarks = frames[i].landmarks;
         var wrist = landmarks[0];
 
-        // Wrist-relative
+        // Step 1: handedness flip (mirror left hand across x axis).
+        var xSign = frames[i].left_or_right === "left" ? -1 : 1;
+
+        // Step 2: wrist-relative translation (with x flipped for left hands).
         var rel = [];
         for (var j = 0; j < LANDMARKS; j++) {
             rel.push([
-                landmarks[j].x - wrist.x,
+                (landmarks[j].x - wrist.x) * xSign,
                 landmarks[j].y - wrist.y,
                 landmarks[j].z - wrist.z
             ]);
         }
 
-        // Scale by wrist-to-landmark-9 distance (middle finger MCP)
+        // Step 3: scale by wrist-to-landmark-9 distance (middle finger MCP).
         var lm9 = rel[9];
         var scale = Math.sqrt(lm9[0]*lm9[0] + lm9[1]*lm9[1] + lm9[2]*lm9[2]);
         if (scale < 1e-6) scale = 1.0;
@@ -60,6 +69,48 @@ function featureMatrix(handFilm) {
             rel[j][0] /= scale;
             rel[j][1] /= scale;
             rel[j][2] /= scale;
+        }
+
+        // Step 4: rotation normalisation.
+        //   up           = wrist → middle_MCP (rel[9], unit after scale step)
+        //   rightApprox  = index_MCP → pinky_MCP (rel[17] − rel[5])
+        //   right        = rightApprox orthogonalised against up, then normalised
+        //   forward      = up × right
+        // Projecting each landmark onto (right, up, forward) yields coords in a
+        // canonical palm-aligned frame, independent of forearm orientation.
+        var up = [rel[9][0], rel[9][1], rel[9][2]];
+        var rApprox = [
+            rel[17][0] - rel[5][0],
+            rel[17][1] - rel[5][1],
+            rel[17][2] - rel[5][2]
+        ];
+        var dotRU = rApprox[0]*up[0] + rApprox[1]*up[1] + rApprox[2]*up[2];
+        var right = [
+            rApprox[0] - dotRU * up[0],
+            rApprox[1] - dotRU * up[1],
+            rApprox[2] - dotRU * up[2]
+        ];
+        var rMag = Math.sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+        if (rMag < 1e-6) {
+            // Degenerate palm (all knuckles collinear with wrist→middle_MCP);
+            // fall back to world x axis so output stays finite.
+            right = [1, 0, 0];
+        } else {
+            right[0] /= rMag; right[1] /= rMag; right[2] /= rMag;
+        }
+        var forward = [
+            up[1]*right[2] - up[2]*right[1],
+            up[2]*right[0] - up[0]*right[2],
+            up[0]*right[1] - up[1]*right[0]
+        ];
+
+        for (var j = 0; j < LANDMARKS; j++) {
+            var p = rel[j];
+            rel[j] = [
+                p[0]*right[0]   + p[1]*right[1]   + p[2]*right[2],
+                p[0]*up[0]      + p[1]*up[1]      + p[2]*up[2],
+                p[0]*forward[0] + p[1]*forward[1] + p[2]*forward[2]
+            ];
         }
 
         normalised.push(rel);
@@ -181,13 +232,22 @@ function summaryFeatures(handFilm) {
     var velMean   = colMean(vels);
     var velStd    = colStd(vels, velMean);
 
-    // Net raw wrist displacement (first vs last frame, before normalisation)
+    // Net raw wrist displacement (first vs last frame, before normalisation).
+    // X is flipped per-frame for left hands so left/right data aligns.
     var displacement = [0, 0, 0];
     var frames = handFilm.frames;
     if (frames.length >= 2) {
-        var first = frames[0].landmarks[0];
-        var last  = frames[frames.length - 1].landmarks[0];
-        displacement = [last.x - first.x, last.y - first.y, last.z - first.z];
+        var firstFrame = frames[0];
+        var lastFrame  = frames[frames.length - 1];
+        var firstSign = firstFrame.left_or_right === "left" ? -1 : 1;
+        var lastSign  = lastFrame.left_or_right  === "left" ? -1 : 1;
+        var first = firstFrame.landmarks[0];
+        var last  = lastFrame.landmarks[0];
+        displacement = [
+            last.x * lastSign - first.x * firstSign,
+            last.y - first.y,
+            last.z - first.z
+        ];
     }
 
     // Dominant motion axis: max |mean velocity| across x/y/z averaged over all landmarks
