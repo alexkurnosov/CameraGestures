@@ -1,0 +1,38 @@
+#!/bin/sh
+# Bumps the build number in VERSION before every commit.
+#
+# Format: MAJOR.MINOR.BUILD. BUILD = git rev-list --count HEAD + 1
+# (the count after this commit lands).
+#
+# Also mirrors the root VERSION into server/VERSION so the Docker build
+# context (server/) contains it. The iOS app reads root VERSION directly
+# via an Xcode build phase.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+
+set -e
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+version_file="VERSION"
+server_version_file="server/VERSION"
+
+if [ ! -f "$version_file" ]; then
+    echo "pre-commit: $version_file missing" >&2
+    exit 1
+fi
+
+prefix="$(sed -n '1p' "$version_file" | awk -F. '{print $1"."$2}')"
+if [ -z "$prefix" ]; then
+    echo "pre-commit: could not parse MAJOR.MINOR from $version_file" >&2
+    exit 1
+fi
+
+next_build=$(($(git rev-list --count HEAD) + 1))
+new_version="${prefix}.${next_build}"
+
+printf '%s\n' "$new_version" > "$version_file"
+printf '%s\n' "$new_version" > "$server_version_file"
+
+git add "$version_file" "$server_version_file"

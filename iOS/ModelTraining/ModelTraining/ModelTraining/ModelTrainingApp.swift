@@ -36,6 +36,9 @@ struct ModelTrainingApp: App {
                         gestureRecognizer: gestureRecognizer
                     )
                 }
+                .task {
+                    await apiClient.fetchServerVersion()
+                }
         }
     }
 }
