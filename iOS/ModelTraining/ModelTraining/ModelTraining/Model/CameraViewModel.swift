@@ -160,14 +160,12 @@ class CameraViewModel: ObservableObject {
     }
 
     func stopAll() {
-        if isRecognitionActive {
-            gestureRecognizer?.recognizer.stop()
-            isRecognitionActive = false
-        }
         if seriesCoordinator.isRunning {
             seriesCoordinator.stop()
             trainingDataManager?.stopDataCollection()
         }
+        gestureRecognizer?.recognizer.stop()
+        isRecognitionActive = false
     }
 
     func clearGestures() {
