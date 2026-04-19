@@ -84,6 +84,10 @@ struct UpdateServerResponse: Codable {
     let status: String
 }
 
+struct VersionResponse: Codable {
+    let version: String
+}
+
 // MARK: - Sync Response Types
 
 struct ServerExampleResponse: Codable {
@@ -167,6 +171,9 @@ class GestureModelAPIClient: ObservableObject {
             UserDefaults.standard.set(registrationToken, forKey: Self.registrationTokenKey)
         }
     }
+
+    /// Last fetched server version, or nil if never fetched / unreachable.
+    @Published var serverVersion: String?
 
     private static let IS_MOCKING_SERVER = false
     private static let baseURLKey = "GestureModelAPIClient.baseURL"
@@ -482,6 +489,28 @@ class GestureModelAPIClient: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("admin/update"))
         request.httpMethod = "POST"
         let _: UpdateServerResponse = try await perform(request, decoding: UpdateServerResponse.self)
+    }
+
+    // MARK: - Server Version
+
+    /// GET /version — unauthenticated. Updates `serverVersion` on success,
+    /// sets it to nil on failure (shown as "unknown" in the UI).
+    @discardableResult
+    func fetchServerVersion() async -> String? {
+        let request = URLRequest(url: baseURL.appendingPathComponent("version"))
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                await MainActor.run { self.serverVersion = nil }
+                return nil
+            }
+            let decoded = try decoder.decode(VersionResponse.self, from: data)
+            await MainActor.run { self.serverVersion = decoded.version }
+            return decoded.version
+        } catch {
+            await MainActor.run { self.serverVersion = nil }
+            return nil
+        }
     }
 
     // MARK: - Wipe Model

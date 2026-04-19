@@ -416,17 +416,32 @@ struct SettingsView: View {
                 }
             }
             
-            // Version Info
+            // App Version
             HStack {
                 Image(systemName: "number.circle.fill")
                     .foregroundColor(.gray)
                     .frame(width: 24)
-                
-                Text("Version")
-                
+
+                Text("App Version")
+
                 Spacer()
-                
-                Text("1.0.0 (1)")
+
+                Text(AppVersion.string)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Server Version
+            HStack {
+                Image(systemName: "server.rack")
+                    .foregroundColor(.gray)
+                    .frame(width: 24)
+
+                Text("Server Version")
+
+                Spacer()
+
+                Text(apiClient.serverVersion ?? "unknown")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -461,6 +476,13 @@ struct SettingsView: View {
             }
             isUpdatingServer = false
             showingUpdateAlert = true
+
+            // Server is restarting; poll /version until it responds with a new build.
+            apiClient.serverVersion = nil
+            for delay in [5, 10, 15, 20, 30] {
+                try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+                if await apiClient.fetchServerVersion() != nil { break }
+            }
         }
     }
 

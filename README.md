@@ -13,6 +13,16 @@ CameraGestures captures hand movements through a camera and translates them into
 - **HandGestureRecognizing**: Production-ready library with C API for platform integration
 - **ModelTraining**: Swift application for training and testing gesture models
 
+## Versioning
+
+The single source of truth is the repo-root `VERSION` file (`MAJOR.MINOR.BUILD`). A pre-commit hook bumps `BUILD` to `git rev-list --count HEAD + 1` on every commit and mirrors the value into `server/VERSION` so the Docker build context includes it. Enable the hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The iOS app embeds `VERSION` into its bundle at build time via an Xcode build phase; the server reads it at startup and exposes it at `GET /version`. The Settings screen shows both numbers.
+
 ## Building the Library
 
 ### Prerequisites

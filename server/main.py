@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from database import init_db
 from routers import admin, auth, examples, model, training
+
+
+def _read_version() -> str:
+    try:
+        return (Path(__file__).parent / "VERSION").read_text().strip()
+    except OSError:
+        return "0.0.0"
+
+
+SERVER_VERSION = _read_version()
 
 
 @asynccontextmanager
@@ -25,7 +36,7 @@ app = FastAPI(
         "Receives labelled HandFilm examples from the iOS ModelTrainingApp, "
         "trains gesture recognition models, and serves the resulting .tflite files."
     ),
-    version="0.1.0",
+    version=SERVER_VERSION,
     lifespan=lifespan,
 )
 
@@ -47,3 +58,8 @@ app.include_router(admin.router)
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/version", tags=["meta"])
+async def version() -> dict:
+    return {"version": SERVER_VERSION}
