@@ -106,7 +106,7 @@ private extension HandFilm {
             }
 
             frameStrings.append(
-                "{\(q("landmarks")):[\(lms)],\(q("timestamp")):\(frame.timestamp),\(q("left_or_right")):\(q(hand))}"
+                "{\(q("landmarks")):[\(lms)],\(q("timestamp")):\(frame.timestamp),\(q("left_or_right")):\(q(hand)),\(q("is_absent")):\(frame.isAbsent ? "true" : "false")}"
             )
         }
 

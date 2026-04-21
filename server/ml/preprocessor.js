@@ -26,6 +26,21 @@ var FEATURES_PER_FRAME = LANDMARKS * COORDS * 2; // 126
 var COORDS_PER_FRAME = LANDMARKS * COORDS;        // 63
 
 /**
+ * Return only frames where a hand was actually detected. Absent frames carry
+ * 21 zero landmarks; including them pulls coord means toward zero, inflates
+ * coord std, and produces spurious velocity spikes at absent↔present
+ * transitions — all of which compress inter-class separability.
+ */
+function nonAbsentFrames(handFilm) {
+    var src = handFilm.frames;
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+        if (!src[i].is_absent) out.push(src[i]);
+    }
+    return out;
+}
+
+/**
  * Build the (TARGET_FRAMES × 126) feature matrix.
  * Returns a flat Float64 array of length TARGET_FRAMES * 126.
  *
@@ -40,7 +55,7 @@ var COORDS_PER_FRAME = LANDMARKS * COORDS;        // 63
  * Columns 63–125: frame-to-frame velocity of those coords (zero for first frame).
  */
 function featureMatrix(handFilm) {
-    var frames = handFilm.frames;
+    var frames = nonAbsentFrames(handFilm);
     var n = frames.length;
 
     var normalised = [];
@@ -234,8 +249,10 @@ function summaryFeatures(handFilm) {
 
     // Net raw wrist displacement (first vs last frame, before normalisation).
     // X is flipped per-frame for left hands so left/right data aligns.
+    // Use only non-absent frames so a hand that leaves view at the end
+    // doesn't collapse the displacement to -firstWrist.
     var displacement = [0, 0, 0];
-    var frames = handFilm.frames;
+    var frames = nonAbsentFrames(handFilm);
     if (frames.length >= 2) {
         var firstFrame = frames[0];
         var lastFrame  = frames[frames.length - 1];
