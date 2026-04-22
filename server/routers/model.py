@@ -1,6 +1,9 @@
 """GET    /model/download      — serve latest .tflite binary.
    GET    /model/preprocessor — serve preprocessor.js.
    GET    /model/info         — model metadata.
+   GET    /model/metrics      — detailed metrics for the latest model (public).
+   GET    /model/metrics/list — list trained models with summary metrics (public).
+   GET    /model/metrics/{id} — detailed metrics for a specific model (public).
    DELETE /model              — wipe all model versions."""
 
 from pathlib import Path
@@ -10,8 +13,18 @@ from fastapi.responses import FileResponse
 
 from auth import get_current_device
 
-from models import ModelInfoResponse
-from storage.model_store import delete_all_models, get_latest_model
+from models import (
+    ModelInfoResponse,
+    ModelMetricsListResponse,
+    ModelMetricsResponse,
+    ModelMetricsSummary,
+)
+from storage.model_store import (
+    delete_all_models,
+    get_latest_model,
+    get_model_by_id,
+    list_models,
+)
 from training_state import training_state
 
 router = APIRouter(prefix="/model", tags=["model"])
@@ -75,6 +88,72 @@ async def model_info(_: str = Depends(get_current_device)) -> ModelInfoResponse:
         confusion_matrix=metrics.get("confusion_matrix"),
         min_in_view_duration=model.get("min_in_view_duration"),
     )
+
+
+def _model_row_to_metrics_response(model: dict) -> ModelMetricsResponse:
+    """Map a storage row to the public metrics payload.
+
+    Models trained before the extended-metrics change only have accuracy /
+    f1_weighted / confusion_matrix — the richer fields default to empty.
+    """
+    metrics = model.get("metrics") or {}
+    return ModelMetricsResponse(
+        model_id=model["id"],
+        trainer=model["trainer"],
+        trained_at=model["trained_at"],
+        trained_on=model["trained_on"],
+        gesture_ids=model["gesture_ids"],
+        balance_strategy=metrics.get("balance_strategy"),
+        accuracy=metrics.get("accuracy"),
+        f1_weighted=metrics.get("f1_weighted"),
+        confusion_matrix=metrics.get("confusion_matrix"),
+        val_size=metrics.get("val_size"),
+        train_size=metrics.get("train_size"),
+        per_class=metrics.get("per_class") or [],
+        none_aware=metrics.get("none_aware") or {},
+        confidence_by_class=metrics.get("confidence_by_class") or [],
+        threshold_curves=metrics.get("threshold_curves") or [],
+        auc=metrics.get("auc") or {},
+    )
+
+
+# --- Public (unauthenticated) metrics endpoints ---
+# These are intentionally not gated by get_current_device so the iOS
+# interpretation page can fetch them without registering a device token.
+
+@router.get("/metrics", response_model=ModelMetricsResponse)
+async def latest_model_metrics() -> ModelMetricsResponse:
+    """Detailed metrics for the most recently trained model."""
+    model = await get_latest_model()
+    if model is None:
+        raise HTTPException(status_code=404, detail="No model has been trained yet.")
+    return _model_row_to_metrics_response(model)
+
+
+@router.get("/metrics/list", response_model=ModelMetricsListResponse)
+async def list_model_metrics() -> ModelMetricsListResponse:
+    """Summary row per trained model version, newest first."""
+    rows = await list_models()
+    summaries = [
+        ModelMetricsSummary(
+            model_id=row["id"],
+            trained_at=row["trained_at"],
+            trained_on=row["trained_on"],
+            accuracy=(row.get("metrics") or {}).get("accuracy"),
+            f1_weighted=(row.get("metrics") or {}).get("f1_weighted"),
+        )
+        for row in rows
+    ]
+    return ModelMetricsListResponse(models=summaries)
+
+
+@router.get("/metrics/{model_id}", response_model=ModelMetricsResponse)
+async def model_metrics_by_id(model_id: str) -> ModelMetricsResponse:
+    """Detailed metrics for a specific trained model."""
+    model = await get_model_by_id(model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found.")
+    return _model_row_to_metrics_response(model)
 
 
 @router.delete("", status_code=200)

@@ -118,6 +118,151 @@ def _generate_none_examples(
     return np.concatenate(parts, axis=0)
 
 
+CONFIDENCE_THRESHOLDS = (0.5, 0.7, 0.9)
+
+
+def _compute_extended_metrics(
+    y_val: np.ndarray,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    y_train: np.ndarray,
+    gesture_ids_ordered: list[str],
+) -> dict:
+    """
+    Compute the richer metrics bundle that /model/metrics exposes.
+
+    Three groups:
+      - per_class : precision / recall / F1 / support per gesture (including _none)
+      - none_aware: FPR on synthetic _none + accuracy restricted to real gestures
+      - thresholds: softmax distribution, precision/coverage at thresholds, AUCs
+    """
+    from sklearn.metrics import (
+        precision_recall_fscore_support,
+        roc_auc_score,
+        average_precision_score,
+    )
+
+    n_classes = len(gesture_ids_ordered)
+    labels = list(range(n_classes))
+
+    # --- Per-class precision / recall / F1 / support ---
+    precision, recall, f1_arr, support_val = precision_recall_fscore_support(
+        y_val, y_pred, labels=labels, zero_division=0
+    )
+    # Train-side support so the UI can show class-imbalance context.
+    train_support = np.bincount(y_train, minlength=n_classes)
+
+    per_class = [
+        {
+            "gesture_id": gesture_ids_ordered[i],
+            "precision": float(precision[i]),
+            "recall": float(recall[i]),
+            "f1": float(f1_arr[i]),
+            "support_val": int(support_val[i]),
+            "support_train": int(train_support[i]),
+        }
+        for i in range(n_classes)
+    ]
+
+    # --- _none-aware metrics ---
+    try:
+        none_idx = gesture_ids_ordered.index(NONE_GESTURE_ID)
+    except ValueError:
+        none_idx = None
+
+    none_aware: dict = {}
+    if none_idx is not None:
+        none_mask = y_val == none_idx
+        real_mask = ~none_mask
+        n_none = int(none_mask.sum())
+        n_real = int(real_mask.sum())
+
+        # FPR on _none: of the synthetic negatives, how many got classified as a real gesture?
+        if n_none > 0:
+            false_positive = int((y_pred[none_mask] != none_idx).sum())
+            none_aware["none_false_positive_rate"] = false_positive / n_none
+            none_aware["none_support_val"] = n_none
+        # Real-only accuracy: accuracy restricted to rows where the true label is a real gesture.
+        if n_real > 0:
+            none_aware["real_accuracy"] = float(
+                (y_pred[real_mask] == y_val[real_mask]).mean()
+            )
+            none_aware["real_support_val"] = n_real
+
+    # --- Confidence / threshold analysis ---
+    top_conf = y_proba.max(axis=1)
+
+    # Per-class softmax distribution for predictions actually made as that class.
+    # Tells us how confident the model is when it chooses each gesture.
+    confidence_by_class = []
+    for i in range(n_classes):
+        chose_i = y_proba[:, i] == top_conf
+        scores = y_proba[chose_i, i]
+        if scores.size == 0:
+            confidence_by_class.append({
+                "gesture_id": gesture_ids_ordered[i],
+                "count": 0,
+                "mean": None, "p10": None, "p50": None, "p90": None,
+            })
+            continue
+        confidence_by_class.append({
+            "gesture_id": gesture_ids_ordered[i],
+            "count": int(scores.size),
+            "mean": float(scores.mean()),
+            "p10": float(np.percentile(scores, 10)),
+            "p50": float(np.percentile(scores, 50)),
+            "p90": float(np.percentile(scores, 90)),
+        })
+
+    # Precision and coverage at fixed thresholds: "if we only fire when conf > T, how accurate
+    # are those fires, and what fraction of val examples do we fire on?".
+    threshold_curves = []
+    for t in CONFIDENCE_THRESHOLDS:
+        fires = top_conf >= t
+        n_fire = int(fires.sum())
+        coverage = n_fire / len(y_val) if len(y_val) else 0.0
+        if n_fire > 0:
+            precision_at = float((y_pred[fires] == y_val[fires]).mean())
+        else:
+            precision_at = None
+        threshold_curves.append({
+            "threshold": t,
+            "coverage": coverage,
+            "precision": precision_at,
+            "fires": n_fire,
+        })
+
+    # ROC-AUC / PR-AUC one-vs-rest, macro-averaged. Need at least 2 classes with support.
+    aucs: dict = {}
+    try:
+        val_onehot = np.eye(n_classes)[y_val]
+        # Drop classes that have no positives in val; sklearn errors otherwise.
+        present = [i for i in range(n_classes) if val_onehot[:, i].sum() > 0]
+        if len(present) >= 2:
+            aucs["roc_auc_macro"] = float(
+                roc_auc_score(
+                    val_onehot[:, present], y_proba[:, present],
+                    average="macro", multi_class="ovr",
+                )
+            )
+            aucs["pr_auc_macro"] = float(
+                average_precision_score(val_onehot[:, present], y_proba[:, present], average="macro")
+            )
+    except ValueError:
+        # Degenerate val split (one class only) — leave AUCs absent.
+        pass
+
+    return {
+        "per_class": per_class,
+        "none_aware": none_aware,
+        "confidence_by_class": confidence_by_class,
+        "threshold_curves": threshold_curves,
+        "auc": aucs,
+        "val_size": int(len(y_val)),
+        "train_size": int(len(y_train)),
+    }
+
+
 def train(
     examples: list[dict],
     balance_strategy: str = DEFAULT_BALANCE_STRATEGY,
@@ -233,10 +378,19 @@ def train(
     )
 
     # --- Evaluate ---
-    y_pred = np.argmax(model.predict(X_val, verbose=0), axis=1)
+    y_proba = model.predict(X_val, verbose=0)
+    y_pred = np.argmax(y_proba, axis=1)
     acc = float(accuracy_score(y_val, y_pred))
     f1 = f1_score(y_val, y_pred, average="weighted", zero_division=0)
     cm = confusion_matrix(y_val, y_pred, labels=list(range(n_classes))).tolist()
+
+    extended = _compute_extended_metrics(
+        y_val=y_val,
+        y_pred=y_pred,
+        y_proba=y_proba,
+        y_train=y_train,
+        gesture_ids_ordered=gesture_ids_ordered,
+    )
 
     metrics = {
         "accuracy": acc,
@@ -244,6 +398,7 @@ def train(
         "confusion_matrix": cm,
         "gesture_ids": gesture_ids_ordered,
         "balance_strategy": balance_strategy,
+        **extended,
     }
 
     # --- Export to TFLite ---
