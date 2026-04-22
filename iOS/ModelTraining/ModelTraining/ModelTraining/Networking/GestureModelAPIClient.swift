@@ -84,6 +84,139 @@ struct UpdateServerResponse: Codable {
     let status: String
 }
 
+// MARK: - Detailed Metrics (public /model/metrics endpoints)
+
+struct PerClassMetric: Codable, Identifiable {
+    let gestureId: String
+    let precision: Double
+    let recall: Double
+    let f1: Double
+    let supportVal: Int
+    let supportTrain: Int
+
+    var id: String { gestureId }
+
+    enum CodingKeys: String, CodingKey {
+        case gestureId = "gesture_id"
+        case precision
+        case recall
+        case f1
+        case supportVal = "support_val"
+        case supportTrain = "support_train"
+    }
+}
+
+struct ConfidenceByClass: Codable, Identifiable {
+    let gestureId: String
+    let count: Int
+    let mean: Double?
+    let p10: Double?
+    let p50: Double?
+    let p90: Double?
+
+    var id: String { gestureId }
+
+    enum CodingKeys: String, CodingKey {
+        case gestureId = "gesture_id"
+        case count, mean, p10, p50, p90
+    }
+}
+
+struct ThresholdPoint: Codable, Identifiable {
+    let threshold: Double
+    let coverage: Double
+    let precision: Double?
+    let fires: Int
+
+    var id: Double { threshold }
+}
+
+struct NoneAwareMetrics: Codable {
+    let noneFalsePositiveRate: Double?
+    let noneSupportVal: Int?
+    let realAccuracy: Double?
+    let realSupportVal: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case noneFalsePositiveRate = "none_false_positive_rate"
+        case noneSupportVal = "none_support_val"
+        case realAccuracy = "real_accuracy"
+        case realSupportVal = "real_support_val"
+    }
+}
+
+struct AucMetrics: Codable {
+    let rocAucMacro: Double?
+    let prAucMacro: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case rocAucMacro = "roc_auc_macro"
+        case prAucMacro = "pr_auc_macro"
+    }
+}
+
+struct ModelMetricsResponse: Codable, Identifiable {
+    let modelId: String
+    let trainer: String
+    let trainedAt: TimeInterval
+    let trainedOn: Int
+    let gestureIds: [String]
+    let balanceStrategy: String?
+    let accuracy: Double?
+    let f1Weighted: Double?
+    let confusionMatrix: [[Int]]?
+    let valSize: Int?
+    let trainSize: Int?
+    let perClass: [PerClassMetric]
+    let noneAware: NoneAwareMetrics
+    let confidenceByClass: [ConfidenceByClass]
+    let thresholdCurves: [ThresholdPoint]
+    let auc: AucMetrics
+
+    var id: String { modelId }
+
+    enum CodingKeys: String, CodingKey {
+        case modelId = "model_id"
+        case trainer
+        case trainedAt = "trained_at"
+        case trainedOn = "trained_on"
+        case gestureIds = "gesture_ids"
+        case balanceStrategy = "balance_strategy"
+        case accuracy
+        case f1Weighted = "f1_weighted"
+        case confusionMatrix = "confusion_matrix"
+        case valSize = "val_size"
+        case trainSize = "train_size"
+        case perClass = "per_class"
+        case noneAware = "none_aware"
+        case confidenceByClass = "confidence_by_class"
+        case thresholdCurves = "threshold_curves"
+        case auc
+    }
+}
+
+struct ModelMetricsSummary: Codable, Identifiable {
+    let modelId: String
+    let trainedAt: TimeInterval
+    let trainedOn: Int
+    let accuracy: Double?
+    let f1Weighted: Double?
+
+    var id: String { modelId }
+
+    enum CodingKeys: String, CodingKey {
+        case modelId = "model_id"
+        case trainedAt = "trained_at"
+        case trainedOn = "trained_on"
+        case accuracy
+        case f1Weighted = "f1_weighted"
+    }
+}
+
+struct ModelMetricsListResponse: Codable {
+    let models: [ModelMetricsSummary]
+}
+
 struct VersionResponse: Codable {
     let version: String
 }
@@ -375,6 +508,23 @@ class GestureModelAPIClient: ObservableObject {
         return try await perform(request, decoding: ModelInfoResponse.self)
     }
 
+    // MARK: - Model Metrics (public / no auth)
+
+    func fetchLatestMetrics() async throws -> ModelMetricsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/metrics"))
+        return try await performUnauthenticated(request, decoding: ModelMetricsResponse.self)
+    }
+
+    func fetchMetricsList() async throws -> ModelMetricsListResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/metrics/list"))
+        return try await performUnauthenticated(request, decoding: ModelMetricsListResponse.self)
+    }
+
+    func fetchMetrics(modelId: String) async throws -> ModelMetricsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/metrics/\(modelId)"))
+        return try await performUnauthenticated(request, decoding: ModelMetricsResponse.self)
+    }
+
     // MARK: - Model Status
 
     func fetchModelStatus() async throws -> ModelStatusResponse {
@@ -577,6 +727,23 @@ class GestureModelAPIClient: ObservableObject {
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             let detail = (try? JSONDecoder().decode(ServerErrorDetail.self, from: data))?.detail ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw APIError.httpError(statusCode: httpResponse.statusCode, detail: detail)
+        }
+
+        return try decoder.decode(T.self, from: data)
+    }
+
+    /// Performs a request without attaching any auth header — used for endpoints
+    /// that are intentionally public (e.g. /model/metrics).
+    private func performUnauthenticated<T: Decodable>(_ request: URLRequest, decoding type: T.Type) async throws -> T {
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let detail = (try? JSONDecoder().decode(ServerErrorDetail.self, from: data))?.detail
+                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
             throw APIError.httpError(statusCode: httpResponse.statusCode, detail: detail)
         }
 
