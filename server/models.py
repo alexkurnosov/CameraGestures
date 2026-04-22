@@ -106,3 +106,79 @@ class ModelInfoResponse(BaseModel):
     f1: float | None = None
     confusion_matrix: list[list[int]] | None = None
     min_in_view_duration: float | None = None
+
+
+# --- Detailed metrics (public /model/metrics endpoint) ---
+
+class PerClassMetric(BaseModel):
+    gesture_id: str
+    precision: float
+    recall: float
+    f1: float
+    support_val: int
+    support_train: int
+
+
+class ConfidenceByClass(BaseModel):
+    gesture_id: str
+    count: int
+    mean: float | None = None
+    p10: float | None = None
+    p50: float | None = None
+    p90: float | None = None
+
+
+class ThresholdPoint(BaseModel):
+    threshold: float
+    coverage: float
+    precision: float | None = None
+    fires: int
+
+
+class NoneAwareMetrics(BaseModel):
+    none_false_positive_rate: float | None = None
+    none_support_val: int | None = None
+    real_accuracy: float | None = None
+    real_support_val: int | None = None
+
+
+class AucMetrics(BaseModel):
+    roc_auc_macro: float | None = None
+    pr_auc_macro: float | None = None
+
+
+class ModelMetricsResponse(BaseModel):
+    model_id: str
+    trainer: str
+    trained_at: float
+    trained_on: int
+    gesture_ids: list[str]
+    balance_strategy: str | None = None
+
+    # Aggregate (same as /model/info, repeated so /metrics is self-contained).
+    accuracy: float | None = None
+    f1_weighted: float | None = None
+    confusion_matrix: list[list[int]] | None = None
+
+    # Split sizes after train/val split.
+    val_size: int | None = None
+    train_size: int | None = None
+
+    # Detailed bundles.
+    per_class: list[PerClassMetric] = Field(default_factory=list)
+    none_aware: NoneAwareMetrics = Field(default_factory=NoneAwareMetrics)
+    confidence_by_class: list[ConfidenceByClass] = Field(default_factory=list)
+    threshold_curves: list[ThresholdPoint] = Field(default_factory=list)
+    auc: AucMetrics = Field(default_factory=AucMetrics)
+
+
+class ModelMetricsSummary(BaseModel):
+    model_id: str
+    trained_at: float
+    trained_on: int
+    accuracy: float | None = None
+    f1_weighted: float | None = None
+
+
+class ModelMetricsListResponse(BaseModel):
+    models: list[ModelMetricsSummary]

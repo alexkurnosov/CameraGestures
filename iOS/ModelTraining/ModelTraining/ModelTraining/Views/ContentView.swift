@@ -36,12 +36,19 @@ struct ContentView: View {
                 }
                 .tag(2)
 
+            MetricsView()
+                .tabItem {
+                    Image(systemName: "chart.bar.xaxis")
+                    Text("Metrics")
+                }
+                .tag(3)
+
             SettingsView()
                 .tabItem {
                     Image(systemName: "gear")
                     Text("Settings")
                 }
-                .tag(3)
+                .tag(4)
         }
         .accentColor(.blue)
         .onAppear {
