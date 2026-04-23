@@ -187,57 +187,79 @@ def find_holds(smoothed: np.ndarray, t_hold: float, k_hold: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Film-level analysis. Produces per-film summary rows for all downstream stats.
+# Per-film energy computation (independent of T_hold — done once, reused by
+# every threshold in the sweep).
+# ---------------------------------------------------------------------------
+
+def compute_film_energy(
+    ctx: py_mini_racer.MiniRacer,
+    hand_film: dict,
+    smooth_k: int,
+) -> dict:
+    """Normalise, segment, and compute smoothed energy for one film.
+    Output is reused for every T_hold value we evaluate.
+    """
+    normalised = normalise_film(ctx, hand_film)
+    segments = split_into_segments(normalised)
+    seg_energies = [segment_energy(seg) for seg in segments]
+    seg_smoothed = [smooth(e, k=smooth_k) for e in seg_energies]
+    # Flat array of all energy deltas (for pooled percentile stats).
+    flat_energy = (
+        np.concatenate(seg_energies) if seg_energies else np.zeros(0, dtype=np.float32)
+    )
+    return {
+        "normalised": normalised,
+        "n_in_view": len(normalised),
+        "segments": segments,
+        "seg_energies": seg_energies,
+        "seg_smoothed": seg_smoothed,
+        "flat_energy": flat_energy,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Film-level hold detection. Pure function of (pre-computed energy, T_hold).
 # ---------------------------------------------------------------------------
 
 def analyse_film(
-    ctx: py_mini_racer.MiniRacer,
-    hand_film: dict,
+    film_energy: dict,
     gesture_id: str,
     session_id: str | None,
     t_hold: float,
     k_hold: int,
-    smooth_k: int,
     edge_trim_fraction: float,
 ) -> dict:
-    normalised = normalise_film(ctx, hand_film)
-    segments = split_into_segments(normalised)
+    n_in_view = film_energy["n_in_view"]
+    segments = film_energy["segments"]
+    seg_smoothed = film_energy["seg_smoothed"]
 
-    all_energy: list[float] = []
-    holds_in_view: list[dict] = []   # holds after edge-trimming (what we'd use for Phase 2)
-    holds_all: list[dict] = []       # all holds, including edge ones (for trim-rate metric)
-    n_in_view = len(normalised)
-
-    # Compute in-view frame index ordering to evaluate edge trim.
-    # "edge" = first or last edge_trim_fraction of in_view frames across the whole film.
+    # Edge zone = first or last edge_trim_fraction of in-view frames.
     edge_lo = int(math.floor(n_in_view * edge_trim_fraction))
     edge_hi = int(math.ceil(n_in_view * (1.0 - edge_trim_fraction)))
 
-    in_view_counter_offset = 0  # running count of in-view frames across prior segments
+    holds_all: list[dict] = []
+    holds_kept: list[dict] = []
     hold_reps_normalised: list[np.ndarray] = []
+    in_view_counter_offset = 0
 
-    for seg in segments:
-        energy = segment_energy(seg)
-        all_energy.extend(energy.tolist())
-
-        smoothed = smooth(energy, k=smooth_k)
+    for seg, smoothed in zip(segments, seg_smoothed):
         seg_holds = find_holds(smoothed, t_hold=t_hold, k_hold=k_hold)
-
         for h in seg_holds:
-            # Map smoothed-index rep → coord-frame index inside segment → in-view ordinal.
-            rep_coord_frame = h["rep"]           # 0..len(seg)-1
+            rep_coord_frame = h["rep"]
             in_view_ordinal = in_view_counter_offset + rep_coord_frame
             is_edge = (in_view_ordinal < edge_lo) or (in_view_ordinal >= edge_hi)
             h_out = {
                 "in_view_ordinal": in_view_ordinal,
                 "length": h["length"],
                 "is_edge": is_edge,
+                "position_fraction": (
+                    in_view_ordinal / n_in_view if n_in_view > 0 else 0.0
+                ),
             }
             holds_all.append(h_out)
             if not is_edge:
-                holds_in_view.append(h_out)
+                holds_kept.append(h_out)
                 hold_reps_normalised.append(seg[rep_coord_frame][1])
-
         in_view_counter_offset += len(seg)
 
     return {
@@ -245,11 +267,80 @@ def analyse_film(
         "session_id": session_id,
         "n_in_view_frames": n_in_view,
         "n_segments": len(segments),
-        "energy": all_energy,
         "holds_all": holds_all,
-        "holds_kept": holds_in_view,
-        "hold_reps": hold_reps_normalised,   # for cross-film clustering
+        "holds_kept": holds_kept,
+        "hold_reps": hold_reps_normalised,
     }
+
+
+# ---------------------------------------------------------------------------
+# Extra diagnostics: intra-film hold-pair distance, per-gesture centroids,
+# hold position distribution, duplicate-frame fraction.
+# ---------------------------------------------------------------------------
+
+def intra_film_hold_pair_distances(rows: list[dict]) -> list[float]:
+    """Distances between consecutive hold representatives *within the same film*.
+    Tells us whether multi-hold films contain genuinely different poses (large
+    distance) or duplicate/noisy holds (small distance).
+    """
+    distances: list[float] = []
+    for r in rows:
+        reps = r["hold_reps"]
+        if len(reps) < 2:
+            continue
+        for i in range(len(reps) - 1):
+            distances.append(float(np.linalg.norm(reps[i] - reps[i + 1])))
+    return distances
+
+
+def per_gesture_centroids(rows: list[dict]) -> dict[str, np.ndarray]:
+    """Mean hold-rep coord per gesture (over all kept holds in all films)."""
+    by_gesture: dict[str, list[np.ndarray]] = defaultdict(list)
+    for r in rows:
+        by_gesture[r["gesture_id"]].extend(r["hold_reps"])
+    return {
+        gid: np.mean(np.stack(reps), axis=0)
+        for gid, reps in by_gesture.items()
+        if reps
+    }
+
+
+def inter_gesture_distance_matrix(
+    centroids: dict[str, np.ndarray],
+) -> tuple[list[str], np.ndarray]:
+    """Pairwise L2 distance between per-gesture centroids. Returns (labels, matrix)."""
+    labels = sorted(centroids.keys())
+    n = len(labels)
+    mat = np.zeros((n, n), dtype=np.float32)
+    for i, a in enumerate(labels):
+        for j, b in enumerate(labels):
+            mat[i, j] = float(np.linalg.norm(centroids[a] - centroids[b]))
+    return labels, mat
+
+
+def hold_position_histogram(rows: list[dict], n_bins: int = 4) -> list[int]:
+    """Distribution of hold positions within the film, binned into n_bins quantiles."""
+    bins = [0] * n_bins
+    for r in rows:
+        for h in r["holds_kept"]:
+            idx = min(int(h["position_fraction"] * n_bins), n_bins - 1)
+            bins[idx] += 1
+    return bins
+
+
+def duplicate_frame_fraction(film_energies: list[dict]) -> float:
+    """Fraction of consecutive frame pairs with exactly zero energy (very likely
+    MediaPipe re-emitting the prior detection). Reported for diagnostics only —
+    these samples are excluded from the T_hold percentile calc so the auto
+    threshold isn't pinned to zero.
+    """
+    total = 0
+    zeros = 0
+    for fe in film_energies:
+        for energy in fe["seg_energies"]:
+            total += energy.size
+            zeros += int(np.count_nonzero(energy == 0.0))
+    return (zeros / total) if total else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -295,10 +386,28 @@ def intra_gesture_spread(rows: list[dict]) -> float | None:
     return float(np.percentile(np.array(all_distances), 95))
 
 
+def per_gesture_hold_stats(rows: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for gid, gesture_rows in group_by_gesture(rows).items():
+        counts = np.array([len(r["holds_kept"]) for r in gesture_rows])
+        out[gid] = {
+            "n_films": int(counts.size),
+            "mean_holds": float(counts.mean()),
+            "median_holds": float(np.median(counts)),
+            "min_holds": int(counts.min()),
+            "max_holds": int(counts.max()),
+            "zero_hold_pct": float((counts == 0).mean() * 100.0),
+        }
+    return out
+
+
 def print_report(
     rows: list[dict],
     params: dict,
-    all_energy: np.ndarray,
+    pooled_energy: np.ndarray,
+    nonzero_energy: np.ndarray,
+    dup_frac: float,
+    sweep_results: list[dict],
     report_json: dict,
 ) -> None:
     print("=" * 72)
@@ -316,49 +425,153 @@ def print_report(
     for gid in sorted(gestures):
         print(f"  {gid:30s}  {len(gestures[gid]):4d}")
 
-    # --- Motion energy distribution ---
-    print()
-    print("Per-frame motion energy, normalised coord space (all films pooled):")
-    pct = describe_percentiles(all_energy)
-    for k in ("p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"):
-        v = pct[k]
-        print(f"  {k:>4s}  {v:.5f}" if v is not None else f"  {k:>4s}  n/a")
-    report_json["energy_percentiles"] = pct
-
-    # --- Hold-count distribution under the chosen params ---
+    # --- Duplicate-frame diagnostic ---
     print()
     print(
-        f"Holds per film (T_hold={params['t_hold']:.5f}, "
-        f"K_hold={params['k_hold']}, smooth={params['smooth_k']}, "
-        f"edge_trim={int(params['edge_trim_fraction']*100)}%)"
+        f"Consecutive frame pairs with exactly zero energy: "
+        f"{dup_frac * 100:.1f}% of total deltas"
     )
-    print(f"  {'gesture':30s}  {'n':>4s}  {'mean':>5s}  {'med':>4s}  {'min':>4s}  {'max':>4s}  {'zero%':>6s}")
-    gesture_hold_stats: dict[str, dict] = {}
-    for gid in sorted(gestures):
-        counts = np.array([len(r["holds_kept"]) for r in gestures[gid]])
-        stats = {
-            "n_films": int(counts.size),
-            "mean_holds": float(counts.mean()),
-            "median_holds": float(np.median(counts)),
-            "min_holds": int(counts.min()),
-            "max_holds": int(counts.max()),
-            "zero_hold_pct": float((counts == 0).mean() * 100.0),
-        }
-        gesture_hold_stats[gid] = stats
-        print(
-            f"  {gid:30s}  {stats['n_films']:4d}  "
-            f"{stats['mean_holds']:5.2f}  {stats['median_holds']:4.1f}  "
-            f"{stats['min_holds']:4d}  {stats['max_holds']:4d}  "
-            f"{stats['zero_hold_pct']:5.0f}%"
-        )
-    report_json["per_gesture_hold_stats"] = gesture_hold_stats
+    print(
+        "  (Likely MediaPipe re-emitting the previous detection. These samples "
+        "are excluded from\n   the non-zero percentile stats below so the "
+        "auto T_hold isn't pinned to zero.)"
+    )
+    report_json["duplicate_frame_fraction"] = dup_frac
 
-    # --- Suggested template length per gesture ---
+    # --- Motion energy distribution ---
     print()
-    print("Suggested gesture → template length (median hold count):")
+    print("Per-frame motion energy, normalised coord space (all pairs pooled):")
+    pct_all = describe_percentiles(pooled_energy)
+    pct_nz = describe_percentiles(nonzero_energy)
+    keys = ("p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99")
+    print(f"  {'percentile':>10s}  {'all':>10s}  {'non-zero':>10s}")
+    for k in keys:
+        va = pct_all.get(k)
+        vn = pct_nz.get(k)
+        sa = f"{va:.5f}" if va is not None else "n/a"
+        sn = f"{vn:.5f}" if vn is not None else "n/a"
+        print(f"  {k:>10s}  {sa:>10s}  {sn:>10s}")
+    report_json["energy_percentiles_all"] = pct_all
+    report_json["energy_percentiles_nonzero"] = pct_nz
+
+    # --- T_hold sweep ---
+    print()
+    print(f"T_hold sweep (K_hold={params['k_hold']}, smooth={params['smooth_k']}, "
+          f"edge_trim={int(params['edge_trim_fraction']*100)}%):")
+    sweep_header = "  " + f"{'T_hold':>8s}  " + "".join(
+        f"{gid[:14]:>15s}" for gid in sorted(gestures)
+    ) + "  pooled_median"
+    print(sweep_header)
+    sweep_summary: list[dict] = []
+    for sr in sweep_results:
+        gesture_medians = [
+            sr["per_gesture"].get(gid, {}).get("median_holds", 0.0)
+            for gid in sorted(gestures)
+        ]
+        pooled_med = np.median([
+            len(r["holds_kept"]) for r in sr["rows"]
+        ])
+        row_str = "  " + f"{sr['t_hold']:>8.4f}  " + "".join(
+            f"{m:>15.1f}" for m in gesture_medians
+        ) + f"  {pooled_med:>12.1f}"
+        print(row_str)
+        sweep_summary.append({
+            "t_hold": sr["t_hold"],
+            "per_gesture_median": dict(zip(sorted(gestures), gesture_medians)),
+            "pooled_median": float(pooled_med),
+        })
+    report_json["t_hold_sweep"] = sweep_summary
+
+    # --- Chosen-threshold detail ---
+    print()
+    print(
+        f"Detail at chosen T_hold={params['t_hold']:.5f}:"
+    )
+    print(f"  {'gesture':30s}  {'n':>4s}  {'mean':>5s}  {'med':>4s}  "
+          f"{'min':>4s}  {'max':>4s}  {'zero%':>6s}")
+    gesture_stats = per_gesture_hold_stats(rows)
+    for gid in sorted(gestures):
+        s = gesture_stats[gid]
+        print(
+            f"  {gid:30s}  {s['n_films']:4d}  "
+            f"{s['mean_holds']:5.2f}  {s['median_holds']:4.1f}  "
+            f"{s['min_holds']:4d}  {s['max_holds']:4d}  "
+            f"{s['zero_hold_pct']:5.0f}%"
+        )
+    report_json["per_gesture_hold_stats"] = gesture_stats
+
+    # --- Intra-film hold-pair distance (the key artefact diagnostic) ---
+    pair_dists = intra_film_hold_pair_distances(rows)
+    print()
+    if pair_dists:
+        arr = np.array(pair_dists, dtype=np.float32)
+        print(f"Intra-film hold-pair distance (n={arr.size}):")
+        for k in ("p10", "p25", "p50", "p75", "p90"):
+            p = int(k[1:])
+            print(f"  {k:>4s}  {np.percentile(arr, p):.4f}")
+        print(
+            "  Interpretation: if the median is small (< a few coord units), the "
+            "2nd hold in\n  a film is basically the same pose as the 1st — likely "
+            "the hand-entering-view\n  artefact. If the median is large, the "
+            "holds are genuinely different poses."
+        )
+        report_json["intra_film_hold_pair_percentiles"] = {
+            k: float(np.percentile(arr, int(k[1:]))) for k in ("p10", "p25", "p50", "p75", "p90")
+        }
+    else:
+        print("Intra-film hold-pair distance: n/a (no films with ≥2 holds)")
+        report_json["intra_film_hold_pair_percentiles"] = None
+
+    # --- Hold position in the film ---
+    print()
+    bins = hold_position_histogram(rows, n_bins=4)
+    total_holds = sum(bins) or 1
+    print("Hold position in film (quartiles of in-view duration):")
+    quartile_labels = ("Q1 [0-25%)", "Q2 [25-50%)", "Q3 [50-75%)", "Q4 [75-100%]")
+    for label, count in zip(quartile_labels, bins):
+        print(f"  {label:>14s}  {count:5d}  ({100 * count / total_holds:5.1f}%)")
+    report_json["hold_position_quartiles"] = dict(zip(quartile_labels, bins))
+
+    # --- Inter-gesture centroid distances ---
+    centroids = per_gesture_centroids(rows)
+    print()
+    if len(centroids) >= 2:
+        labels, mat = inter_gesture_distance_matrix(centroids)
+        print("Inter-gesture centroid distances (hold-rep coord space):")
+        header = " " * 18 + "".join(f"{lbl[:14]:>15s}" for lbl in labels)
+        print(header)
+        for i, a in enumerate(labels):
+            row = f"  {a[:16]:16s}" + "".join(f"{mat[i, j]:>15.4f}" for j in range(len(labels)))
+            print(row)
+        # Off-diagonal min gives the closest gesture pair.
+        off = mat.copy()
+        np.fill_diagonal(off, np.inf)
+        min_idx = int(np.argmin(off))
+        i_min, j_min = divmod(min_idx, mat.shape[1])
+        print(
+            f"\n  Closest pair: {labels[i_min]} ↔ {labels[j_min]}  "
+            f"distance={mat[i_min, j_min]:.4f}"
+        )
+        report_json["inter_gesture_distance_min"] = float(mat[i_min, j_min])
+        report_json["inter_gesture_closest_pair"] = [labels[i_min], labels[j_min]]
+    else:
+        print("Inter-gesture centroid distances: n/a (need ≥2 gestures with holds)")
+
+    # --- ε for agglomerative clustering ---
+    eps = intra_gesture_spread(rows)
+    print()
+    if eps is None:
+        print("ε (agglomerative clustering threshold): n/a — not enough holds per gesture")
+    else:
+        print(f"ε suggestion (95th pct of within-gesture hold-rep pairwise distance): {eps:.4f}")
+    report_json["epsilon_suggestion"] = eps
+
+    # --- Template length draft ---
+    print()
+    print("Suggested gesture → template length (median hold count at chosen T_hold):")
     templates_draft: dict[str, int] = {}
-    for gid, stats in gesture_hold_stats.items():
-        tlen = int(round(stats["median_holds"]))
+    for gid, s in gesture_stats.items():
+        tlen = int(round(s["median_holds"]))
         templates_draft[gid] = tlen
         tag = "  (no-pose-gate)" if tlen == 0 else ""
         print(f"  {gid:30s}  len={tlen}{tag}")
@@ -381,26 +594,16 @@ def print_report(
         "dropped_pct": trimmed_pct,
     }
 
-    # --- ε for agglomerative clustering ---
-    eps = intra_gesture_spread(rows)
-    print()
-    if eps is None:
-        print("ε (agglomerative clustering threshold): n/a — not enough holds per gesture")
-    else:
-        print(f"ε suggestion (95th pct of within-gesture hold-rep pairwise distance): {eps:.4f}")
-    report_json["epsilon_suggestion"] = eps
-
     # --- Final suggested parameters ---
+    # T_hold based on NON-ZERO percentiles (excludes MediaPipe duplicates).
+    p25_nz = pct_nz.get("p25") or 0.0
+    p95_nz = pct_nz.get("p95") or 0.0
+    t_hold_suggestion = max(1.5 * p25_nz, 0.5 * p95_nz)
     print()
     print("-" * 72)
     print("Suggested starting values for Phase 2:")
-    # Noise-floor-based T_hold: 1.5 × p95 of low-energy samples.
-    # Use p25 of all-energy as the "low-energy" floor proxy (25% of samples
-    # are in holds or near-holds under reasonable assumptions).
-    p95 = pct.get("p95") or 0.0
-    p25 = pct.get("p25") or 0.0
-    t_hold_suggestion = max(1.5 * p25, 0.5 * p95)
-    print(f"  T_hold          = {t_hold_suggestion:.5f}   (currently tested: {params['t_hold']:.5f})")
+    print(f"  T_hold          = {t_hold_suggestion:.5f}   "
+          f"(currently tested: {params['t_hold']:.5f})")
     print(f"  K_hold          = 3 frames")
     print(f"  smooth_k        = 3 frames")
     print(f"  edge_trim       = 15%")
@@ -532,21 +735,44 @@ def generate_synthetic_examples() -> list[dict]:
 def run(examples: list[dict], args: argparse.Namespace) -> dict:
     ctx = _build_js_context()
 
-    # First pass: compute pooled motion energy to pick a sensible candidate T_hold.
-    pooled: list[float] = []
+    # Pass 1: compute per-film energy once. Every T_hold in the sweep reuses it.
+    film_energies: list[dict] = []
     for ex in examples:
-        normalised = normalise_film(ctx, ex["hand_film"])
-        for seg in split_into_segments(normalised):
-            pooled.extend(segment_energy(seg).tolist())
-    pooled_arr = np.asarray(pooled, dtype=np.float32)
+        film_energies.append(
+            compute_film_energy(ctx, ex["hand_film"], smooth_k=args.smooth_k)
+        )
+
+    pooled_arr = np.concatenate([
+        fe["flat_energy"] for fe in film_energies if fe["flat_energy"].size > 0
+    ]) if film_energies else np.zeros(0, dtype=np.float32)
     if pooled_arr.size == 0:
         print("No energy samples — all films have zero usable in-view frames.", file=sys.stderr)
         sys.exit(2)
 
-    p25 = float(np.percentile(pooled_arr, 25))
-    p95 = float(np.percentile(pooled_arr, 95))
-    # Candidate T_hold sits between the low-energy floor and median motion.
-    t_hold = args.t_hold if args.t_hold is not None else max(1.5 * p25, 0.5 * p95)
+    nonzero_arr = pooled_arr[pooled_arr > 0.0]
+    dup_frac = duplicate_frame_fraction(film_energies)
+
+    # T_hold chosen from NON-ZERO percentiles to bypass the MediaPipe-duplicate floor.
+    if nonzero_arr.size == 0:
+        print("All energy samples are zero — check for pathological data.", file=sys.stderr)
+        sys.exit(2)
+    p25_nz = float(np.percentile(nonzero_arr, 25))
+    p95_nz = float(np.percentile(nonzero_arr, 95))
+    auto_t_hold = max(1.5 * p25_nz, 0.5 * p95_nz)
+    t_hold = args.t_hold if args.t_hold is not None else auto_t_hold
+
+    # T_hold grid for the sweep. Default grid is geometric around the auto value;
+    # overridable with --t-hold-grid=0.08,0.15,0.3,0.6.
+    if args.t_hold_grid:
+        grid = [float(x) for x in args.t_hold_grid.split(",")]
+    else:
+        grid = sorted({
+            round(auto_t_hold * f, 5)
+            for f in (0.25, 0.5, 1.0, 2.0, 4.0)
+        })
+        # Always include the currently-chosen t_hold so its column is visible.
+        if t_hold not in grid:
+            grid = sorted(grid + [round(t_hold, 5)])
 
     params = {
         "t_hold": t_hold,
@@ -555,23 +781,42 @@ def run(examples: list[dict], args: argparse.Namespace) -> dict:
         "edge_trim_fraction": args.edge_trim,
     }
 
-    # Second pass: full analysis per film with the chosen params.
-    rows = [
-        analyse_film(
-            ctx,
-            ex["hand_film"],
-            ex["gesture_id"],
-            ex.get("session_id"),
-            t_hold=params["t_hold"],
-            k_hold=params["k_hold"],
-            smooth_k=params["smooth_k"],
-            edge_trim_fraction=params["edge_trim_fraction"],
-        )
-        for ex in examples
-    ]
+    def analyse_all(t: float) -> list[dict]:
+        return [
+            analyse_film(
+                fe,
+                ex["gesture_id"],
+                ex.get("session_id"),
+                t_hold=t,
+                k_hold=args.k_hold,
+                edge_trim_fraction=args.edge_trim,
+            )
+            for ex, fe in zip(examples, film_energies)
+        ]
+
+    # Pass 2: T_hold sweep.
+    sweep_results: list[dict] = []
+    for t in grid:
+        sweep_rows = analyse_all(t)
+        sweep_results.append({
+            "t_hold": t,
+            "rows": sweep_rows,
+            "per_gesture": per_gesture_hold_stats(sweep_rows),
+        })
+
+    # Pass 3: detailed analysis at the chosen T_hold.
+    rows = analyse_all(t_hold)
 
     report_json: dict[str, Any] = {"params_used": params}
-    print_report(rows, params, pooled_arr, report_json)
+    print_report(
+        rows=rows,
+        params=params,
+        pooled_energy=pooled_arr,
+        nonzero_energy=nonzero_arr,
+        dup_frac=dup_frac,
+        sweep_results=sweep_results,
+        report_json=report_json,
+    )
     return report_json
 
 
@@ -587,7 +832,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--t-hold", type=float, default=None,
-        help="Override the motion-energy threshold. Default: derived from percentiles.",
+        help="Override the motion-energy threshold. Default: derived from non-zero percentiles.",
+    )
+    parser.add_argument(
+        "--t-hold-grid", type=str, default=None,
+        help="Comma-separated T_hold values for the sweep. Default: auto-derived.",
     )
     parser.add_argument("--k-hold", type=int, default=3, help="Min consecutive frames for a hold.")
     parser.add_argument("--smooth-k", type=int, default=3, help="Moving-average window for energy.")
