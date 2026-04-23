@@ -766,6 +766,18 @@ def print_report(
                     f"{s['modal_fraction']*100:>7.1f}%  {s['modal_template']}"
                 )
 
+            # Full per-gesture template breakdown (every distinct sequence).
+            print("  Full template distribution per gesture:")
+            for gid in sorted(consistency):
+                s = consistency[gid]
+                print(f"    {gid}  (n={s['n_films']}, {s['unique_templates']} unique)")
+                for entry in s["all_templates"]:
+                    frac = entry["count"] / s["n_films"]
+                    print(
+                        f"      {str(entry['template']):>20s}  "
+                        f"{entry['count']:>4d} films  ({frac*100:>5.1f}%)"
+                    )
+
             # Top clusters by size: which gestures contribute?
             top = sorted(composition.items(), key=lambda kv: -kv[1]["total"])[:8]
             print("  cluster_id → gesture composition (top 8 by size):")
