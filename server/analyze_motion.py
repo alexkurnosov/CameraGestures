@@ -328,6 +328,19 @@ def hold_position_histogram(rows: list[dict], n_bins: int = 4) -> list[int]:
     return bins
 
 
+def hold_position_by_ordinal(rows: list[dict]) -> dict[int, list[float]]:
+    """Group position_fraction values by the hold's ordinal index within its film.
+    Returns {0: [positions of 1st hold in each film], 1: [...2nd...], ...}.
+    Used to test whether the first hold in a film tends to land near the start
+    (the "hand-entering-view" hypothesis).
+    """
+    by_ordinal: dict[int, list[float]] = defaultdict(list)
+    for r in rows:
+        for i, h in enumerate(r["holds_kept"]):
+            by_ordinal[i].append(float(h["position_fraction"]))
+    return by_ordinal
+
+
 def duplicate_frame_fraction(film_energies: list[dict]) -> float:
     """Fraction of consecutive frame pairs with exactly zero energy (very likely
     MediaPipe re-emitting the prior detection). Reported for diagnostics only —
@@ -531,6 +544,37 @@ def print_report(
     for label, count in zip(quartile_labels, bins):
         print(f"  {label:>14s}  {count:5d}  ({100 * count / total_holds:5.1f}%)")
     report_json["hold_position_quartiles"] = dict(zip(quartile_labels, bins))
+
+    # --- Position by hold ordinal (tests the "hand entering view" hypothesis) ---
+    print()
+    by_ord = hold_position_by_ordinal(rows)
+    print("Hold position by ordinal (which hold in the film, vs its position):")
+    print(f"  {'ordinal':>8s}  {'n':>4s}  {'mean':>6s}  {'med':>6s}  {'p25':>6s}  {'p75':>6s}")
+    ordinal_stats: dict[str, dict] = {}
+    for ord_i in sorted(by_ord):
+        positions = np.array(by_ord[ord_i], dtype=np.float32)
+        if positions.size == 0:
+            continue
+        label = f"hold#{ord_i + 1}"
+        s = {
+            "n": int(positions.size),
+            "mean_position": float(positions.mean()),
+            "median_position": float(np.median(positions)),
+            "p25": float(np.percentile(positions, 25)),
+            "p75": float(np.percentile(positions, 75)),
+        }
+        ordinal_stats[label] = s
+        print(
+            f"  {label:>8s}  {s['n']:4d}  {s['mean_position']:6.3f}  "
+            f"{s['median_position']:6.3f}  {s['p25']:6.3f}  {s['p75']:6.3f}"
+        )
+    print(
+        "  Interpretation: if hold#1's median is near 0.15-0.3, it's landing just "
+        "after the\n  edge-trim at the film start — consistent with a "
+        "'hand-entering-view' artefact.\n  If hold#1's median sits mid-film, the "
+        "first hold is a real gesture phase."
+    )
+    report_json["hold_position_by_ordinal"] = ordinal_stats
 
     # --- Inter-gesture centroid distances ---
     centroids = per_gesture_centroids(rows)

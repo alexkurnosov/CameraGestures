@@ -135,6 +135,89 @@ sufficient:
 - Do we train one pose model for all gestures, or per-gesture? One model for all is
   simpler and works unless gestures share identical starting poses.
 
+### Observation: unexpected second hold in static-gesture films (2026-04-23)
+
+The Phase 2 calibration script (`server/analyze_motion.py`) was run against the
+current training corpus (151 films, 4 gestures: `ok`, `stop`, `thumbs_up`,
+`point_left`). Summary findings:
+
+- Three of the four gestures (`ok`, `stop`, `thumbs_up`) — all conceptually
+  single-pose — produce **two detected holds per film** (median = 2) under any
+  `T_hold` in a wide band (0.5–2.1). `point_left` produces median = 1.
+- Intra-film hold-pair distance has p10 = 5.36, median 5.80 in normalised coord
+  units. Inter-gesture centroid distances are 1.08–2.60. The two holds within a
+  single film are **~5× further apart than the centroids of different
+  gestures** — they cannot be near-duplicates or noise.
+- MediaPipe re-emits the previous detection unchanged ~35 % of the time.
+  Energy percentiles used for threshold selection now exclude these zero-delta
+  samples.
+
+**Working hypothesis** (unverified): the capture protocol produces two distinct
+stable configurations in each film because the user first *moves the hand into
+view and stabilises it*, then *performs the gesture*. Under this hypothesis,
+hold #1 is the in-view positioning pose and hold #2 is the actual gesture.
+
+**Indirect evidence to check**: if the hypothesis is correct, hold #1 should
+cluster temporally near the film start (just past the 15 % edge-trim, say
+position_fraction ≈ 0.15–0.3), and hold #2 should land later. `analyze_motion.py`
+now reports position_fraction stats broken down by hold ordinal (1st, 2nd, …)
+per film. Pending — run the updated script against the VPS corpus.
+
+**Mitigation options** (deferred until the hypothesis is confirmed):
+- **Phase 1 side**: once the motion gate is live, the entry-into-view phase
+  will be excluded from the captured buffer because the user's hand is not yet
+  "moving into the gesture" at that point — the gate would only open when real
+  gesture motion starts.
+- **Phase 2 side**: post-extraction, drop holds whose distance from the
+  per-gesture centroid exceeds a threshold (keeps only the "real" pose). Or
+  keep only the last hold in each film.
+- **Training data side**: add a hand-labelled annotation indicating which hold
+  is the "true" gesture pose, so the template manifest is built from the right
+  hold rather than all detected holds.
+
+For now, keep both holds. This preserves information until we've confirmed
+the hypothesis and decided how to handle it. Multi-pose templates
+(`gesture_id → [pose_id, ...]`) are compatible either way: once we know hold
+#1 is an artefact, those single-pose gestures collapse to length-1 templates.
+
+### Inspection tool: HandFilmsView hold overlay
+
+To confirm or refute the hypothesis above, we need to *see* the detected holds
+on each film, not just aggregate statistics. Proposal: extend the existing
+`HandFilmsView` (iOS, ModelTrainingApp) with a hold overlay.
+
+**Per-film display:**
+- Run the same hold-detection algorithm the Python script uses (port the
+  JS version of motion energy + smoothing + run-length detection, or have the
+  server expose a `POST /analyze/holds` endpoint that takes a `HandFilm` and
+  returns the hold intervals and representative frames).
+- Mark each detected hold on the film's timeline: a coloured band spanning the
+  hold's frame range, with the representative frame index highlighted.
+- Render the landmark skeleton for each hold's representative frame as a
+  thumbnail, side by side.
+- Show the two distances: (a) hold-pair distance within the film, (b) each
+  hold's distance to the per-gesture centroid.
+
+**Per-cluster display** (after Phase 2 clustering is wired up):
+- Group all detected hold representatives by assigned `pose_id`.
+- Render each cluster as a row of skeleton thumbnails, sorted by intra-cluster
+  distance from the cluster centre. Visually obvious whether the cluster is
+  coherent or contaminated.
+- Allow a human reviewer to flag a hold as "wrong pose" or "transitional",
+  producing a corrections file that can feed back into training.
+
+**Scope for the first version**: read-only overlay on the existing films list,
+no interactive labelling yet. Interactive labelling is a follow-up once we
+know the overlay produces useful signal.
+
+**Files that will change for the inspection tool:**
+
+| File | Change |
+|---|---|
+| `iOS/ModelTraining/.../HandFilmsView.swift` | timeline overlay + per-hold thumbnails |
+| `iOS/ModelTraining/.../ViewModels/` | load hold data per film (from server or computed locally) |
+| `server/routers/` | optional `POST /analyze/holds` endpoint that reuses `analyze_motion.py`'s hold-detection code |
+
 ---
 
 ## Phase 3 — Handfilm Classifier
