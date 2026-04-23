@@ -25,12 +25,13 @@ import json
 import math
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import py_mini_racer
+from sklearn.cluster import AgglomerativeClustering
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +329,19 @@ def hold_position_histogram(rows: list[dict], n_bins: int = 4) -> list[int]:
     return bins
 
 
+def hold_position_by_ordinal(rows: list[dict]) -> dict[int, list[float]]:
+    """Group position_fraction values by the hold's ordinal index within its film.
+    Returns {0: [positions of 1st hold in each film], 1: [...2nd...], ...}.
+    Used to test whether the first hold in a film tends to land near the start
+    (the "hand-entering-view" hypothesis).
+    """
+    by_ordinal: dict[int, list[float]] = defaultdict(list)
+    for r in rows:
+        for i, h in enumerate(r["holds_kept"]):
+            by_ordinal[i].append(float(h["position_fraction"]))
+    return by_ordinal
+
+
 def duplicate_frame_fraction(film_energies: list[dict]) -> float:
     """Fraction of consecutive frame pairs with exactly zero energy (very likely
     MediaPipe re-emitting the prior detection). Reported for diagnostics only —
@@ -341,6 +355,102 @@ def duplicate_frame_fraction(film_energies: list[dict]) -> float:
             total += energy.size
             zeros += int(np.count_nonzero(energy == 0.0))
     return (zeros / total) if total else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Clustering: agglomerative over all kept hold representatives.
+# ---------------------------------------------------------------------------
+
+def flatten_hold_reps(
+    rows: list[dict],
+) -> tuple[np.ndarray, list[tuple[int, int]]]:
+    """Flatten every film's hold reps into one (N, 63) array.
+    Returns (X, rep_to_film) where rep_to_film[k] = (film_index, hold_index).
+    """
+    flat: list[np.ndarray] = []
+    rep_to_film: list[tuple[int, int]] = []
+    for fi, r in enumerate(rows):
+        for hi, rep in enumerate(r["hold_reps"]):
+            flat.append(rep)
+            rep_to_film.append((fi, hi))
+    if not flat:
+        return np.zeros((0, 0), dtype=np.float32), rep_to_film
+    return np.stack(flat).astype(np.float32), rep_to_film
+
+
+def cluster_hold_reps(X: np.ndarray, epsilon: float) -> np.ndarray:
+    """Agglomerative clustering with distance threshold = epsilon.
+    Average-link over Euclidean distance; no pre-set cluster count.
+    Returns an int label per row.
+    """
+    if X.shape[0] < 2:
+        return np.zeros(X.shape[0], dtype=np.int32)
+    clusterer = AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=epsilon,
+        linkage="average",
+    )
+    return clusterer.fit_predict(X).astype(np.int32)
+
+
+def film_templates_from_labels(
+    n_films: int,
+    labels: np.ndarray,
+    rep_to_film: list[tuple[int, int]],
+) -> list[list[int]]:
+    """Per film, the ordered sequence of cluster ids across its kept holds."""
+    templates: list[list[int]] = [[] for _ in range(n_films)]
+    for label, (fi, _hi) in zip(labels.tolist(), rep_to_film):
+        templates[fi].append(int(label))
+    return templates
+
+
+def template_consistency_per_gesture(
+    rows: list[dict],
+    film_templates: list[list[int]],
+) -> dict[str, dict]:
+    """For each gesture, the distribution of observed (ordered) cluster-id
+    sequences across its films. Includes the modal template and what fraction
+    of films produce it.
+    """
+    by_gesture: dict[str, list[tuple[int, ...]]] = defaultdict(list)
+    for r, t in zip(rows, film_templates):
+        if t:
+            by_gesture[r["gesture_id"]].append(tuple(t))
+
+    out: dict[str, dict] = {}
+    for gid, seqs in by_gesture.items():
+        counter = Counter(seqs)
+        modal_seq, modal_n = counter.most_common(1)[0]
+        out[gid] = {
+            "n_films": len(seqs),
+            "unique_templates": len(counter),
+            "modal_template": list(modal_seq),
+            "modal_fraction": modal_n / len(seqs),
+            "all_templates": [
+                {"template": list(k), "count": v}
+                for k, v in counter.most_common()
+            ],
+        }
+    return out
+
+
+def cluster_composition(
+    rows: list[dict],
+    labels: np.ndarray,
+    rep_to_film: list[tuple[int, int]],
+) -> dict[int, dict]:
+    """For each cluster id, the count of holds from each gesture plus total."""
+    composition: dict[int, Counter] = defaultdict(Counter)
+    for label, (fi, _hi) in zip(labels.tolist(), rep_to_film):
+        composition[int(label)][rows[fi]["gesture_id"]] += 1
+    return {
+        cid: {
+            "total": sum(cnt.values()),
+            "by_gesture": dict(cnt),
+        }
+        for cid, cnt in composition.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +642,37 @@ def print_report(
         print(f"  {label:>14s}  {count:5d}  ({100 * count / total_holds:5.1f}%)")
     report_json["hold_position_quartiles"] = dict(zip(quartile_labels, bins))
 
+    # --- Position by hold ordinal (tests the "hand entering view" hypothesis) ---
+    print()
+    by_ord = hold_position_by_ordinal(rows)
+    print("Hold position by ordinal (which hold in the film, vs its position):")
+    print(f"  {'ordinal':>8s}  {'n':>4s}  {'mean':>6s}  {'med':>6s}  {'p25':>6s}  {'p75':>6s}")
+    ordinal_stats: dict[str, dict] = {}
+    for ord_i in sorted(by_ord):
+        positions = np.array(by_ord[ord_i], dtype=np.float32)
+        if positions.size == 0:
+            continue
+        label = f"hold#{ord_i + 1}"
+        s = {
+            "n": int(positions.size),
+            "mean_position": float(positions.mean()),
+            "median_position": float(np.median(positions)),
+            "p25": float(np.percentile(positions, 25)),
+            "p75": float(np.percentile(positions, 75)),
+        }
+        ordinal_stats[label] = s
+        print(
+            f"  {label:>8s}  {s['n']:4d}  {s['mean_position']:6.3f}  "
+            f"{s['median_position']:6.3f}  {s['p25']:6.3f}  {s['p75']:6.3f}"
+        )
+    print(
+        "  Interpretation: if hold#1's median is near 0.15-0.3, it's landing just "
+        "after the\n  edge-trim at the film start — consistent with a "
+        "'hand-entering-view' artefact.\n  If hold#1's median sits mid-film, the "
+        "first hold is a real gesture phase."
+    )
+    report_json["hold_position_by_ordinal"] = ordinal_stats
+
     # --- Inter-gesture centroid distances ---
     centroids = per_gesture_centroids(rows)
     print()
@@ -593,6 +734,71 @@ def print_report(
         "kept_holds": n_kept,
         "dropped_pct": trimmed_pct,
     }
+
+    # --- Clustering: agglomerative over all kept hold reps ---
+    X, rep_to_film = flatten_hold_reps(rows)
+    cluster_reports: list[dict] = []
+    if X.shape[0] >= 2 and params.get("epsilon_grid"):
+        print()
+        print("Clustering (agglomerative, average-link, Euclidean):")
+        for eps_val in params["epsilon_grid"]:
+            labels = cluster_hold_reps(X, eps_val)
+            n_clusters = int(labels.max()) + 1 if labels.size else 0
+            templates = film_templates_from_labels(len(rows), labels, rep_to_film)
+            consistency = template_consistency_per_gesture(rows, templates)
+            composition = cluster_composition(rows, labels, rep_to_film)
+
+            # Cluster size distribution (sorted desc).
+            sizes = sorted(
+                (c["total"] for c in composition.values()), reverse=True
+            )
+            print()
+            print(f"  ε = {eps_val:.3f}   →   {n_clusters} clusters   "
+                  f"(sizes top-10: {sizes[:10]})")
+
+            # Per-gesture template consistency.
+            print(f"  {'gesture':>12s}  {'films':>6s}  {'uniq':>5s}  "
+                  f"{'modal %':>8s}  modal template")
+            for gid in sorted(consistency):
+                s = consistency[gid]
+                print(
+                    f"  {gid:>12s}  {s['n_films']:>6d}  {s['unique_templates']:>5d}  "
+                    f"{s['modal_fraction']*100:>7.1f}%  {s['modal_template']}"
+                )
+
+            # Top clusters by size: which gestures contribute?
+            top = sorted(composition.items(), key=lambda kv: -kv[1]["total"])[:8]
+            print("  cluster_id → gesture composition (top 8 by size):")
+            for cid, comp in top:
+                gesture_parts = ", ".join(
+                    f"{g}:{n}" for g, n in sorted(
+                        comp["by_gesture"].items(), key=lambda kv: -kv[1]
+                    )
+                )
+                print(f"    [{cid:>3d}]  n={comp['total']:>3d}   {gesture_parts}")
+
+            cluster_reports.append({
+                "epsilon": float(eps_val),
+                "n_clusters": n_clusters,
+                "cluster_sizes": sizes,
+                "per_gesture_consistency": {
+                    gid: {
+                        "n_films": s["n_films"],
+                        "unique_templates": s["unique_templates"],
+                        "modal_fraction": s["modal_fraction"],
+                        "modal_template": s["modal_template"],
+                        "all_templates": s["all_templates"],
+                    }
+                    for gid, s in consistency.items()
+                },
+                "cluster_composition": {
+                    str(cid): comp for cid, comp in composition.items()
+                },
+            })
+    else:
+        print()
+        print("Clustering skipped (not enough hold reps or no epsilon grid set).")
+    report_json["clustering"] = cluster_reports
 
     # --- Final suggested parameters ---
     # T_hold based on NON-ZERO percentiles (excludes MediaPipe duplicates).
@@ -774,11 +980,19 @@ def run(examples: list[dict], args: argparse.Namespace) -> dict:
         if t_hold not in grid:
             grid = sorted(grid + [round(t_hold, 5)])
 
+    # Epsilon grid for clustering. If --epsilon-grid is set it wins; otherwise
+    # a single ε from --epsilon (default 0.8).
+    if args.epsilon_grid:
+        eps_grid = [float(x) for x in args.epsilon_grid.split(",")]
+    else:
+        eps_grid = [float(args.epsilon)]
+
     params = {
         "t_hold": t_hold,
         "k_hold": args.k_hold,
         "smooth_k": args.smooth_k,
         "edge_trim_fraction": args.edge_trim,
+        "epsilon_grid": eps_grid,
     }
 
     def analyse_all(t: float) -> list[dict]:
@@ -843,6 +1057,14 @@ def main() -> None:
     parser.add_argument(
         "--edge-trim", type=float, default=0.15,
         help="Fraction of first/last in-view frames to exclude from hold acceptance.",
+    )
+    parser.add_argument(
+        "--epsilon", type=float, default=0.8,
+        help="Agglomerative-clustering distance threshold on hold reps. Default: 0.8.",
+    )
+    parser.add_argument(
+        "--epsilon-grid", type=str, default=None,
+        help="Comma-separated ε values for a clustering sweep. Overrides --epsilon.",
     )
     args = parser.parse_args()
 
