@@ -217,27 +217,35 @@ function summaryFeatures(handFilm) {
         vels.push(flat.slice(base + COORDS_PER_FRAME, base + FEATURES_PER_FRAME));
     }
 
-    // Column-wise mean
+    // Stats are computed only over real (non-absent, non-padded) frames.
+    // Real frames occupy the front of the padded matrix; padding is appended
+    // at the tail. Iterating and dividing by realCount avoids shrinking coord
+    // means and stds by the ratio of real-to-padded frames — which was the
+    // source of the training/inference window-length skew.
+    var frames = nonAbsentFrames(handFilm);
+    var realCount = Math.min(frames.length, TARGET_FRAMES);
+
     function colMean(m) {
         var out = [];
         for (var j = 0; j < COORDS_PER_FRAME; j++) {
+            if (realCount === 0) { out.push(0); continue; }
             var s = 0;
-            for (var i = 0; i < TARGET_FRAMES; i++) s += m[i][j];
-            out.push(s / TARGET_FRAMES);
+            for (var i = 0; i < realCount; i++) s += m[i][j];
+            out.push(s / realCount);
         }
         return out;
     }
 
-    // Column-wise population std
     function colStd(m, means) {
         var out = [];
         for (var j = 0; j < COORDS_PER_FRAME; j++) {
+            if (realCount === 0) { out.push(0); continue; }
             var v = 0;
-            for (var i = 0; i < TARGET_FRAMES; i++) {
+            for (var i = 0; i < realCount; i++) {
                 var d = m[i][j] - means[j];
                 v += d * d;
             }
-            out.push(Math.sqrt(v / TARGET_FRAMES));
+            out.push(Math.sqrt(v / realCount));
         }
         return out;
     }
@@ -249,10 +257,7 @@ function summaryFeatures(handFilm) {
 
     // Net raw wrist displacement (first vs last frame, before normalisation).
     // X is flipped per-frame for left hands so left/right data aligns.
-    // Use only non-absent frames so a hand that leaves view at the end
-    // doesn't collapse the displacement to -firstWrist.
     var displacement = [0, 0, 0];
-    var frames = nonAbsentFrames(handFilm);
     if (frames.length >= 2) {
         var firstFrame = frames[0];
         var lastFrame  = frames[frames.length - 1];
@@ -269,7 +274,7 @@ function summaryFeatures(handFilm) {
 
     // Dominant motion axis: max |mean velocity| across x/y/z averaged over all landmarks
     var axisSum = [0, 0, 0];
-    for (var i = 0; i < TARGET_FRAMES; i++) {
+    for (var i = 0; i < realCount; i++) {
         for (var lm = 0; lm < LANDMARKS; lm++) {
             var b = lm * 3;
             axisSum[0] += vels[i][b];
@@ -277,7 +282,7 @@ function summaryFeatures(handFilm) {
             axisSum[2] += vels[i][b + 2];
         }
     }
-    var total = TARGET_FRAMES * LANDMARKS;
+    var total = (realCount === 0 ? 1 : realCount) * LANDMARKS;
     var dominant = Math.max(
         Math.abs(axisSum[0] / total),
         Math.abs(axisSum[1] / total),
