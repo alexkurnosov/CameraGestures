@@ -131,16 +131,32 @@ Pool all hold representatives across all films and cluster with **agglomerative
 clustering** (average-link, Euclidean, `distance_threshold = ε`). Each cluster
 is a `pose_id`.
 
-Apply the **shared-cluster filter** to exclude neutral/rest poses:
-> A cluster is "shared" if ≥ 3 distinct gestures contribute holds to it and each
-> contributing gesture accounts for ≥ 5 % of the cluster's total. Shared clusters
-> are removed from the pose vocabulary and from every gesture's template.
+Apply the **idle-pose heuristic** to flag candidates for human review (never
+auto-exclude — flags surface in the inspector; clusters are only treated as
+idle after explicit confirmation):
 
-For each gesture, the **canonical template** is the modal filtered sequence
-across its films. Non-modal films fall into one of: fewer holds than the modal,
-extra holds beyond the modal, or a genuinely different pattern. If the modal
-fraction is ≥ 70 %, the gesture template is the modal; otherwise flag the
-gesture for capture review.
+> Score each cluster with three signals:
+> - *Gesture-entropy*: Shannon entropy of the cluster's gesture distribution,
+>   normalised by `log(n_gestures)`. 0 = pure (gesture-specific), 1 = fully
+>   shared.
+> - *Tail-position*: the cluster appears as the last element in the modal
+>   template of ≥ 2 distinct gestures.
+> - *Temporal-position*: median `position_fraction` of the cluster's holds
+>   > 0.5.
+>
+> A cluster is flagged **suspected_idle** when any two of the three signals
+> trigger. The flag is advisory only.
+
+**Human confirmation via inspector** (see *Inspection tool* section). Each
+cluster has a `kind` of `regular`, `idle`, or `unconfirmed`. Unconfirmed
+clusters default to `regular` behaviour at both training and inference. Only
+clusters explicitly marked `idle` are treated as gesture-end markers.
+
+For each gesture, the **canonical template** is the modal sequence across its
+films, with any holds assigned to `idle`-marked clusters stripped out. Non-modal
+films fall into one of: fewer holds than the modal, extra holds beyond the
+modal, or a genuinely different pattern. If the modal fraction is ≥ 70 %, the
+gesture template is the modal; otherwise flag the gesture for capture review.
 
 ### Feature vector
 
@@ -161,27 +177,37 @@ monitor motion energy continuously
   ▼
 Phase 2 MLP on the hold's argmin frame
   │
-  ├─ top pose confidence < τ  → discard capture, reset gate
+  ├─ top pose confidence < τ_commit                     → discard capture, reset gate
   │
-  └─ top pose is a shared cluster  → ignore this hold, keep buffering
+  ├─ pose is IDLE  (cluster kind == "idle")
+  │     observed == []                                  → reset gate, keep watching
+  │     observed is a COMPLETE match of some template   → commit, restrict Phase 3 to S
+  │     observed is a live prefix (no complete match)   → commit to the longest completed
+  │                                                        ancestor prefix if any, else
+  │                                                        discard and reset gate
   │
-  otherwise: append predicted pose_id to `observed = [p1, p2, ...]`
-  │
-  ▼
-prefix-match observed against gesture_templates
-  │
-  ├─ no template starts with observed  → discard capture, reset gate
-  │
-  ├─ some templates match, none complete → keep buffering, start T_commit timer
-  │     if a new hold arrives before T_commit expires, extend observed and re-match
-  │     otherwise (timer fires): commit to any complete match that is a prefix
-  │
-  └─ at least one template equals observed  → commit to candidate set
-        S = { g : template(g) == observed }
-  │
-  ▼
+  └─ pose is REGULAR (unconfirmed clusters default here)
+        append pose_id to observed = [p1, p2, ...]
+        prefix-match observed against gesture_templates
+        ├─ no template starts with observed             → discard capture, reset gate
+        ├─ completion exists, no longer prefix possible → commit  ✓
+        └─ completion exists but longer prefixes remain → keep buffering,
+                                                           start T_commit timer
+              new hold arrives before timer fires       → extend observed, re-match
+              timer fires                               → commit the completed prefix
+
+  on motion gate CLOSES (Phase 1, energy < T_close for K_close frames)
+        if observed has any complete match              → commit  ✓
+        else                                            → discard, reset gate
+  ↓
 Phase 3 runs on the buffered film, output restricted to S
 ```
+
+Idle-pose detection is the **primary** commit signal for the happy path: the
+user performs the gesture, relaxes into an idle configuration, commit fires
+immediately. `T_commit` stays as a fallback for users who hold the gesture
+without releasing. Gate-close is the final fallback for cases where neither
+an idle pose nor another hold arrives.
 
 ### Parameters
 
@@ -197,7 +223,7 @@ Empirically chosen from the 151-film corpus (`ok`, `stop`, `point_left`,
 | `T_commit` | **300 ms** | After hold-close, wait this long for another hold before committing to a match. Handles prefix collisions (short templates that are prefixes of longer ones). |
 | `ε` (clustering) | **0.8** | Below the inter-gesture centroid minimum (1.08 between `ok` and `stop`). Produces 29 clusters on the current corpus, with clean gesture-specific groupings for three of four gestures. |
 | `τ_commit` (confidence) | **0.6** | Initial guess; tune after first real run. Holds with top pose confidence below this are rejected as "unknown pose". |
-| shared-cluster rule | **≥ 3 gestures, each ≥ 5 %** | Currently flags exactly one cluster (the neutral/relax pose) with no false positives. |
+| `τ_idle_suspicion` | **entropy ≥ 0.8 · log(n_gestures)** | Part of the idle-pose heuristic (combined with tail-position and temporal-position signals). Flags clusters as `suspected_idle` for human review; never auto-excludes. |
 
 Calibration uses non-zero energy percentiles because MediaPipe re-emits the
 previous detection unchanged ~35 % of the time, which would pin any
@@ -207,10 +233,13 @@ percentile-based threshold to zero.
 
 - **Architecture**: `Dense(64, relu) → Dense(32, relu) → Dense(n_pose_clusters, softmax)`
 - **Input**: 63-dim hold representative (one frame of normalised coords).
-- **Output**: argmax over `pose_id` with confidence. If top confidence <
-  `τ_commit`, the hold is rejected as "unknown pose".
+- **Output space**: all pose clusters, *including idle*. The classifier must
+  recognise idle poses because runtime uses them as gesture-end markers.
+- **Output decision**: argmax over `pose_id` with confidence. If top
+  confidence < `τ_commit`, the hold is rejected as "unknown pose".
 - **Training labels**: `pose_id`s produced by the clustering pass (not
-  `gesture_id`s directly). Shared clusters are excluded from training.
+  `gesture_id`s directly). Idle-marked clusters are *included* in training.
+  Holds explicitly excluded via the inspector's per-hold action are dropped.
 - **Train/test split**: by `session_id` — never per-frame, which would leak
   near-duplicate holds from the same film across the split.
 
@@ -220,11 +249,12 @@ percentile-based threshold to zero.
 {
   "version": 1,
   "pose_clusters": {
-    "2":  { "label": "pose_point",  "n_samples": 13, "centroid": [...63 floats...] },
-    "9":  { "label": "pose_ok",     "n_samples": 45, "centroid": [...] },
-    "10": { "label": "pose_stop",   "n_samples": 36, "centroid": [...] }
+    "2":  { "label": "pose_point",  "kind": "regular", "suspected_idle": false, "n_samples": 13, "centroid": [...63 floats...] },
+    "9":  { "label": "pose_ok",     "kind": "regular", "suspected_idle": false, "n_samples": 45, "centroid": [...] },
+    "10": { "label": "pose_stop",   "kind": "regular", "suspected_idle": false, "n_samples": 36, "centroid": [...] },
+    "15": { "label": "pose_relax",  "kind": "idle",    "suspected_idle": true,  "n_samples": 131, "centroid": [...] }
   },
-  "shared_clusters_excluded": [15],
+  "idle_poses": [15],
   "gesture_templates": {
     "ok":         [9],
     "stop":       [10],
@@ -233,15 +263,24 @@ percentile-based threshold to zero.
   "parameters": {
     "t_hold": 0.54, "k_hold_frames": 3, "smooth_k": 3,
     "edge_trim_fraction": 0.15, "t_commit_ms": 300,
-    "epsilon": 0.8, "tau_commit": 0.6
+    "epsilon": 0.8, "tau_commit": 0.6,
+    "tau_idle_suspicion_entropy": 0.8
   }
 }
 ```
 
-Draft templates derived from the current corpus after applying the shared-cluster
-filter: all four present gestures collapse to **length-1 templates** (single
-`pose_id` per gesture). The multi-pose machinery is retained in the design for
-future genuinely multi-phase gestures but has no active users in today's corpus.
+`kind` is one of:
+- `regular` — a gesture-specific pose; appears in templates and is used for prefix matching.
+- `idle` — a neutral / end-of-gesture pose; never appears in templates; detection triggers commit at runtime.
+- `unconfirmed` — default for newly discovered clusters. Treated as `regular` for safety; `suspected_idle = true` surfaces it in the inspector for human review.
+
+`suspected_idle` is set by the idle-pose heuristic (gesture-entropy + tail-position + temporal-position) and is advisory only — it never changes `kind` without a human decision.
+
+Draft templates derived from the current corpus, after human review marks
+cluster 15 as idle: all four present gestures collapse to **length-1
+templates** (single `pose_id` per gesture). The multi-pose machinery is
+retained in the design for future genuinely multi-phase gestures but has no
+active users in today's corpus.
 
 ### Calibration observation (151-film corpus, 2026-04-23)
 
@@ -264,21 +303,32 @@ duration, hold #2 at 0.60), the capture protocol produces:
 2. User releases into a neutral hand before exiting view (hold #2, shared
    cluster, position ≈ 0.60).
 
-The shared-cluster filter strips the trailing neutral from templates, leaving
-clean length-1 templates for all four present gestures. `thumbs_up` remains
-fragmented across ~20 gesture-specific clusters at ε = 0.8 because its training
-films were shot from different camera angles — the user plans to retake or
-retire this gesture; no further ε tuning needed.
+The idle-pose heuristic flags cluster 15 (entropy ≈ log 4 — all four gestures
+contribute; tail-position in the modal templates of `ok`, `stop`, `thumbs_up`;
+median `position_fraction` = 0.60 > 0.5 — all three signals fire). After a
+reviewer marks cluster 15 as `idle` via the inspector, the templates become
+length-1 for all four present gestures. Cluster 15 remains in the pose
+vocabulary (so the classifier can detect it) and functions at runtime as the
+primary gesture-end signal.
+
+`thumbs_up` remains fragmented across ~20 gesture-specific clusters at ε = 0.8
+because its training films were shot from different camera angles — the user
+plans to retake or retire this gesture; no further ε tuning needed.
 
 ### Server-side changes
 
 - New `server/ml/trainer_pose.py` (or extension to `trainer_rf_mlp.py`):
   1. Extract hold reps from every stored film using the calibrated parameters.
   2. Cluster representatives.
-  3. Apply the shared-cluster filter.
-  4. Build the template manifest.
-  5. Train the MLP on labelled hold reps (excluding shared-cluster samples).
-  6. Export `pose_model.tflite` + `pose_manifest.json`.
+  3. Run the idle-pose heuristic to compute `suspected_idle` per cluster.
+  4. Merge in `server/data/pose_corrections.json` (human review output) to set
+     each cluster's `kind` and to drop any per-hold exclusions.
+  5. Build the template manifest (idle-marked clusters are kept in
+     `pose_clusters` and `idle_poses`, but stripped from every
+     `gesture_templates` entry).
+  6. Train the MLP on all labelled hold reps (including idle — the classifier
+     must recognise them — but excluding per-hold-excluded samples).
+  7. Export `pose_model.tflite` + `pose_manifest.json`.
 - New endpoints:
   - `POST /train/pose` — triggers the pose-model training pipeline.
   - `GET /model/pose/download` — returns the tflite model.
@@ -302,44 +352,92 @@ retire this gesture; no further ε tuning needed.
   - Maintain `observed_sequence: [pose_id]` and `candidate_gestures: set`.
   - Track the `T_commit` timer after the motion gate closes.
 
-### Inspection tool: HandFilmsView hold overlay
+### Inspection tool: HandFilmsView pose inspector
 
-Read-only overlay on the existing `HandFilmsView` in the training app. Confirms
-visually what the clustering decided.
+Interactive inspector on the existing `HandFilmsView` in the training app.
+Confirms visually what the clustering decided and lets a reviewer set each
+cluster's `kind`. Heuristic flags surface but **never change `kind`
+automatically** — human decision is required for `idle` or `regular`.
 
-**Per-film display:**
+#### Per-film view
+
 - Use `POST /analyze/holds` on the server (or port the detection to JS) to get
   hold intervals and representative frame indices for the film.
 - Draw a timeline with coloured bands for each hold, highlighting the
   representative frame.
 - Render the landmark skeleton at each hold's representative frame as a
   thumbnail, side by side.
-- Label each thumbnail with its assigned `pose_id` (after clustering) plus
-  the distance to the cluster centroid, and mark shared-cluster holds with
-  a distinctive colour so they're easy to separate visually from the real
-  gesture holds.
+- Label each thumbnail with its assigned `pose_id`, the cluster's current
+  `kind` (`regular` / `idle` / `unconfirmed`), the distance to the cluster
+  centroid, and a warning icon if the cluster is `suspected_idle`.
+- **Per-hold action**: *Exclude this hold from this film's training*. Local
+  correction — does not affect the cluster's overall `kind`.
 
-**Per-cluster display:**
-- A separate view that groups every detected hold across the corpus by
-  `pose_id`.
-- Each cluster rendered as a grid of skeleton thumbnails, sorted by distance
-  from the cluster centroid. Makes it obvious at a glance whether a cluster is
-  coherent or contaminated.
-- Shared clusters are displayed but marked clearly as excluded from templates.
+#### Per-cluster view (primary confirmation surface)
 
-Interactive labelling (flag a hold as "wrong pose" → corrections file feeding
-back into training) is a second-pass feature — ship the overlay first.
+- Grid of every hold thumbnail across the corpus, grouped by cluster. Within
+  each group, sorted by distance from centroid so the "centre" of the cluster
+  is obvious.
+- Each cluster header shows:
+  - Cluster id and size.
+  - Gesture composition (bar or count per gesture).
+  - Heuristic signals: gesture-entropy score, tail-position count, median
+    temporal position, and the combined `suspected_idle` flag.
+  - Current `kind`: `regular` / `idle` / `unconfirmed`.
+- **Per-cluster actions**:
+  - *Mark as idle* → `kind = "idle"`. Cluster is stripped from every
+    `gesture_templates` entry, added to `idle_poses`, still used for
+    classifier training.
+  - *Mark as regular* → `kind = "regular"`. Included in templates.
+  - *Reset to unconfirmed* → `kind = "unconfirmed"` (default behaviour).
+- Suspected-idle clusters are visually distinct (e.g. a badge and a muted
+  colour) so the reviewer can triage them first.
+
+No cluster-level or film-level delete — heuristics surface, humans decide.
+
+#### Corrections artefact
+
+All inspector actions write to `server/data/pose_corrections.json` alongside
+the manifest. Trainer reads it at manifest-build time:
+
+```json
+{
+  "cluster_kinds": {
+    "15": "idle",
+    "9":  "regular"
+  },
+  "excluded_holds": [
+    { "film_id": "abc-123", "hold_ordinal": 0 }
+  ]
+}
+```
+
+Keeps the training pipeline deterministic and the inspector the single source
+of truth for human overrides. Clusters not listed in `cluster_kinds` stay
+`unconfirmed` and behave as `regular`.
 
 ### Open questions
 
 - **τ_commit** (pose confidence gate at inference): 0.6 is an initial guess;
   tune after first on-device run.
 - **Re-clustering cadence**: do we re-cluster every time the corpus grows by
-  some threshold, or only on demand via `POST /train/pose`?
-- **Shared-cluster threshold** (≥ 3 gestures, ≥ 5 % each): works for 4
-  gestures; revisit as vocabulary grows. The "3" may need to scale.
-- **Handling non-modal training films** (~5 % at ε = 0.8): exclude from training
-  (cleaner) or tolerate (more data)? Start with exclusion; revisit if undertraining.
+  some threshold, or only on demand via `POST /train/pose`? Re-clustering
+  changes cluster ids, which invalidates the corrections file — so probably
+  on demand, with a migration step for `cluster_kinds` via nearest-centroid
+  mapping.
+- **Default for `unconfirmed` clusters**: currently treat as `regular`. As
+  the idle heuristic matures we could consider switching the default to
+  "excluded until confirmed" to keep training cleaner; that change would
+  require the inspector to be part of the standard training workflow.
+- **Idle-pose heuristic thresholds** (entropy, tail-position count, median
+  position): current values are tuned to 4 gestures; revisit at 10+.
+- **Runtime edge case** (idle detected while `observed` is a live prefix
+  without a complete match): current design commits to the longest
+  complete-template ancestor if one exists, else discards. Validate with
+  real data.
+- **Handling non-modal training films** (~5 % at ε = 0.8): exclude
+  per-hold via the inspector, or tolerate? Start with inspector-driven
+  exclusion; revisit if undertraining.
 - **LSTM trainer** for genuinely dynamic gestures with multiple ordered holds
   — deferred; current corpus doesn't need it.
 
@@ -430,23 +528,27 @@ One gesture is consistently misclassified as another. Likely diagnosis after ret
 | `iOS/HandGestureRecognizing/.../HandGestureRecognizing.swift` | motion gate + hold-detection + prefix matcher + T_commit timer |
 | `iOS/GestureModel/.../GestureModel.swift` | single-frame prediction path for pose classifier; second-model load |
 | `iOS/ModelTraining/.../GestureRecognizerWrapper.swift` | updated config defaults |
-| `iOS/ModelTraining/.../HandFilmsView.swift` | hold-timeline overlay, per-hold skeleton thumbnails |
-| `iOS/ModelTraining/.../ViewModels/` | hold data fetch (via `/analyze/holds`) + per-cluster grid view |
-| `server/ml/trainer_pose.py` (new) | Phase 2 trainer: extract, cluster, filter, train, export manifest |
+| `iOS/ModelTraining/.../HandFilmsView.swift` | hold-timeline overlay, per-hold skeleton thumbnails, per-hold exclude action |
+| `iOS/ModelTraining/.../PoseInspectorView.swift` (new) | per-cluster grid view, idle/regular marking actions |
+| `iOS/ModelTraining/.../ViewModels/` | hold + cluster data fetch (via `/analyze/holds`); read/write corrections |
+| `server/ml/trainer_pose.py` (new) | Phase 2 trainer: extract, cluster, apply corrections, train, export manifest |
 | `server/ml/preprocessor.js` | (unchanged — Phase 2 uses existing normalised coords) |
-| `server/analyze_motion.py` | becomes source of truth for hold-detection + clustering used by trainer |
-| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds` |
+| `server/analyze_motion.py` | source of truth for hold-detection + clustering logic used by trainer and `/analyze/holds` |
+| `server/data/pose_corrections.json` (new) | reviewer output: `cluster_kinds`, `excluded_holds`; consumed by trainer |
+| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds`, `/pose/corrections` (GET/PUT) |
 
 ---
 
 ## Open Questions Summary
 
 - [ ] Motion gate thresholds `T_open`, `T_close`, `K_open`, `K_close` — empirical, pending on-device testing.
-- [x] Phase 2 capture-protocol artefact — resolved: captures include a trailing neutral hold, excluded by the shared-cluster filter.
+- [x] Phase 2 capture-protocol artefact — resolved: captures include a trailing neutral hold, flagged by the idle-pose heuristic and marked `idle` via the inspector.
 - [x] Phase 2 parameters — calibrated (T_hold, K_hold, smooth_k, edge_trim, ε, T_commit).
 - [ ] Phase 2 `τ_commit` (pose confidence gate) — tune on first on-device run.
-- [ ] Phase 2 re-clustering cadence — on demand vs periodic.
-- [ ] Phase 2 shared-cluster threshold as vocabulary grows (currently `≥ 3 gestures, ≥ 5 % each`).
+- [ ] Phase 2 re-clustering cadence — on demand vs periodic. Re-clustering renumbers clusters, so `cluster_kinds` needs a nearest-centroid migration step.
+- [ ] Idle-pose heuristic thresholds (entropy ≥ 0.8·log(n_gestures), tail-position ≥ 2, median position > 0.5) — revisit as vocabulary grows beyond 4 gestures.
+- [ ] Default behaviour for `unconfirmed` clusters — currently `regular`; consider "excluded until confirmed" once the inspector is part of the standard workflow.
+- [ ] Runtime edge case — idle detected while `observed` is a live prefix without a complete match: commit to longest complete-template ancestor vs discard. Validate on-device.
 - [ ] Phase 3: retrain on new short films vs trim existing films.
 - [ ] Remaining misclassification pair: which gestures, and does it resolve after the window fix + Phase 2 gating.
 - [ ] `thumbs_up` retake — deferred to training-data curation.
