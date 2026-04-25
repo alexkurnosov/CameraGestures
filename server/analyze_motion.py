@@ -243,7 +243,7 @@ def analyse_film(
     hold_reps_normalised: list[np.ndarray] = []
     in_view_counter_offset = 0
 
-    for seg, smoothed in zip(segments, seg_smoothed):
+    for seg_i, (seg, smoothed) in enumerate(zip(segments, seg_smoothed)):
         seg_holds = find_holds(smoothed, t_hold=t_hold, k_hold=k_hold)
         for h in seg_holds:
             rep_coord_frame = h["rep"]
@@ -256,6 +256,9 @@ def analyse_film(
                 "position_fraction": (
                     in_view_ordinal / n_in_view if n_in_view > 0 else 0.0
                 ),
+                "seg_index": seg_i,
+                "start_in_seg": h["start"],
+                "end_in_seg": h["end"],
             }
             holds_all.append(h_out)
             if not is_edge:
@@ -454,6 +457,254 @@ def cluster_composition(
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 motion-gate calibration.
+#
+# T_open / K_open come from segment-onset energy: when the hand appears in view
+# (or resumes after an absent run), how quickly does the per-frame energy rise
+# above a candidate threshold? The corpus contains 151 such onsets.
+#
+# T_close / K_close need an idle-hand distribution. The corpus doesn't contain
+# dedicated idle films, but Phase 2 identifies neutral/relax-pose holds via the
+# idle-pose heuristic (and eventually the reviewer-confirmed `cluster_kinds` in
+# pose_corrections.json). Energy within those holds is the idle-side
+# distribution. Run-lengths of idle-candidate vs gesture-specific holds tell us
+# whether `K_close` can sit in a clean gap between the two populations.
+#
+# Note that at runtime, Phase 2's idle-pose detection is the primary commit
+# signal. These Phase 1 thresholds serve the fallback path only — the close
+# condition when neither an idle pose nor another hold arrives.
+# ---------------------------------------------------------------------------
+
+def idle_candidate_cluster_ids(
+    composition: dict[int, dict],
+    min_gestures: int = 3,
+    min_fraction: float = 0.05,
+) -> list[int]:
+    """Coarse pre-heuristic for the idle-pose classification: cluster ids that
+    ≥ `min_gestures` distinct gestures contribute to, with each contributing
+    gesture accounting for ≥ `min_fraction` of the cluster's total.
+
+    This approximates the full idle-pose heuristic (entropy + tail-position +
+    temporal-position, documented in Plans/PLAN_3phase_recognition.md §Phase 2)
+    and is used for seed-value calibration when reviewer-confirmed
+    `cluster_kinds` from pose_corrections.json isn't yet available. Once that
+    file exists, calibration should read the confirmed idle set directly.
+    """
+    shared: list[int] = []
+    for cid, comp in composition.items():
+        total = comp["total"]
+        if total <= 0:
+            continue
+        qualifying = sum(
+            1 for n in comp["by_gesture"].values() if n / total >= min_fraction
+        )
+        if qualifying >= min_gestures:
+            shared.append(int(cid))
+    return sorted(shared)
+
+
+def onset_energy_pool(
+    film_energies: list[dict],
+    onset_window: int,
+) -> np.ndarray:
+    """Pooled non-zero raw energy from the first `onset_window` samples of each
+    in-view segment. Segments shorter than `onset_window` contribute all they
+    have. Zero-energy pairs (MediaPipe duplicates) are excluded to match the
+    T_hold calibration convention.
+    """
+    chunks: list[np.ndarray] = []
+    for fe in film_energies:
+        for energy in fe["seg_energies"]:
+            if energy.size == 0:
+                continue
+            head = energy[:onset_window]
+            head = head[head > 0.0]
+            if head.size:
+                chunks.append(head)
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks)
+
+
+def onset_climb_frames(
+    film_energies: list[dict],
+    threshold: float,
+) -> np.ndarray:
+    """For each in-view segment, the number of smoothed-energy samples until
+    the signal first exceeds `threshold`. Segments that never cross are
+    excluded. Drives `K_open`: we want `K_open` ≤ some low percentile so the
+    gate opens before the user's gesture is already under way.
+    """
+    steps: list[int] = []
+    for fe in film_energies:
+        for smoothed in fe["seg_smoothed"]:
+            if smoothed.size == 0:
+                continue
+            above = np.where(smoothed > threshold)[0]
+            if above.size:
+                steps.append(int(above[0]))
+    return np.asarray(steps, dtype=np.int32)
+
+
+def within_hold_energy_and_length(
+    film_energies: list[dict],
+    rows: list[dict],
+    labels: np.ndarray,
+    rep_to_film: list[tuple[int, int]],
+    wanted_clusters: set[int] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """For every kept hold whose cluster id ∈ `wanted_clusters` (None = all),
+    return (pooled within-hold smoothed energy, per-hold length in frames).
+    `rep_to_film[k] = (film_index, hold_index_within_kept)`.
+    """
+    energies: list[np.ndarray] = []
+    lengths: list[int] = []
+    labels_list = labels.tolist()
+    for k, (fi, hi) in enumerate(rep_to_film):
+        cid = int(labels_list[k])
+        if wanted_clusters is not None and cid not in wanted_clusters:
+            continue
+        hold = rows[fi]["holds_kept"][hi]
+        smoothed = film_energies[fi]["seg_smoothed"][hold["seg_index"]]
+        window = smoothed[hold["start_in_seg"]:hold["end_in_seg"]]
+        if window.size:
+            energies.append(window)
+        lengths.append(int(hold["length"]))
+    pooled = np.concatenate(energies) if energies else np.zeros(0, dtype=np.float32)
+    return pooled, np.asarray(lengths, dtype=np.int32)
+
+
+def gate_calibration(
+    film_energies: list[dict],
+    rows: list[dict],
+    X: np.ndarray,
+    rep_to_film: list[tuple[int, int]],
+    epsilon: float,
+    onset_window: int = 6,
+    shared_min_gestures: int = 3,
+    shared_min_fraction: float = 0.05,
+) -> dict:
+    """Compute Phase 1 gate-calibration statistics.
+
+    Uses `epsilon` to re-run clustering on `X` so idle-candidate identification
+    is consistent with the rest of the report. Returns a dict of distributions
+    and suggested seed values for T_open, K_open, T_close, K_close.
+    """
+    out: dict[str, Any] = {
+        "onset_window_frames": onset_window,
+        "epsilon_used": float(epsilon),
+    }
+
+    # --- Onset (T_open, K_open) ---
+    onset = onset_energy_pool(film_energies, onset_window=onset_window)
+    out["onset_energy_percentiles"] = describe_percentiles(
+        onset, pcts=(5, 10, 25, 50, 75)
+    )
+    t_open_seed = (
+        float(np.percentile(onset, 10)) if onset.size else None
+    )
+    out["t_open_seed"] = t_open_seed
+
+    if t_open_seed is not None and t_open_seed > 0.0:
+        climb = onset_climb_frames(film_energies, threshold=t_open_seed)
+        if climb.size:
+            out["onset_climb_frames_percentiles"] = {
+                f"p{p}": float(np.percentile(climb, p))
+                for p in (5, 10, 25, 50, 75, 90)
+            }
+            # K_open ≤ p10 so we don't miss fast-onset captures.
+            out["k_open_seed"] = max(1, int(math.floor(np.percentile(climb, 10))))
+        else:
+            out["onset_climb_frames_percentiles"] = None
+            out["k_open_seed"] = None
+    else:
+        out["onset_climb_frames_percentiles"] = None
+        out["k_open_seed"] = None
+
+    # --- Close (T_close, K_close) via idle-candidate holds ---
+    if X.shape[0] < 2:
+        out["idle_candidate_cluster_ids"] = []
+        out["idle_hold_energy_percentiles"] = None
+        out["idle_hold_length_percentiles"] = None
+        out["gesture_hold_length_percentiles"] = None
+        out["t_close_seed"] = None
+        out["k_close_seed"] = None
+        out["duration_separation_clean"] = None
+        return out
+
+    labels = cluster_hold_reps(X, epsilon)
+    composition = cluster_composition(rows, labels, rep_to_film)
+    shared = idle_candidate_cluster_ids(
+        composition,
+        min_gestures=shared_min_gestures,
+        min_fraction=shared_min_fraction,
+    )
+    out["idle_candidate_cluster_ids"] = shared
+
+    if not shared:
+        out["idle_hold_energy_percentiles"] = None
+        out["idle_hold_length_percentiles"] = None
+        out["gesture_hold_length_percentiles"] = None
+        out["t_close_seed"] = None
+        out["k_close_seed"] = None
+        out["duration_separation_clean"] = None
+        return out
+
+    idle_energy, idle_lengths = within_hold_energy_and_length(
+        film_energies, rows, labels, rep_to_film, wanted_clusters=set(shared)
+    )
+    all_cluster_ids = {int(c) for c in composition}
+    gesture_cluster_ids = all_cluster_ids - set(shared)
+    _, gesture_lengths = within_hold_energy_and_length(
+        film_energies, rows, labels, rep_to_film,
+        wanted_clusters=gesture_cluster_ids or None,
+    )
+
+    out["idle_hold_energy_percentiles"] = describe_percentiles(
+        idle_energy, pcts=(10, 25, 50, 75, 90)
+    )
+    if idle_lengths.size:
+        out["idle_hold_length_percentiles"] = {
+            f"p{p}": float(np.percentile(idle_lengths, p))
+            for p in (10, 25, 50, 75, 90)
+        }
+    else:
+        out["idle_hold_length_percentiles"] = None
+    if gesture_lengths.size:
+        out["gesture_hold_length_percentiles"] = {
+            f"p{p}": float(np.percentile(gesture_lengths, p))
+            for p in (10, 25, 50, 75, 90)
+        }
+    else:
+        out["gesture_hold_length_percentiles"] = None
+
+    # T_close seed: the p90 of idle-hold within-hold energy. Idle frames fall
+    # below this 90 % of the time. Gesture-holds are also low-energy by
+    # construction, so duration (K_close) is the primary separator.
+    out["t_close_seed"] = (
+        float(np.percentile(idle_energy, 90)) if idle_energy.size else None
+    )
+
+    # K_close seed: a frame count comfortably above gesture-hold length p90 and
+    # below idle-hold length p25 (i.e. sits in the gap). If the gap is
+    # negative, the distributions overlap and K_close can't separate them from
+    # duration alone — caller should fall back to absent-hand as the gate-close
+    # signal.
+    k_close_seed: int | None = None
+    duration_separation_clean = False
+    if gesture_lengths.size and idle_lengths.size:
+        g_p90 = float(np.percentile(gesture_lengths, 90))
+        i_p25 = float(np.percentile(idle_lengths, 25))
+        if i_p25 > g_p90:
+            k_close_seed = int(math.ceil(g_p90 + 1))
+            duration_separation_clean = True
+    out["k_close_seed"] = k_close_seed
+    out["duration_separation_clean"] = duration_separation_clean
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Reporting.
 # ---------------------------------------------------------------------------
 
@@ -519,6 +770,7 @@ def print_report(
     dup_frac: float,
     sweep_results: list[dict],
     report_json: dict,
+    film_energies: list[dict],
 ) -> None:
     print("=" * 72)
     print("Key-pose calibration report")
@@ -812,6 +1064,148 @@ def print_report(
         print("Clustering skipped (not enough hold reps or no epsilon grid set).")
     report_json["clustering"] = cluster_reports
 
+    # --- Phase 1 motion-gate calibration -----------------------------------
+    # Uses the first ε in the grid as the reference clustering, matching how
+    # Phase 2's idle-pose heuristic would be applied at inference.
+    if X.shape[0] >= 2 and params.get("epsilon_grid"):
+        ref_eps = params["epsilon_grid"][0]
+        gate = gate_calibration(
+            film_energies=film_energies,
+            rows=rows,
+            X=X,
+            rep_to_film=rep_to_film,
+            epsilon=ref_eps,
+        )
+        print()
+        print("-" * 72)
+        print(
+            f"Phase 1 motion-gate calibration  "
+            f"(ref ε={gate['epsilon_used']:.3f}, onset window "
+            f"{gate['onset_window_frames']} frames)"
+        )
+        print("-" * 72)
+
+        # T_open / K_open
+        onset_pct = gate["onset_energy_percentiles"]
+        if onset_pct.get("p10") is not None:
+            print()
+            print("Segment-onset raw energy (first N frames of every in-view segment, "
+                  "non-zero only):")
+            for k in ("p5", "p10", "p25", "p50", "p75"):
+                v = onset_pct.get(k)
+                vs = f"{v:.5f}" if v is not None else "n/a"
+                print(f"  {k:>4s}  {vs:>10s}")
+            print(
+                "  Interpretation: p10 is a reasonable T_open seed — the hand has "
+                "just started\n  moving and we want the gate to open promptly."
+            )
+        else:
+            print()
+            print("Segment-onset raw energy: n/a (no non-zero onset samples)")
+
+        climb_pct = gate["onset_climb_frames_percentiles"]
+        if climb_pct is not None:
+            print()
+            print(
+                f"Frames from segment start until smoothed energy first crosses "
+                f"T_open seed ({gate['t_open_seed']:.5f}):"
+            )
+            for k in ("p5", "p10", "p25", "p50", "p75", "p90"):
+                v = climb_pct.get(k)
+                vs = f"{v:.2f}" if v is not None else "n/a"
+                print(f"  {k:>4s}  {vs:>7s}")
+            print(
+                "  Interpretation: K_open should sit at or below p10 so fast-onset "
+                "captures\n  aren't missed."
+            )
+        else:
+            print()
+            print("Onset-climb distribution: n/a")
+
+        # T_close / K_close via idle-candidate holds
+        print()
+        if gate["idle_candidate_cluster_ids"]:
+            print(
+                f"Idle-candidate cluster ids at ε={ref_eps:.3f}: "
+                f"{gate['idle_candidate_cluster_ids']} "
+                f"(coarse heuristic — refine via pose_corrections.json when available)"
+            )
+            idle_e = gate["idle_hold_energy_percentiles"]
+            if idle_e is not None:
+                print()
+                print("Within-hold smoothed energy inside idle-candidate holds:")
+                for k in ("p10", "p25", "p50", "p75", "p90"):
+                    v = idle_e.get(k)
+                    vs = f"{v:.5f}" if v is not None else "n/a"
+                    print(f"  {k:>4s}  {vs:>10s}")
+            idle_l = gate["idle_hold_length_percentiles"]
+            gest_l = gate["gesture_hold_length_percentiles"]
+            if idle_l and gest_l:
+                print()
+                print("Hold run-length in frames (idle vs gesture-specific clusters):")
+                print(f"  {'percentile':>10s}  {'idle':>8s}  {'gesture':>8s}")
+                for k in ("p10", "p25", "p50", "p75", "p90"):
+                    vi = idle_l.get(k)
+                    vg = gest_l.get(k)
+                    si = f"{vi:.1f}" if vi is not None else "n/a"
+                    sg = f"{vg:.1f}" if vg is not None else "n/a"
+                    print(f"  {k:>10s}  {si:>8s}  {sg:>8s}")
+                sep = gate.get("duration_separation_clean")
+                if sep:
+                    print(
+                        "  Clean duration separation: idle p25 > gesture p90 — "
+                        "K_close can\n  distinguish idle from gesture holds by "
+                        "duration alone."
+                    )
+                else:
+                    print(
+                        "  Distributions overlap: K_close cannot separate idle from "
+                        "gesture holds\n  from duration alone. Fall back to "
+                        "absent-hand as the primary gate-close signal."
+                    )
+        else:
+            print(
+                "Idle-candidate cluster ids: none identified at this ε. Either "
+                "the corpus\nhas no idle holds or the pre-heuristic threshold is "
+                "too strict."
+            )
+
+        # Final gate seeds
+        print()
+        print("Suggested starting values for Phase 1 (motion gate):")
+        t_open = gate.get("t_open_seed")
+        k_open = gate.get("k_open_seed")
+        t_close = gate.get("t_close_seed")
+        k_close = gate.get("k_close_seed")
+        print(
+            f"  T_open          = "
+            f"{f'{t_open:.5f}' if t_open is not None else '(no data)'}"
+        )
+        print(
+            f"  K_open          = "
+            f"{k_open if k_open is not None else '(no data)'}  frames"
+        )
+        print(
+            f"  T_close         = "
+            f"{f'{t_close:.5f}' if t_close is not None else '(no data)'}"
+        )
+        if k_close is not None:
+            print(f"  K_close         = {k_close}  frames")
+        elif not gate["idle_candidate_cluster_ids"]:
+            print(
+                "  K_close         = (no idle candidates at this ε — corpus lacks "
+                "idle-hand\n                     data; capture idle films or set "
+                "K_close conservatively)"
+            )
+        else:
+            print(
+                "  K_close         = (duration overlap — use absent-hand to close "
+                "the gate;\n                     set K_close large as a fallback)"
+            )
+        report_json["gate_calibration"] = gate
+    else:
+        report_json["gate_calibration"] = None
+
     # --- Final suggested parameters ---
     # T_hold based on NON-ZERO percentiles (excludes MediaPipe duplicates).
     p25_nz = pct_nz.get("p25") or 0.0
@@ -1042,6 +1436,7 @@ def run(examples: list[dict], args: argparse.Namespace) -> dict:
         dup_frac=dup_frac,
         sweep_results=sweep_results,
         report_json=report_json,
+        film_energies=film_energies,
     )
     return report_json
 

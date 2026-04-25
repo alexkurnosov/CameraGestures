@@ -83,11 +83,68 @@ produces too many spurious gates (tremor, slow movement).
 Open the gate when energy exceeds `T_open` for `K_open` frames; close only when it falls
 below `T_close < T_open` for `K_close` frames. Prevents flapping on noisy input.
 
+### Threshold calibration from the existing corpus
+
+All four thresholds can be seeded offline from the 151-film corpus by extending
+`server/analyze_motion.py`. Run the script after the Phase 2 clustering pass
+completes — it reuses the per-film energies, cluster labels, and idle-candidate
+identification already computed for Phase 2.
+
+Idle-pose detection (Phase 2) is now the primary commit signal at runtime, so
+`T_close` / `K_close` serve as a *fallback* — relevant only when the user
+neither releases into an idle pose nor triggers another hold. Seeding them
+still matters (the gate needs *some* close condition for that path), but the
+tolerances are looser than if the low-energy close were the main signal.
+
+**Open side (`T_open`, `K_open`)** — from segment-onset energy.
+- For each in-view segment, take the first N raw per-frame energies (default
+  N=6 ≈ 200 ms), pool across the corpus, exclude the MediaPipe duplicate-frame
+  zeros. `T_open` seed = p10 of the resulting non-zero distribution: the hand
+  has just started moving and the gate should open promptly.
+- `K_open` seed: distribution of frames from segment start until smoothed
+  energy first crosses `T_open`. `K_open` ≤ p10 of that distribution so
+  fast-onset captures aren't missed.
+
+**Close side (`T_close`, `K_close`)** — from idle-candidate clusters.
+The Phase 2 calibration (§Calibration observation) identified one cluster
+(n=131 holds on the current corpus) that is "hand in view, relaxed, doing
+nothing". Once a reviewer marks it `idle` via the inspector, the calibration
+can read the confirmed set directly from `server/data/pose_corrections.json`
+(`cluster_kinds`). Until that file exists, the calibration falls back to a
+coarse pre-heuristic — clusters contributed to by ≥ 3 gestures with each
+gesture accounting for ≥ 5 % of the cluster's holds — which approximates the
+idle-pose signal well enough for seed values.
+- `T_close` seed = p90 of within-hold smoothed energy pooled across all
+  idle-candidate holds: idle frames fall below it 90 % of the time.
+- `K_close` seed: compare idle-hold run-length vs gesture-specific-hold
+  run-length distributions. If idle p25 > gesture p90, the populations
+  separate cleanly on duration and `K_close` sits in the gap. If they
+  overlap, duration alone can't distinguish them — rely on absent-hand
+  and on Phase 2's idle-pose commit as the real close signals and set
+  `K_close` conservatively.
+
+Both gesture holds and idle holds are low-energy by construction, so energy
+alone can't perfectly distinguish them; `K_close` relies on duration. The
+calibration report flags whether the gap is clean.
+
+If the idle-candidate data turns out to be too thin or the duration gap
+overlaps, add a one-off "idle capture" mode to the training app (5–10 s films
+of relaxed hand in view, flagged as idle) and re-run calibration.
+
 ### Open questions
-- What threshold values work for the gesture set? Needs empirical tuning; SSH to VPS
-  and query frame-by-frame landmark deltas from stored films would give baseline.
 - Should absent frames (no hand in view) reset the gate immediately, or tolerate short
   occlusions? Likely: reset immediately, since a missing hand cannot be "mid-gesture".
+- **Gate-close vs hold-detect signal collision.** `T_close` and `T_hold` both
+  gate on low energy; if `T_close ≥ T_hold` or `K_close ≤ K_hold`, every
+  Phase 2 hold closes the gate. Mitigation: set `T_close` well below
+  `T_hold` (calibration output seeds this) and make `K_close` longer than any
+  realistic gesture hold, or rely on absent-hand as the primary close signal
+  and treat the low-energy path as a fallback.
+- Cooldown duration after a confirmed detection (architecture diagram says
+  ~1 s) — not yet parameterised.
+- Does Phase 1 share the motion-energy computation with Phase 2's runtime
+  hold detector, or recompute? One source of truth is cheaper and avoids
+  drift.
 
 ---
 
@@ -494,6 +551,11 @@ One gesture is consistently misclassified as another. Likely diagnosis after ret
    - Re-collect training data and retrain.
 
 2. **Motion gate** (Phase 1):
+   - Run `server/analyze_motion.py` to produce seed values for `T_open`,
+     `K_open`, `T_close`, `K_close` from the existing corpus (gate-calibration
+     section at the end of the report). Capture idle films only if the report
+     flags insufficient idle-candidate data or overlapping duration
+     distributions.
    - Implement heuristic in `HandGestureRecognizing.handleHandshot`.
    - Only buffer frames when the gate is open.
    - Add cooldown after each confirmed detection.
@@ -541,7 +603,9 @@ One gesture is consistently misclassified as another. Likely diagnosis after ret
 
 ## Open Questions Summary
 
-- [ ] Motion gate thresholds `T_open`, `T_close`, `K_open`, `K_close` — empirical, pending on-device testing.
+- [ ] Motion gate thresholds `T_open`, `T_close`, `K_open`, `K_close` — seeded from `server/analyze_motion.py` gate-calibration pass (onset energy + idle-candidate holds); confirm on-device.
+- [ ] Gate-close vs hold-detect signal collision — `T_close` and `T_hold` use the same signal. Phase 2's idle-pose detection is now the primary commit path; the low-energy close is a fallback. Mitigate by keeping `T_close` well below `T_hold` and `K_close` above typical gesture-hold length.
+- [ ] Phase 1 cooldown duration after confirmed detection (currently "~1 s" in the architecture diagram).
 - [x] Phase 2 capture-protocol artefact — resolved: captures include a trailing neutral hold, flagged by the idle-pose heuristic and marked `idle` via the inspector.
 - [x] Phase 2 parameters — calibrated (T_hold, K_hold, smooth_k, edge_trim, ε, T_commit).
 - [ ] Phase 2 `τ_commit` (pose confidence gate) — tune on first on-device run.
