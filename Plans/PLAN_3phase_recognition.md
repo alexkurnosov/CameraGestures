@@ -216,7 +216,9 @@ idle after explicit confirmation):
 > - *Tail-position*: the cluster appears as the last element in the modal
 >   template of ≥ 2 distinct gestures.
 > - *Temporal-position*: median `position_fraction` of the cluster's holds
->   > 0.5.
+>   > 0.5. (`position_fraction` = hold representative's in-view ordinal /
+>   total in-view frame count for that film. 0 = first in-view frame, 1 =
+>   last in-view frame.)
 >
 > A cluster is flagged **suspected_idle** when any two of the three signals
 > trigger. The flag is advisory only.
@@ -251,7 +253,7 @@ monitor motion energy continuously
   ▼
 Phase 2 MLP on the hold's argmin frame
   │
-  ├─ top pose confidence < τ_commit                     → discard capture, reset gate
+  ├─ top pose confidence < τ_pose_confidence            → discard capture, reset gate
   │
   ├─ pose is IDLE  (cluster kind == "idle")
   │     observed == []                                  → reset gate, keep watching
@@ -264,6 +266,9 @@ Phase 2 MLP on the hold's argmin frame
         append pose_id to observed = [p1, p2, ...]
         prefix-match observed against gesture_templates
         ├─ no template starts with observed             → discard capture, reset gate
+        ├─ no completion yet, live prefix(es) exist     → keep buffering, no timer
+        │                                                  (wait for next hold; nothing
+        │                                                  to commit to even if timer fires)
         ├─ completion exists, no longer prefix possible → commit  ✓
         └─ completion exists but longer prefixes remain → keep buffering,
                                                            start T_commit timer
@@ -283,6 +288,18 @@ immediately. `T_commit` stays as a fallback for users who hold the gesture
 without releasing. Gate-close is the final fallback for cases where neither
 an idle pose nor another hold arrives.
 
+**Minimum-buffer gate.** Every commit path is conditional on the buffer having
+accumulated at least `T_min_buffer` (200 ms ≈ 6 frames) since gate-open. If a
+commit signal fires before that, the commit is deferred until `T_min_buffer`
+elapses, then re-evaluated. This prevents Phase 3 from running on a buffer
+too short to classify. The threshold is a sanity floor; Phase 3's own
+length-sensitivity (see Phase 3) governs the actually-useful buffer length.
+
+**"Reset gate"** as used throughout this section means: discard the in-view
+frame buffer, clear `observed`, and return Phase 1 to its watching state.
+After any commit (Phase 3 fires) or any discard, the entire pipeline enters
+the cross-phase cooldown — see Phase 1.
+
 ### Parameters
 
 Empirically chosen from the 151-film corpus (`ok`, `stop`, `point_left`,
@@ -293,10 +310,11 @@ Empirically chosen from the 151-film corpus (`ok`, `stop`, `point_left`,
 | `T_hold` | **0.54** | p75 of non-zero energy. `T_hold` sweep showed a flat plateau over 0.5–2.1 — threshold is not fragile. |
 | `K_hold` | **3 frames** | ~100 ms at 30 fps; excludes jitter without missing short holds. |
 | `smooth_k` | **3 frames** | Tight smoothing; preserves hold boundaries. |
-| `edge_trim` | **15 %** | Drops 3.5 % of detected holds on the current corpus — removes enter/exit artefacts without undershooting. |
+| `edge_trim` | **15 %** | *Training only.* Drops 3.5 % of detected holds on the current corpus — removes enter/exit artefacts without undershooting. Not applied at runtime: Phase 1's motion gate is assumed to already exclude the equivalent entry/exit phase. May need re-tuning once on-device behaviour is observed. |
 | `T_commit` | **300 ms** | After hold-close, wait this long for another hold before committing to a match. Handles prefix collisions (short templates that are prefixes of longer ones). |
 | `ε` (clustering) | **0.8** | Below the inter-gesture centroid minimum (1.08 between `ok` and `stop`). Produces 29 clusters on the current corpus, with clean gesture-specific groupings for three of four gestures. |
-| `τ_commit` (confidence) | **0.6** | Initial guess; tune after first real run. Holds with top pose confidence below this are rejected as "unknown pose". |
+| `τ_pose_confidence` | **0.6** | Initial guess; tune after first real run. Holds with top pose-classifier confidence below this are rejected as "unknown pose". (Distinct from `T_commit`, which is a time threshold.) |
+| `T_min_buffer` | **200 ms** (≈ 6 frames at 30 fps) | Minimum buffer duration since gate-open before Phase 2 may commit. Prevents pathological short captures where Phase 3 has too few frames to classify. If a commit signal (idle pose, prefix-only-completion, or T_commit timer) fires before this, the commit is deferred until `T_min_buffer` elapses; if no further commit signal arrives by then, fall through to gate-close behaviour. |
 | `τ_idle_suspicion` | **entropy ≥ 0.8 · log(n_gestures)** | Part of the idle-pose heuristic (combined with tail-position and temporal-position signals). Flags clusters as `suspected_idle` for human review; never auto-excludes. |
 
 Calibration uses non-zero energy percentiles because MediaPipe re-emits the
@@ -310,12 +328,18 @@ percentile-based threshold to zero.
 - **Output space**: all pose clusters, *including idle*. The classifier must
   recognise idle poses because runtime uses them as gesture-end markers.
 - **Output decision**: argmax over `pose_id` with confidence. If top
-  confidence < `τ_commit`, the hold is rejected as "unknown pose".
+  confidence < `τ_pose_confidence`, the hold is rejected as "unknown pose".
 - **Training labels**: `pose_id`s produced by the clustering pass (not
   `gesture_id`s directly). Idle-marked clusters are *included* in training.
   Holds explicitly excluded via the inspector's per-hold action are dropped.
 - **Train/test split**: by `session_id` — never per-frame, which would leak
   near-duplicate holds from the same film across the split.
+- **Class imbalance**: idle clusters tend to dominate (current corpus: 131
+  idle samples vs 13–45 per gesture-specific cluster, ~3× ratio). Train with
+  **class-weighted cross-entropy**, weights ∝ `1 / sqrt(n_samples_per_cluster)`.
+  Without weighting the model defaults to predicting "idle" on borderline
+  inputs, which causes Phase 2 to commit gestures prematurely instead of
+  appending the predicted regular pose to `observed`.
 
 ### Template manifest (on-disk format alongside the model)
 
@@ -337,7 +361,7 @@ percentile-based threshold to zero.
   "parameters": {
     "t_hold": 0.54, "k_hold_frames": 3, "smooth_k": 3,
     "edge_trim_fraction": 0.15, "t_commit_ms": 300,
-    "epsilon": 0.8, "tau_commit": 0.6,
+    "epsilon": 0.8, "tau_pose_confidence": 0.6,
     "tau_idle_suspicion_entropy": 0.8
   }
 }
@@ -492,8 +516,11 @@ of truth for human overrides. Clusters not listed in `cluster_kinds` stay
 
 ### Open questions
 
-- **τ_commit** (pose confidence gate at inference): 0.6 is an initial guess;
-  tune after first on-device run.
+- **τ_pose_confidence** (pose-classifier confidence gate at inference): 0.6 is
+  an initial guess; tune after first on-device run.
+- **Cross-phase cooldown** after every cycle (commit *or* discard, regardless of
+  how many phases the cycle reached) — duration not yet parameterised; see
+  Phase 1's open questions.
 - **Re-clustering cadence**: do we re-cluster every time the corpus grows by
   some threshold, or only on demand via `POST /train/pose`? Re-clustering
   changes cluster ids, which invalidates the corrections file — so probably
@@ -635,7 +662,7 @@ After PR #34 and #37 are in production:
    - iOS runtime: hold detection in `HandGestureRecognizing`, observed-sequence
      buffer, prefix matcher, T_commit timer.
 
-5. **Evaluate** on real device, tune `τ_commit` and re-verify parameters on
+5. **Evaluate** on real device, tune `τ_pose_confidence` and re-verify parameters on
    the grown corpus.
 
 ---
@@ -667,7 +694,7 @@ After PR #34 and #37 are in production:
 - [ ] Phase 1 cooldown duration after confirmed detection (currently "~1 s" in the architecture diagram).
 - [x] Phase 2 capture-protocol artefact — resolved: captures include a trailing neutral hold, flagged by the idle-pose heuristic and marked `idle` via the inspector.
 - [x] Phase 2 parameters — calibrated (T_hold, K_hold, smooth_k, edge_trim, ε, T_commit).
-- [ ] Phase 2 `τ_commit` (pose confidence gate) — tune on first on-device run.
+- [ ] Phase 2 `τ_pose_confidence` (pose-classifier confidence gate) — tune on first on-device run.
 - [ ] Phase 2 re-clustering cadence — on demand vs periodic. Re-clustering renumbers clusters, so `cluster_kinds` needs a nearest-centroid migration step.
 - [ ] Idle-pose heuristic thresholds (entropy ≥ 0.8·log(n_gestures), tail-position ≥ 2, median position > 0.5) — revisit as vocabulary grows beyond 4 gestures.
 - [ ] Default behaviour for `unconfirmed` clusters — currently `regular`; consider "excluded until confirmed" once the inspector is part of the standard workflow.
