@@ -17,7 +17,7 @@ public struct HandGestureRecognizingConfig {
         handsRecognizingConfig: HandsRecognizingConfig = .defaultConfig,
         gestureModelConfig: GestureModelConfig = .defaultConfig,
         enableRealTimeProcessing: Bool = true,
-        gestureBufferSize: Int = 10,
+        gestureBufferSize: Int = 30,
         confidenceThreshold: Float = 0.7
     ) {
         self.handsRecognizingConfig = handsRecognizingConfig
