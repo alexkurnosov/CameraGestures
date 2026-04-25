@@ -2,29 +2,46 @@
 
 ## Context
 
-### Current state (as of 2026-04-21)
+### Current state (as of 2026-04-25)
 
-- Preprocessor now filters absent frames before feature extraction (`nonAbsentFrames` in
-  `preprocessor.js`). Result: false-positive rate dropped significantly; one stable
-  gesture-to-gesture misclassification remains (to be diagnosed after Phase 1–2 models
-  land).
+- Preprocessor filters absent frames before feature extraction (`nonAbsentFrames` in
+  `preprocessor.js`). Result: false-positive rate dropped significantly.
+- **Phase 3 padding-ratio skew (Problem A): solved.** `summaryFeatures` now divides
+  coord/velocity stats by the real-frame count instead of `TARGET_FRAMES` (PR #34).
+  A clip with 10 real frames and a clip with 60 real frames of the same gesture now
+  produce comparable feature vectors.
+- **Phase 3 runtime buffer: bumped 10 → 30 frames** (PR #37) after `evaluate_trimmed.py`
+  showed real-gesture accuracy collapses below trim=20 (58 % at 20, 16 % at 10).
+  30 frames at 30 fps = 1.0 s, matching mean training-clip length (~38 real frames)
+  and the existing `temporalWindow`.
 - Remaining structural problems:
-  1. **Window mismatch**: training films are 2 s, runtime buffer is ~10 frames ≈ 0.33 s.
-     The preprocessor pads both to 60 frames, so the zero-fill proportion is very
-     different between training and inference.
+  1. **Phase 3 length sensitivity below ~20 frames (Problem B)**: dynamic gestures
+     (`ok`, `stop`, `thumbs_up`) lose discriminative signal when truncated. Static-pose
+     gestures (`point_left`) survive aggressive trimming because their info lives in
+     a single frame. Mitigations belong to Phase 1 or to feature/training changes —
+     see Phase 3 below.
   2. **Per-frame prediction**: recognition fires on every camera frame (~30×/s), causing
-     duplicate detections of the same gesture.
-  3. **No gesture boundary detection**: no concept of "gesture started / ended".
+     duplicate detections of the same gesture. Phase 1 cooldown will fix this.
+  3. **No gesture boundary detection**: no concept of "gesture started / ended". Phase 1
+     motion gate addresses this.
 
-### Key design constraint
+### Key design constraint (revised 2026-04-25)
 
-**A realistic gesture lasts 0.3–0.5 s.** The 2 s capture window was always too long.
-At 30 fps:
-- 0.3 s ≈ 9 frames
-- 0.5 s ≈ 15 frames
+**Dynamic gestures need ~30 frames (≈ 1 s) of motion to be classifiable.**
+`evaluate_trimmed.py` on the 151-film corpus shows real-gesture accuracy is 100 %
+at trim=30 and collapses below trim=20:
 
-The runtime `gestureBufferSize` is already 10 frames (~0.33 s) — it was accidentally
-close to the right value all along. The fix is to bring *training* down to match.
+| trim | accuracy |
+|---:|---:|
+| 30 | 1.000 |
+| 20 | 0.516 |
+| 15 | 0.290 |
+| 10 | 0.129 |
+
+The earlier draft of this plan claimed gestures last 0.3–0.5 s and recommended
+shrinking the training window to match. **That recommendation is refuted by the
+data** and has been removed. Mean training clip = 38 real frames; runtime buffer
+is now 30 frames. Both sit in the regime where the model classifies correctly.
 
 ---
 
@@ -502,53 +519,95 @@ of truth for human overrides. Clusters not listed in `cluster_kinds` stay
 
 ## Phase 3 — Handfilm Classifier
 
-### Key change: shorten the capture window
+### Status
 
-Reduce `captureWindow` from 2.0 s → **0.4 s** (configurable 0.3–0.5 s).
-This directly fixes the window-mismatch bug:
+**Solved**
 
-| | Current | After fix |
+- *Problem A (padding-ratio skew)* — `summaryFeatures` now uses real-frame count
+  as the denominator (PR #34). Feature vectors of short and long clips of the same
+  gesture are now comparable.
+- *Runtime buffer too short* — `gestureBufferSize` 10 → 30 (PR #37). At 30 fps this
+  matches `temporalWindow = 1.0 s` and the mean training clip length (~38 real frames).
+- *Eval reproducibility* — `evaluate_trimmed.py` is seeded (PR #38). Produces a
+  stable regression baseline; small ±1-example jitter remains from CPU oneDNN
+  nondeterminism but does not affect conclusions.
+
+**Open**
+
+- *Problem B (length sensitivity below ~20 frames)*. The model classifies dynamic
+  gestures correctly only when ≥ 20 real frames are available. Brief gestures or
+  partial captures will misclassify. Per-class trim sweep:
+
+  | trim | ok | point_left | stop | thumbs_up |
+  |---:|---:|---:|---:|---:|
+  | 30 | 1.00 | 1.00 | 0.875–1.00 | 1.00 |
+  | 20 | 0.30–0.60 | 1.00 | 0.25 | 0.50–0.60 |
+  | 10 | 0.10 | 0.67–1.00 | 0.00 | 0.10 |
+
+  Static-pose gestures (`point_left`) are robust; dynamic ones need the full motion.
+  Mitigations, in increasing complexity:
+  1. Add gesture duration as an explicit feature so the MLP can condition on it.
+  2. Time-warp augmentation in training (0.7×–1.4× resampling) to teach speed
+     invariance.
+  3. Motion-gated variable-length capture (Phase 1) — captures the gesture exactly
+     as it happens regardless of length, and naturally bounds it to ≤ 1 s by the
+     existing `temporalWindow`. Cleanest end-state.
+
+  Recommendation: defer #1 and #2 until Phase 1 lands. If Phase 1's motion gate
+  reliably catches every gesture's full motion arc, length sensitivity stops
+  mattering at runtime.
+
+- *Per-frame prediction*. Model fires on every camera frame, producing duplicate
+  detections. Will be addressed by Phase 1 cooldown (~1 s after a confirmed
+  detection).
+
+- *Remaining gesture-to-gesture misclassification*. Status pending on-device
+  re-evaluation after PR #34, #37 are in production. Current trim=30 numbers from
+  the eval-MLP show `stop` occasionally drops to 0.875 (1 of 8 examples
+  misclassified) and `thumbs_up` to 0.667 in some seeded runs (small-sample
+  variance on 3-sample support). Treat as inconclusive until device data.
+
+### Discarded recommendations (from earlier draft)
+
+| Recommendation | Status | Reason |
 |---|---|---|
-| Training window | 2.0 s / ~60 real frames | 0.4 s / ~12 real frames |
-| Runtime buffer (`gestureBufferSize`) | 10 frames (~0.33 s) | 12–15 frames (~0.4–0.5 s) |
-| Runtime `temporalWindow` | 1.0 s | 0.4 s |
-| Zero-padding in preprocessor | 50 / 60 frames zeros at runtime | ~0 frames zeros (matched) |
+| Shrink training window 2.0 s → 0.4 s | Discarded | Trim eval shows trim=12 → 23 % accuracy, trim=15 → 29 %. Films at 12 frames lack discriminative signal. |
+| `gestureBufferSize: 10 → 15` | Superseded | Shipped 10 → 30 (PR #37). |
+| `temporalWindow: 1.0 → 0.4` | Discarded | 1.0 s matches the new 30-frame buffer at 30 fps. |
+| `captureWindow: 2.0 → 0.4` | Discarded | Training films at 2 s with mean 38 real frames work well. |
+| `minInViewDuration: 1.2 → 0.25` | Discarded | Tied to the discarded capture-window change. |
+| Trim existing 2 s films to middle 0.4 s for retraining | Discarded | Same as above — short clips lose signal. |
 
-The `summaryFeatures` function already handles variable-length inputs (pads or trims to
-60). Once training and runtime windows match, the feature distribution aligns without
-any other changes.
+### Model
 
-`minInViewDuration` should be scaled proportionally: currently 1.2 s / 2.0 s = 60 %.
-At 0.4 s window → `minInViewDuration` = **0.25 s**.
+Existing MLP (`Dense(128) → Dropout(0.3) → Dense(64) → Dense(n_classes, softmax)` on
+the 256-dim summary feature vector) is retained. Architecture change is not justified
+by current data — full-clip and trim=30 accuracy are both 100 %.
 
-### Model options
+LSTM upgrade: still deferred. Reconsider only if Phase 1 + duration feature don't
+close the dynamic-gesture gap.
 
-| Option | Pro | Con |
-|---|---|---|
-| **Retrain existing MLP on 0.4 s films** | no architecture change, fast | need to re-collect or confirm existing films can be trimmed |
-| Train second MLP separately | clean separation | doubles model count |
-| Upgrade to LSTM on 60 × 126 feature matrix | captures full temporal dynamics | 10–50× longer training, larger model, Phase 2 LSTM trainer is still a stub |
+### Required follow-up
 
-**Recommendation**: retrain existing MLP on newly collected 0.4 s films. Existing 2 s
-films can be used by trimming to the middle 0.4 s (frames 25–37 of 60), but fresh data
-with the shorter window will be cleaner.
-
-### Remaining misclassification
-One gesture is consistently misclassified as another. Likely diagnosis after retraining:
-- If it persists → overlapping poses (Phase 2 will help gate it).
-- If it resolves → it was caused by window-mismatch or absent-frame contamination.
-- If it improves but doesn't resolve → need more training examples for that pair.
+After PR #34 and #37 are in production:
+1. Retrain on the existing corpus (no data changes; the new preprocessor produces
+   length-invariant features).
+2. Distribute the new `.tflite` to device.
+3. Test on device. Expect runtime accuracy on the four trained gestures to track the
+   eval-MLP's trim=30 numbers (~97–100 %).
+4. If a stable misclassification persists, Phase 2 pose-gating will filter it before
+   Phase 3 runs.
 
 ---
 
 ## Implementation Order
 
-1. **Capture window reduction** (Phase 3 prerequisite, highest leverage):
-   - `CameraViewModel.captureWindow` default: `2.0` → `0.4`
-   - `AppSettings.minInViewDuration` default: `1.2` → `0.25`
-   - `GestureRecognizerWrapper.gestureBufferSize`: `10` → `15`
-   - `GestureModelConfig.temporalWindow`: `1.0` → `0.4`
-   - Re-collect training data and retrain.
+1. **Phase 3 alignment** — *done.*
+   - `summaryFeatures` length-invariance fix (PR #34).
+   - `gestureBufferSize: 10 → 30` (PR #37). `temporalWindow` stays at 1.0 s; capture
+     window stays at 2.0 s; `minInViewDuration` unchanged.
+   - Pending operational follow-up: retrain on production server, redistribute
+     `.tflite`, on-device verification.
 
 2. **Motion gate** (Phase 1):
    - Run `server/analyze_motion.py` to produce seed values for `T_open`,
@@ -613,7 +672,9 @@ One gesture is consistently misclassified as another. Likely diagnosis after ret
 - [ ] Idle-pose heuristic thresholds (entropy ≥ 0.8·log(n_gestures), tail-position ≥ 2, median position > 0.5) — revisit as vocabulary grows beyond 4 gestures.
 - [ ] Default behaviour for `unconfirmed` clusters — currently `regular`; consider "excluded until confirmed" once the inspector is part of the standard workflow.
 - [ ] Runtime edge case — idle detected while `observed` is a live prefix without a complete match: commit to longest complete-template ancestor vs discard. Validate on-device.
-- [ ] Phase 3: retrain on new short films vs trim existing films.
-- [ ] Remaining misclassification pair: which gestures, and does it resolve after the window fix + Phase 2 gating.
+- [x] Phase 3 padding-ratio skew (Problem A) — fixed in PR #34.
+- [x] Phase 3 runtime buffer length — bumped to 30 frames in PR #37; trim eval validates the choice.
+- [ ] Phase 3 length sensitivity below ~20 frames (Problem B) — deferred until Phase 1 motion-gating lands; revisit if the gate doesn't bound captures to ≥20 real frames in practice.
+- [ ] Phase 3 remaining misclassification — pending on-device re-evaluation after retrain and `.tflite` redistribution.
 - [ ] `thumbs_up` retake — deferred to training-data curation.
 - [ ] When to add the LSTM trainer for genuinely dynamic gestures with ordered multi-hold templates.
