@@ -135,6 +135,12 @@ def train_mlp(
     import tensorflow as tf
     from sklearn.utils.class_weight import compute_class_weight
 
+    # Seed Python, numpy, and TF so weight init, dropout masks, and shuffle
+    # order are reproducible across runs. Without this, accuracy drifts by
+    # a few percentage points between invocations on the same data, which
+    # masks small real changes when comparing eval runs over time.
+    tf.keras.utils.set_random_seed(42)
+
     unique = np.unique(y_train)
     weights = compute_class_weight("balanced", classes=unique, y=y_train)
     class_weight = {int(c): float(w) for c, w in zip(unique, weights)}
