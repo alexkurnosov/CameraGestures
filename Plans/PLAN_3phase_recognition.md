@@ -449,6 +449,19 @@ plans to retake or retire this gesture; no further ε tuning needed.
   - On each hold, run Phase 2 on the hold's argmin frame.
   - Maintain `observed_sequence: [pose_id]` and `candidate_gestures: set`.
   - Track the `T_commit` timer after the motion gate closes.
+- `CameraView` (model training app, recognizing mode) gains a **mode switch**
+  between two recognising modes:
+  - *Handfilm* (existing) — the full pipeline runs and the recognised
+    gesture is shown.
+  - *Holds* (new) — Phase 1 + Phase 2 only. Surfaces in real time: motion-gate
+    state (open/closed), each detected hold with its representative-frame
+    skeleton thumbnail, the predicted `pose_id` and confidence (with cluster
+    `kind`: regular / idle / unconfirmed), the current `observed_sequence`,
+    and the matched template (or "no match"). Acts as the on-device
+    instrument for verifying that hold detection and pose classification
+    behave as expected before the full pipeline is wired together — it is
+    how the user reads off Phase 2 confidence at runtime, complementing the
+    offline corpus metrics below.
 
 ### Inspection tool: HandFilmsView pose inspector
 
@@ -513,6 +526,62 @@ the manifest. Trainer reads it at manifest-build time:
 Keeps the training pipeline deterministic and the inspector the single source
 of truth for human overrides. Clusters not listed in `cluster_kinds` stay
 `unconfirmed` and behave as `regular`.
+
+### Evaluation on the current corpus
+
+Three layers of metrics; `server/analyze_motion.py` already covers the first.
+
+1. **Clustering quality** — *implemented* in `server/analyze_motion.py`.
+   Per ε: number of clusters, size distribution, per-gesture modal-template
+   fraction, gesture-composition of each cluster, idle-candidate flagging.
+   Answers: "do holds cluster cleanly into gesture-specific groups?"
+
+2. **Pose-MLP recognition accuracy** — *to be produced by* `trainer_pose.py`
+   (new). Train/test split by `session_id`; report per-class precision and
+   recall over `pose_id`, plus the confusion matrix. Answers: "given a
+   correctly-detected hold representative, does the MLP pick the right
+   `pose_id`?" Critical because `τ_pose_confidence` is calibrated against
+   this distribution.
+
+3. **End-to-end Phase 2 accuracy on the corpus** (the "#2 strategy" — Phase 1+2
+   only — from the strategy comparison) — *new, not yet implemented.*
+   Add `server/evaluate_pose.py` as the Phase-2 analog of `evaluate_trimmed.py`.
+   For each held-out film, run the full pipeline that the inference path will
+   run — hold detection (using the calibrated `T_hold`/`K_hold`/`smooth_k`),
+   pose classification on each hold's representative frame, idle-pose
+   filtering via the manifest's `cluster_kinds`, prefix-match of the
+   resulting `observed_sequence` against `gesture_templates` — and compare
+   the committed gesture against the film's labelled gesture. Report:
+   - per-gesture commit rate (fraction of films that produce *any* commit),
+   - per-gesture commit-correct rate (committed gesture == labelled),
+   - rate of "no template prefix matches" (Phase 2 discards the capture),
+   - rate of premature idle commit (idle hold appears before the gesture
+     hold and commits to the wrong template),
+   - distribution of `observed_sequence` lengths at commit, broken down by
+     commit signal (idle / `T_commit` timer / gate-close).
+
+   This is the metric that tells us whether Phase 2 alone could carry the
+   pipeline on the current corpus. It is also what closes the loop on the
+   runtime edge case of "idle while `observed` is a live prefix" — the rate
+   of that case on real films is observable here.
+
+**Both layer #2 (pose-MLP recognition accuracy) and layer #3 (end-to-end
+Phase 2 accuracy = "#2 strategy" headline number) MUST be exposed through the
+existing metrics surface alongside the Phase 3 numbers.** Concretely:
+
+- `trainer_pose.py` writes them into the model-training result the same way
+  `trainer_rf_mlp.py` writes Phase 3 metrics today (see
+  `_compute_extended_metrics` in `server/ml/trainer_rf_mlp.py`).
+- `/model/metrics` (or a sibling `/model/pose/metrics` keyed by the
+  pose-model id) serves them with the same shape conventions used today —
+  per-class precision/recall/F1, confusion matrix, history of past runs.
+- `MetricsView` in the iOS training app gains a Phase 2 section showing the
+  pose-MLP per-class breakdown, the headline end-to-end commit-correct rate,
+  and the auxiliary rates (no-prefix, premature-idle) so a reviewer can spot
+  regressions across retraining runs without opening the server.
+
+Both layers are re-run on every retraining; layer #3's commit-correct rate
+is the Phase 2 headline number.
 
 ### Open questions
 
@@ -662,8 +731,16 @@ After PR #34 and #37 are in production:
    - iOS runtime: hold detection in `HandGestureRecognizing`, observed-sequence
      buffer, prefix matcher, T_commit timer.
 
-5. **Evaluate** on real device, tune `τ_pose_confidence` and re-verify parameters on
-   the grown corpus.
+5. **Evaluate** Phase 2:
+   - *Offline:* run `server/evaluate_pose.py` on the corpus to get
+     end-to-end commit-correct rate; treat this as the headline regression
+     metric for retraining.
+   - *On device:* use the new holds-recognising mode in `CameraView` to
+     verify that hold detection, pose classification, and template matching
+     behave consistently with the offline numbers; tune `τ_pose_confidence`
+     where the on-device confidence distribution disagrees with the offline
+     one.
+   - Re-verify Phase 1 thresholds on the grown corpus.
 
 ---
 
@@ -678,6 +755,9 @@ After PR #34 and #37 are in production:
 | `iOS/ModelTraining/.../GestureRecognizerWrapper.swift` | updated config defaults |
 | `iOS/ModelTraining/.../HandFilmsView.swift` | hold-timeline overlay, per-hold skeleton thumbnails, per-hold exclude action |
 | `iOS/ModelTraining/.../PoseInspectorView.swift` (new) | per-cluster grid view, idle/regular marking actions |
+| `iOS/ModelTraining/.../Views/CameraView.swift` | recognising-mode switch (handfilm / holds); holds-mode overlay surfacing motion-gate state, detected holds, predicted `pose_id`/confidence, `observed_sequence`, matched template |
+| `iOS/ModelTraining/.../Views/MetricsView.swift` | new Phase 2 section: pose-MLP per-class precision/recall/F1, confusion matrix, end-to-end commit-correct rate (the "#2 strategy" headline), no-prefix and premature-idle rates, history across retraining runs |
+| `server/evaluate_pose.py` (new) | end-to-end Phase 2 corpus evaluation: hold detection → pose argmax → template match → committed gesture vs label; reports commit rate, commit-correct rate, premature-idle rate, length distribution at commit. Output is folded into the metrics payload served by `/model/metrics` (or a sibling `/model/pose/metrics`) so it appears in `MetricsView`. |
 | `iOS/ModelTraining/.../ViewModels/` | hold + cluster data fetch (via `/analyze/holds`); read/write corrections |
 | `server/ml/trainer_pose.py` (new) | Phase 2 trainer: extract, cluster, apply corrections, train, export manifest |
 | `server/ml/preprocessor.js` | (unchanged — Phase 2 uses existing normalised coords) |
