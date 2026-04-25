@@ -43,7 +43,7 @@ class GestureRecognizerWrapper: ObservableObject {
             handsRecognizingConfig: appSettings.cameraConfig,
             gestureModelConfig: appSettings.modelConfig,
             enableRealTimeProcessing: true,
-            gestureBufferSize: 10,
+            gestureBufferSize: 30,
             confidenceThreshold: appSettings.confidenceThreshold
         )
         try await recognizer.initialize(config: config)
