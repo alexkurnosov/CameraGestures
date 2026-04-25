@@ -266,6 +266,9 @@ Phase 2 MLP on the hold's argmin frame
         append pose_id to observed = [p1, p2, ...]
         prefix-match observed against gesture_templates
         ├─ no template starts with observed             → discard capture, reset gate
+        ├─ no completion yet, live prefix(es) exist     → keep buffering, no timer
+        │                                                  (wait for next hold; nothing
+        │                                                  to commit to even if timer fires)
         ├─ completion exists, no longer prefix possible → commit  ✓
         └─ completion exists but longer prefixes remain → keep buffering,
                                                            start T_commit timer
@@ -331,6 +334,12 @@ percentile-based threshold to zero.
   Holds explicitly excluded via the inspector's per-hold action are dropped.
 - **Train/test split**: by `session_id` — never per-frame, which would leak
   near-duplicate holds from the same film across the split.
+- **Class imbalance**: idle clusters tend to dominate (current corpus: 131
+  idle samples vs 13–45 per gesture-specific cluster, ~3× ratio). Train with
+  **class-weighted cross-entropy**, weights ∝ `1 / sqrt(n_samples_per_cluster)`.
+  Without weighting the model defaults to predicting "idle" on borderline
+  inputs, which causes Phase 2 to commit gestures prematurely instead of
+  appending the predicted regular pose to `observed`.
 
 ### Template manifest (on-disk format alongside the model)
 
