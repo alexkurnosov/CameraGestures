@@ -704,9 +704,24 @@ is the Phase 2 headline number.
   id (and its `kind`), so the migration only adjusts membership rather
   than rewriting `pose_corrections.json` from scratch. Genuinely new
   clusters mint fresh ids from a monotonically increasing counter; ids
-  are never reused. The remaining edge cases (no-ancestor distance
-  threshold, orphaned old clusters, multi-successor mapping) are
-  tracked in *Undecided → Cluster-kinds migration edge cases*.
+  are never reused. Migration edge-case rules (resolved):
+  - **Inheritance threshold**: `d_inherit = ε`. A new cluster inherits
+    the `kind` (and id) of its nearest old centroid only when that
+    distance ≤ ε. Past ε the cluster is in a region the original
+    clustering would have treated as separate, so it defaults to
+    `unconfirmed`. Sanity check on first calibration run: perform a
+    20× bootstrap resample of the corpus (90 % each), re-cluster each
+    sample, and record centroid drift for stable clusters (those whose
+    gesture composition overlaps the original by > 50 %). If p95 drift
+    < ε the default is safe; if p95 ≥ ε the clustering itself is
+    unstable and ε needs revisiting before migration ships.
+  - **Lost reviews** (old cluster has no successor in the new
+    clustering): surface in the inspector as a "lost review" entry
+    naming the retired cluster id, its former `kind`, and the
+    last-known centroid. Never silently drop.
+  - **Multiple new clusters → one old cluster**: all inheriting
+    clusters take the old cluster's `kind`. A split cluster is still
+    the same logical pose region; no limit on successor count.
 - **Default for `unconfirmed` clusters**: currently treat as `regular`. As
   the idle heuristic matures we could consider switching the default to
   "excluded until confirmed" to keep training cleaner; that change would
@@ -932,6 +947,17 @@ parameter to watch and the action to take if the metric drifts.
   Acting on the warning runs the re-cluster + nearest-centroid migration
   of `cluster_kinds`. The manual "Re-cluster" action is always
   available, independent of whether any warning is showing.
+- **Post-migration disagreement rate**. After each re-cluster, the
+  migration emits a report: `(old_id, new_id, distance, inherited?)`
+  per new cluster. Track the fraction of inheritances that a reviewer
+  subsequently overrides in the inspector. If overrides concentrate at
+  high-distance inheritances (near ε), tighten `d_inherit`; if
+  reviewers consistently confirm near-threshold inheritances without
+  override, the threshold is safe. The inspector surfaces two queues
+  from the migration report: high-distance-but-inherited (potential
+  wrong inheritance) and lost-review entries (old clusters with no
+  successor), so reviewers can triage them without scanning the full
+  cluster list.
 
 ### Phase 3 follow-up
 
@@ -999,14 +1025,6 @@ implementation. For deferred items, the linked body section
 (*Post-implementation follow-up*, *Architecture changes to consider*)
 is the source of truth; the entry here serves as an index.
 
-- **Cluster-kinds migration edge cases.** Nearest-centroid migration is
-  named but its edge cases aren't pinned down. What is *not* decided:
-  the distance threshold past which a new cluster has no usable ancestor
-  and should default to `unconfirmed` rather than inherit a `kind`;
-  behaviour when an old cluster has no successor in the new clustering
-  (silently drop the correction, or surface it in the inspector as a
-  "lost review"); behaviour when multiple new clusters map to the same
-  old one (all inherit, largest only, or all reset to `unconfirmed`).
 
 - **`excluded_holds` survival across parameter changes.** Per-hold
   exclusions in `pose_corrections.json` are keyed by `(film_id,
