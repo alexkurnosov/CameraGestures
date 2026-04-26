@@ -507,7 +507,10 @@ plans to retake or retire this gesture; no further ε tuning needed.
   2. Cluster representatives.
   3. Run the idle-pose heuristic to compute `suspected_idle` per cluster.
   4. Merge in `server/data/pose_corrections.json` (human review output) to set
-     each cluster's `kind` and to drop any per-hold exclusions.
+     each cluster's `kind` and to drop any per-hold exclusions. If detection
+     parameters have changed since the corrections file was written
+     (`params_hash` mismatch), migrate exclusions against the new hold set —
+     see *Corrections artefact* below.
   5. Build the template manifest (idle-marked clusters are kept in
      `pose_clusters` and `idle_poses`, but stripped from every
      `gesture_templates` entry).
@@ -610,7 +613,14 @@ the manifest. Trainer reads it at manifest-build time:
     "9":  "regular"
   },
   "excluded_holds": [
-    { "film_id": "abc-123", "hold_ordinal": 0 }
+    {
+      "film_id": "abc-123",
+      "hold_ordinal": 0,
+      "rep_frame": 47,
+      "start_frame": 42,
+      "end_frame": 53,
+      "params_hash": "sha256:..."
+    }
   ]
 }
 ```
@@ -618,6 +628,36 @@ the manifest. Trainer reads it at manifest-build time:
 Keeps the training pipeline deterministic and the inspector the single source
 of truth for human overrides. Clusters not listed in `cluster_kinds` stay
 `unconfirmed` and behave as `regular`.
+
+**Per-hold exclusion survival across parameter changes.** Each exclusion
+records, in addition to `(film_id, hold_ordinal)`, the hold's representative-
+frame index, its `[start_frame, end_frame]` range, and `params_hash` — a hash
+of the `(T_hold, K_hold, smooth_k)` triple that produced the detection. At
+trainer-build time, if the current detection parameters' hash matches
+`params_hash`, the exclusion is applied by ordinal directly (fast path).
+Otherwise the trainer migrates each exclusion against the freshly detected
+hold set:
+- **Clean match** (exactly one new hold's `[start, end]` contains the stored
+  `rep_frame`): re-apply the exclusion to that hold and update the stored
+  ordinal, range, and hash.
+- **Split** (the old range covers two or more new holds, each containing
+  part of it): exclude all of them by default — the original hold was deemed
+  unusable, both halves inherit that prior — and surface the case in the
+  inspector for reconfirmation.
+- **Merge** (two or more old exclusions fall inside one new hold): exclude
+  the merged hold and surface for reconfirmation.
+- **Lost** (no new hold contains the stored `rep_frame` — typically because
+  the new parameters reject what was previously detected as a hold): drop
+  the exclusion from the active set and surface a "lost exclusion" entry in
+  the inspector showing the original film and frame so the reviewer can
+  decide whether the current detection still warrants exclusion.
+
+The migration emits a per-exclusion report (clean / split / merge / lost)
+into the same metrics payload as the cluster-id migration report; the
+inspector surfaces the split, merge, and lost queues alongside the existing
+lost-review queue from cluster migration. Pattern matches the cluster-id
+migration: ambiguity is surfaced to humans, never silently resolved or
+silently dropped.
 
 ### Evaluation on the current corpus
 
@@ -881,7 +921,7 @@ After PR #34 and #37 are in production:
 | `iOS/GestureModel/.../GestureModel.swift` | single-frame prediction path for pose classifier; second-model load |
 | `iOS/ModelTraining/.../GestureRecognizerWrapper.swift` | updated config defaults |
 | `iOS/ModelTraining/.../HandFilmsView.swift` | hold-timeline overlay, per-hold skeleton thumbnails, per-hold exclude action |
-| `iOS/ModelTraining/.../PoseInspectorView.swift` (new) | per-cluster grid view, idle/regular marking actions |
+| `iOS/ModelTraining/.../PoseInspectorView.swift` (new) | per-cluster grid view, idle/regular marking actions, exclusion-migration queues (split / merge / lost) |
 | `iOS/ModelTraining/.../Views/CameraView.swift` | recognising-mode switch (handfilm / holds); holds-mode overlay surfacing motion-gate state, detected holds, predicted `pose_id`/confidence, `observed_sequence`, matched template |
 | `iOS/ModelTraining/.../Views/MetricsView.swift` | new Phase 2 section: pose-MLP per-class precision/recall/F1, confusion matrix, end-to-end commit-correct rate (the "#2 strategy" headline), no-prefix and premature-idle rates, history across retraining runs; re-cluster-suggestion warning badge when any watch-list signal trips (out-of-ε rate > 10 %, per-class recall regression > 5 pp, on-device rejection-rate growth) |
 | `server/evaluate_pose.py` (new) | end-to-end Phase 2 corpus evaluation: hold detection → pose argmax → template match → committed gesture vs label; reports commit rate, commit-correct rate, premature-idle rate, length distribution at commit. Output is folded into the metrics payload served by `/model/metrics` (or a sibling `/model/pose/metrics`) so it appears in `MetricsView`. |
@@ -1025,15 +1065,6 @@ implementation. For deferred items, the linked body section
 (*Post-implementation follow-up*, *Architecture changes to consider*)
 is the source of truth; the entry here serves as an index.
 
-
-- **`excluded_holds` survival across parameter changes.** Per-hold
-  exclusions in `pose_corrections.json` are keyed by `(film_id,
-  hold_ordinal)`. If `T_hold`, `K_hold`, or `smooth_k` change, the set
-  and ordering of detected holds shifts and the keys may no longer
-  refer to the intended hold. What is *not* decided: whether to
-  fingerprint exclusions by approximate frame range and re-match on
-  parameter change, drop all exclusions whenever detection parameters
-  change, or keep ordinals as-is and accept off-by-one drift.
 
 - **Gate-open buffer overflow behaviour.** Plan says the variable-length
   buffer is "naturally bounded to ≤ 1 s by the existing
