@@ -857,34 +857,6 @@ After PR #34 and #37 are in production:
 
 ---
 
-## Open Questions Summary
-
-- [x] Motion gate thresholds `T_open`, `K_open`, `T_close` — seeded from `server/analyze_motion.py` gate-calibration pass (onset energy + idle-candidate holds); on-device confirmation tracked under *Post-implementation follow-up*.
-- [x] `K_close` — fixed at 0.3 s (≈ 9 frames at 30 fps).
-- [x] Gate-close vs hold-detect signal collision — resolved by running both counters concurrently below `T_close` (hold trips on `K_hold`, close trips on `K_close`).
-- [x] Absent-frame policy — reset gate immediately.
-- [x] Phase 1 / cross-phase cooldown — parameter `cooldown_after_cycle_ms`, default 1000 ms.
-- [x] Motion-energy source — single per-frame raw signal shared between Phase 1 and Phase 2; per-phase smoothing on top.
-- [x] Phase 2 capture-protocol artefact — resolved: captures include a trailing neutral hold, flagged by the idle-pose heuristic and marked `idle` via the inspector.
-- [x] Phase 2 parameters — calibrated (T_hold, K_hold, smooth_k, edge_trim, ε, T_commit).
-- [x] Phase 2 `τ_pose_confidence` — exposed as a configurable parameter; tuning method (offline acceptance / conditional-accuracy curve + on-device confidence log) defined.
-- [x] Default behaviour for `unconfirmed` clusters — *excluded until confirmed*; surfaced in the inspector but never used in recognition.
-- [x] Idle-pose heuristic thresholds — promoted to named parameters (`idle_entropy_threshold`, `idle_tail_position_min`, `idle_median_position_min`, `idle_signals_required`); on-device tuning deferred to *Post-implementation follow-up*.
-- [x] Runtime edge case (idle while live prefix without complete match) — design fixed (commit longest complete ancestor, else discard); validation metric added in `evaluate_pose.py`.
-- [x] Non-modal training films — start with exclusion; revisit triggered by the per-class recall metric in `evaluate_pose.py`.
-- [x] `T_min_buffer` ↔ `T_commit` interaction — explicitly documented in Phase 2 runtime flow.
-- [x] Phase 3 padding-ratio skew (Problem A) — fixed in PR #34.
-- [x] Phase 3 runtime buffer length — bumped to 30 frames in PR #37; trim eval validates the choice.
-- [x] Phase 2 re-clustering cadence — always on demand; signals in *Post-implementation follow-up* surface a warning, never auto-fire.
-- [x] Confidence-log transport — dedicated `POST /pose/confidence-log` endpoint; optional `film_id` cross-link for auditability when film is also uploaded. Not bundled with film upload: volumes and use cases differ (monitoring vs training data).
-- [ ] Phase 2 cluster-id stability across re-clusters — see *Undecided*.
-- [x] Phase 3 Problem B mitigation order — Phase 1 motion gate is primary; if insufficient, try time-warp augmentation then duration feature (see *Architecture changes to consider* in *Post-implementation follow-up*).
-- [ ] Phase 3 remaining gesture-to-gesture misclassification — tracked in *Post-implementation follow-up*.
-- [ ] Gesture set reassembly (incl. `thumbs_up` retire decision) — deferred until post-Phase-2 per-class numbers; see *Architecture changes to consider*.
-- [ ] LSTM trainer trigger condition defined (≥ 2 regular poses in modal template AND per-pose recall < 0.95) — see *Architecture changes to consider*; not yet a committed rule.
-
----
-
 ## Post-implementation follow-up
 
 Items that cannot be resolved on paper — they need device data, a grown
@@ -999,9 +971,11 @@ increasing complexity.
 
 ## Undecided
 
-Items that are genuinely open — not deferred-to-data, but unresolved on
-paper. Distinct from *Post-implementation follow-up* (which assumes a
-shipped implementation and watches metrics).
+Items that are still open. Covers both questions unresolved on paper
+and items deferred to data, device experience, or future
+implementation. For deferred items, the linked body section
+(*Post-implementation follow-up*, *Architecture changes to consider*)
+is the source of truth; the entry here serves as an index.
 
 - **Phase 2 cluster-id stability across re-clusters.** Cadence is decided
   (always on demand; the watch-list signals only raise a warning, never
@@ -1010,3 +984,86 @@ shipped implementation and watches metrics).
   re-clusters preserve stable cluster ids (and the migration only adjusts
   membership), or accept renumbering and rewrite `pose_corrections.json`
   every time.
+
+- **Cluster-kinds migration edge cases.** Nearest-centroid migration is
+  named but its edge cases aren't pinned down. What is *not* decided:
+  the distance threshold past which a new cluster has no usable ancestor
+  and should default to `unconfirmed` rather than inherit a `kind`;
+  behaviour when an old cluster has no successor in the new clustering
+  (silently drop the correction, or surface it in the inspector as a
+  "lost review"); behaviour when multiple new clusters map to the same
+  old one (all inherit, largest only, or all reset to `unconfirmed`).
+
+- **`excluded_holds` survival across parameter changes.** Per-hold
+  exclusions in `pose_corrections.json` are keyed by `(film_id,
+  hold_ordinal)`. If `T_hold`, `K_hold`, or `smooth_k` change, the set
+  and ordering of detected holds shifts and the keys may no longer
+  refer to the intended hold. What is *not* decided: whether to
+  fingerprint exclusions by approximate frame range and re-match on
+  parameter change, drop all exclusions whenever detection parameters
+  change, or keep ordinals as-is and accept off-by-one drift.
+
+- **Cooldown semantics.** `cooldown_after_cycle_ms` (default 1000 ms)
+  is a parameter, but its scope is not specified. What is *not*
+  decided: whether the motion gate is forced closed for the full
+  cooldown duration or only gesture emission is suppressed while the
+  gate operates normally; when the in-view frame buffer is cleared
+  (start of cooldown vs. end); whether cooldown starts at
+  gesture-emit time, gate-close time, or Phase-3-decision time
+  (relevant when Phase 3 takes meaningful time to run).
+
+- **Gate-open buffer overflow behaviour.** Plan says the variable-length
+  buffer is "naturally bounded to ≤ 1 s by the existing
+  `temporalWindow`" but doesn't say how. What is *not* decided:
+  whether the buffer is a 30-frame ring (keep the most recent 30
+  in-view frames, dropping older ones if the gate stays open longer),
+  a hard cap that stops accepting frames after 30, or a sliding window
+  re-anchored on detected hold boundaries. Affects what Phase 3 sees
+  for gestures whose motion arc exceeds the cap.
+
+- **Phase 3 output restriction to candidate set S.** Plan says "output
+  restricted to S" without specifying the mechanism. What is *not*
+  decided: argmax over masked softmax (zero out non-S logits before
+  argmax), renormalised softmax over S only (probabilities sum to 1
+  within S), or top-1-of-full-output-must-be-in-S-else-reject.
+  Borderline cases — e.g., true class slightly below an out-of-S
+  distractor — split differently across the three.
+
+- **Phase 3 confidence threshold.** Plan mentions "low confidence →
+  discard" but no parameter name, value, or tuning method, even though
+  these are spelled out exhaustively for `τ_pose_confidence`. What is
+  *not* decided: the parameter name (e.g., `τ_phase3_confidence`), an
+  initial value, and whether tuning follows the same offline-curve
+  plus on-device-log pattern used for the pose threshold.
+
+- **`thumbs_up` interim template policy.** `thumbs_up` fragments
+  across ~20 clusters at ε = 0.8 because of inconsistent capture
+  angles. The retire-or-recapture decision is deferred until
+  post-Phase-2 per-class numbers (see *Architecture changes to
+  consider*). What is *not* decided: what the manifest does for
+  `thumbs_up` in the meantime — ship a length-1 modal-cluster template
+  (matches only the modal cluster's holds, leaves the other ~19
+  unmatched), exclude `thumbs_up` from `gesture_templates` entirely
+  until recapture (no commits possible), or allow OR-of-clusters
+  templates (multiple cluster ids treated as the same logical pose).
+  Affects the headline commit-correct rate Phase 2 can report before
+  recapture.
+
+- **Phase 3 remaining gesture-to-gesture misclassification.**
+  Deferred to data. Re-evaluate after the post-PR-#34/#37 retrain
+  reaches the device; the Phase 3 confusion matrix in MetricsView is
+  the watch surface. Tracked in *Post-implementation follow-up*.
+
+- **Gesture set reassembly.** Deferred to data. At a vocabulary
+  milestone, review each gesture for utility, distinctiveness, and
+  training quality; retire underperformers (current candidate:
+  `thumbs_up`). Decision waits for post-Phase-2 per-class
+  commit-correct numbers. Tracked in *Architecture changes to
+  consider*.
+
+- **LSTM trainer trigger condition.** Deferred to data. Sketched as
+  "future gesture's modal template has length ≥ 2 *regular* poses
+  (not counting idle) AND single-frame MLP cannot achieve ≥ 0.95
+  per-pose recall on that gesture"; current corpus does not exercise
+  this condition, so the rule is not yet committed. Tracked in
+  *Architecture changes to consider*.
