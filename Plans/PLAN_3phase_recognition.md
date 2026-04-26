@@ -878,7 +878,10 @@ After PR #34 and #37 are in production:
 - [x] Phase 2 re-clustering cadence — always on demand; signals in *Post-implementation follow-up* surface a warning, never auto-fire.
 - [x] Confidence-log transport — dedicated `POST /pose/confidence-log` endpoint; optional `film_id` cross-link for auditability when film is also uploaded. Not bundled with film upload: volumes and use cases differ (monitoring vs training data).
 - [ ] Phase 2 cluster-id stability across re-clusters — see *Undecided*.
-- [ ] Phase 3 Problem B (length sensitivity below ~20 frames), remaining gesture-to-gesture misclassification, `thumbs_up` retake, LSTM trainer — all deferred; tracked in *Post-implementation follow-up*.
+- [x] Phase 3 Problem B mitigation order — Phase 1 motion gate is primary; if insufficient, try time-warp augmentation then duration feature (see *Architecture changes to consider* in *Post-implementation follow-up*).
+- [ ] Phase 3 remaining gesture-to-gesture misclassification — tracked in *Post-implementation follow-up*.
+- [ ] Gesture set reassembly (incl. `thumbs_up` retire decision) — deferred until post-Phase-2 per-class numbers; see *Architecture changes to consider*.
+- [ ] LSTM trainer trigger condition defined (≥ 2 regular poses in modal template AND per-pose recall < 0.95) — see *Architecture changes to consider*; not yet a committed rule.
 
 ---
 
@@ -938,21 +941,54 @@ parameter to watch and the action to take if the metric drifts.
 
 ### Phase 3 follow-up
 
-- **Problem B (length sensitivity)**. Revisit only if the runtime
-  trimmed-buffer accuracy from device logs (Phase 3 confidence vs final
-  buffer length) shows accuracy drops at lengths the motion gate
-  produces in practice. If yes, apply the deferred mitigations in
-  order: duration feature, time-warp augmentation, then motion-gated
-  variable-length capture.
+- **Problem B (length sensitivity)**. Phase 1's motion-gated
+  variable-length capture is the primary mitigation — it bounds the
+  buffer to the gesture's actual motion arc, keeping clips in the ≥ 30-
+  frame regime where the model classifies correctly. Revisit only if
+  device logs show accuracy still drops at lengths the gate produces in
+  practice. If Phase 1 does not fully close the gap, apply the fallback
+  options in *Architecture changes to consider* below.
 - **Remaining gesture-to-gesture misclassification**. Re-evaluate after
   the post-PR-#34/#37 retrain reaches the device. The Phase 3 confusion
   matrix in MetricsView is the watch surface.
 - **`thumbs_up` capture retake**. Decide after seeing post-Phase-2
   per-class commit-correct rate. If `thumbs_up` lags the others by more
   than 10 pp, retake or retire.
-- **LSTM trainer**. Add only if a future gesture's modal template has
-  length ≥ 2 *regular* poses (not regular + idle) and the single-frame
-  MLP cannot achieve ≥ 0.95 per-pose recall on it.
+
+### Architecture changes to consider
+
+Non-routine improvements that require deliberate implementation effort,
+as distinct from threshold tuning and metric monitoring. Listed in
+increasing complexity.
+
+- **Duration feature** *(Phase 3 Problem B fallback, try first if Phase 1
+  is insufficient)*. Append one scalar — real-frame count normalised by
+  `temporalWindow` — to the 256-dim summary feature vector fed to the
+  Phase 3 MLP. Gives the model an explicit signal about how much of the
+  motion arc was observed. Cheapest change; no data re-collection;
+  compose with time-warp augmentation if the gap persists.
+- **Time-warp augmentation** *(Phase 3 Problem B fallback, try second)*.
+  During training, resample each clip at 0.7×–1.4× to synthesise
+  faster/slower variants before extracting summary features. Teaches
+  speed invariance across the 18–30-frame band. Requires changes to
+  the `trainer_rf_mlp.py` preprocessing step; inference path is
+  unchanged.
+- **LSTM trainer** *(Phase 2, add only when the trigger condition fires)*.
+  Implement only when a future gesture's modal template has length ≥ 2
+  *regular* poses (not counting idle) **and** the single-frame MLP
+  cannot achieve ≥ 0.95 per-pose recall on that gesture. Current corpus
+  does not meet this condition (all templates are length-1 regular pose).
+- **Gesture set reassembly**. At a natural milestone (e.g. before
+  expanding the vocabulary beyond the current four), review each gesture
+  for utility, distinctiveness, and training-data quality. Retire
+  gestures whose per-class Phase 2 commit-correct rate or Phase 3
+  accuracy consistently lags the others by a meaningful margin and for
+  which recapture is not worth the effort; replace them with better-
+  defined alternatives if needed. `thumbs_up` is the current candidate
+  to retire: its training films were shot from inconsistent camera
+  angles, fragmenting its pose cluster across ~20 ids at ε = 0.8, and
+  its Phase 3 accuracy at trim=30 already shows variance. No action
+  until post-Phase-2 per-class numbers exist.
 
 ### Open implementation-shape questions
 
@@ -974,15 +1010,3 @@ shipped implementation and watches metrics).
   re-clusters preserve stable cluster ids (and the migration only adjusts
   membership), or accept renumbering and rewrite `pose_corrections.json`
   every time.
-- **Phase 3 Problem B mitigation order**. Three options listed (duration
-  feature, time-warp augmentation, motion-gated variable-length capture).
-  Recommendation is "defer until Phase 1 lands"; if Phase 1 doesn't fully
-  fix length sensitivity, the order in which to try the three is not
-  fixed.
-- **`thumbs_up` retake vs retire.** Will be decided once post-Phase-2
-  per-class numbers exist, but the criterion for "retake vs retire" is
-  not written down — what gap with other classes triggers which action?
-- **LSTM trainer trigger.** Plan defers it; no concrete condition for
-  when it becomes worth building. *Post-implementation follow-up*
-  proposes "modal template length ≥ 2 regular poses AND single-frame MLP
-  per-pose recall < 0.95" — this is a draft, not a committed rule.
