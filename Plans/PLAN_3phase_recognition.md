@@ -399,10 +399,15 @@ emits this curve into the metrics payload so `MetricsView` can show it.
 
 *On-device:* the holds-recognising mode in `CameraView` logs every hold's
 top-pose confidence plus a reviewer tag (correct / wrong / skipped). The
-log is uploadable to the server, where the same acceptance/conditional-
-accuracy curve is recomputed from device data and surfaced in
-`MetricsView` next to the offline curve. Divergence between the two
-curves is the signal that `τ` needs adjustment.
+log is uploaded to the server via `POST /pose/confidence-log` —
+independently of film upload, as batches of
+`{model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`.
+An optional `film_id` cross-links the entry to a film uploaded through the
+existing path, enabling landmark-level auditability without requiring it.
+The server recomputes the acceptance/conditional-accuracy curve from the
+received tuples and surfaces it in `MetricsView` next to the offline
+curve. Divergence between the two curves is the signal that `τ` needs
+adjustment.
 
 ### Template manifest (on-disk format alongside the model)
 
@@ -500,6 +505,11 @@ plans to retake or retire this gesture; no further ε tuning needed.
   - `POST /analyze/holds` — reusable endpoint for the inspection tool
     (below); takes a `HandFilm`, returns detected hold intervals and
     representative frame indices.
+  - `POST /pose/confidence-log` — accepts batches of
+    `{model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`
+    from device; server recomputes the on-device acceptance/conditional-accuracy
+    curve for `τ_pose_confidence` tuning. `film_id` is optional; when present,
+    the entry is cross-linked to the stored film for landmark-level auditability.
 - `server/analyze_motion.py` becomes both a diagnostic tool and the source of
   truth for hold-detection + clustering logic that the trainer calls.
 
@@ -843,7 +853,7 @@ After PR #34 and #37 are in production:
 | `server/ml/preprocessor.js` | (unchanged — Phase 2 uses existing normalised coords) |
 | `server/analyze_motion.py` | source of truth for hold-detection + clustering logic used by trainer and `/analyze/holds` |
 | `server/data/pose_corrections.json` (new) | reviewer output: `cluster_kinds`, `excluded_holds`; consumed by trainer |
-| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds`, `/pose/corrections` (GET/PUT) |
+| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds`, `/pose/corrections` (GET/PUT), `/pose/confidence-log` (POST) |
 
 ---
 
@@ -866,6 +876,7 @@ After PR #34 and #37 are in production:
 - [x] Phase 3 padding-ratio skew (Problem A) — fixed in PR #34.
 - [x] Phase 3 runtime buffer length — bumped to 30 frames in PR #37; trim eval validates the choice.
 - [x] Phase 2 re-clustering cadence — always on demand; signals in *Post-implementation follow-up* surface a warning, never auto-fire.
+- [x] Confidence-log transport — dedicated `POST /pose/confidence-log` endpoint; optional `film_id` cross-link for auditability when film is also uploaded. Not bundled with film upload: volumes and use cases differ (monitoring vs training data).
 - [ ] Phase 2 cluster-id stability across re-clusters — see *Undecided*.
 - [ ] Phase 3 Problem B (length sensitivity below ~20 frames), remaining gesture-to-gesture misclassification, `thumbs_up` retake, LSTM trainer — all deferred; tracked in *Post-implementation follow-up*.
 
@@ -963,10 +974,6 @@ shipped implementation and watches metrics).
   re-clusters preserve stable cluster ids (and the migration only adjusts
   membership), or accept renumbering and rewrite `pose_corrections.json`
   every time.
-- **Confidence-log transport**. The on-device `τ_pose_confidence` tuning
-  loop needs (confidence, reviewer-label) tuples back on the server. Not
-  decided whether they ride on the existing film-upload path or get a
-  dedicated `/pose/confidence-log` endpoint.
 - **Phase 3 Problem B mitigation order**. Three options listed (duration
   feature, time-warp augmentation, motion-gated variable-length capture).
   Recommendation is "defer until Phase 1 lands"; if Phase 1 doesn't fully
