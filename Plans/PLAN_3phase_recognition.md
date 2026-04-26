@@ -171,8 +171,24 @@ of relaxed hand in view, flagged as idle) and re-run calibration.
   (hold first, then close) instead of forcing a choice between them.
 - **Post-detection cooldown** is a configurable parameter
   `cooldown_after_cycle_ms`, default **1000 ms**, applied after every cycle
-  (commit or discard). See *Cross-phase cooldown* in the cross-cutting
-  section.
+  (commit or discard). Semantics:
+  - **Trigger time.** The cooldown clock starts at *cycle-end time* —
+    the moment the cycle reaches its terminal state, regardless of how
+    it got there. For commits, that is when Phase 3 emits its decision;
+    for discards, that is whenever the stop trigger fires (sub-`τ_pose`
+    hold, no-prefix-match, gate-close-without-completion, idle-without-
+    ancestor, etc.). One rule: cooldown starts whenever the cycle ends.
+  - **Scope.** During cooldown, **only gesture emission is suppressed**.
+    The motion gate, hold detection, Phase 2 prefix matching, and
+    Phase 3 inference all run normally. A commit that would fire
+    inside the cooldown window is **queued** rather than dropped: the
+    callback fires at cooldown end with the queued gesture, and a
+    fresh cooldown begins from that emission. If multiple commits
+    happen during the same cooldown, the most recent one wins (older
+    queued commits are overwritten); discards never queue anything.
+  - **Buffer reset.** The in-view frame buffer and `observed` are
+    cleared at the **start** of the cooldown (i.e., at cycle-end), so
+    any motion captured during the cooldown belongs to a fresh cycle.
 - **Motion-energy source of truth.** Phase 1 and Phase 2's runtime hold
   detector consume the **same per-frame raw energy signal** computed once
   per frame. Each phase applies its own smoothing/threshold layer on top
@@ -683,8 +699,14 @@ is the Phase 2 headline number.
   the training app surfaces a warning (never an auto-trigger) when the
   distribution-shift / recall-drift signals listed in *Post-implementation
   follow-up* trip. Every re-cluster runs the nearest-centroid migration
-  of `cluster_kinds`. Cluster-id stability across re-clusters is still
-  open (see *Undecided*).
+  of `cluster_kinds`. **Cluster ids are stable across re-clusters**: a
+  new cluster whose centroid matches an existing cluster inherits that
+  id (and its `kind`), so the migration only adjusts membership rather
+  than rewriting `pose_corrections.json` from scratch. Genuinely new
+  clusters mint fresh ids from a monotonically increasing counter; ids
+  are never reused. The remaining edge cases (no-ancestor distance
+  threshold, orphaned old clusters, multi-successor mapping) are
+  tracked in *Undecided → Cluster-kinds migration edge cases*.
 - **Default for `unconfirmed` clusters**: currently treat as `regular`. As
   the idle heuristic matures we could consider switching the default to
   "excluded until confirmed" to keep training cleaner; that change would
@@ -977,14 +999,6 @@ implementation. For deferred items, the linked body section
 (*Post-implementation follow-up*, *Architecture changes to consider*)
 is the source of truth; the entry here serves as an index.
 
-- **Phase 2 cluster-id stability across re-clusters.** Cadence is decided
-  (always on demand; the watch-list signals only raise a warning, never
-  auto-fire — see *Post-implementation follow-up*). The nearest-centroid
-  `cluster_kinds` migration is sketched. What is *not* decided: whether
-  re-clusters preserve stable cluster ids (and the migration only adjusts
-  membership), or accept renumbering and rewrite `pose_corrections.json`
-  every time.
-
 - **Cluster-kinds migration edge cases.** Nearest-centroid migration is
   named but its edge cases aren't pinned down. What is *not* decided:
   the distance threshold past which a new cluster has no usable ancestor
@@ -1002,15 +1016,6 @@ is the source of truth; the entry here serves as an index.
   fingerprint exclusions by approximate frame range and re-match on
   parameter change, drop all exclusions whenever detection parameters
   change, or keep ordinals as-is and accept off-by-one drift.
-
-- **Cooldown semantics.** `cooldown_after_cycle_ms` (default 1000 ms)
-  is a parameter, but its scope is not specified. What is *not*
-  decided: whether the motion gate is forced closed for the full
-  cooldown duration or only gesture emission is suppressed while the
-  gate operates normally; when the in-view frame buffer is cleared
-  (start of cooldown vs. end); whether cooldown starts at
-  gesture-emit time, gate-close time, or Phase-3-decision time
-  (relevant when Phase 3 takes meaningful time to run).
 
 - **Gate-open buffer overflow behaviour.** Plan says the variable-length
   buffer is "naturally bounded to ≤ 1 s by the existing
