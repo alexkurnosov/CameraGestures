@@ -669,11 +669,12 @@ is the Phase 2 headline number.
 - **Cross-phase cooldown** after every cycle (commit *or* discard, regardless of
   how many phases the cycle reached) — duration not yet parameterised; see
   Phase 1's open questions.
-- **Re-clustering cadence**: do we re-cluster every time the corpus grows by
-  some threshold, or only on demand via `POST /train/pose`? Re-clustering
-  changes cluster ids, which invalidates the corrections file — so probably
-  on demand, with a migration step for `cluster_kinds` via nearest-centroid
-  mapping.
+- **Re-clustering cadence**: always on demand via `POST /train/pose`;
+  the training app surfaces a warning (never an auto-trigger) when the
+  distribution-shift / recall-drift signals listed in *Post-implementation
+  follow-up* trip. Every re-cluster runs the nearest-centroid migration
+  of `cluster_kinds`. Cluster-id stability across re-clusters is still
+  open (see *Undecided*).
 - **Default for `unconfirmed` clusters**: currently treat as `regular`. As
   the idle heuristic matures we could consider switching the default to
   "excluded until confirmed" to keep training cleaner; that change would
@@ -835,7 +836,7 @@ After PR #34 and #37 are in production:
 | `iOS/ModelTraining/.../HandFilmsView.swift` | hold-timeline overlay, per-hold skeleton thumbnails, per-hold exclude action |
 | `iOS/ModelTraining/.../PoseInspectorView.swift` (new) | per-cluster grid view, idle/regular marking actions |
 | `iOS/ModelTraining/.../Views/CameraView.swift` | recognising-mode switch (handfilm / holds); holds-mode overlay surfacing motion-gate state, detected holds, predicted `pose_id`/confidence, `observed_sequence`, matched template |
-| `iOS/ModelTraining/.../Views/MetricsView.swift` | new Phase 2 section: pose-MLP per-class precision/recall/F1, confusion matrix, end-to-end commit-correct rate (the "#2 strategy" headline), no-prefix and premature-idle rates, history across retraining runs |
+| `iOS/ModelTraining/.../Views/MetricsView.swift` | new Phase 2 section: pose-MLP per-class precision/recall/F1, confusion matrix, end-to-end commit-correct rate (the "#2 strategy" headline), no-prefix and premature-idle rates, history across retraining runs; re-cluster-suggestion warning badge when any watch-list signal trips (out-of-ε rate > 10 %, per-class recall regression > 5 pp, on-device rejection-rate growth) |
 | `server/evaluate_pose.py` (new) | end-to-end Phase 2 corpus evaluation: hold detection → pose argmax → template match → committed gesture vs label; reports commit rate, commit-correct rate, premature-idle rate, length distribution at commit. Output is folded into the metrics payload served by `/model/metrics` (or a sibling `/model/pose/metrics`) so it appears in `MetricsView`. |
 | `iOS/ModelTraining/.../ViewModels/` | hold + cluster data fetch (via `/analyze/holds`); read/write corrections |
 | `server/ml/trainer_pose.py` (new) | Phase 2 trainer: extract, cluster, apply corrections, train, export manifest |
@@ -864,7 +865,8 @@ After PR #34 and #37 are in production:
 - [x] `T_min_buffer` ↔ `T_commit` interaction — explicitly documented in Phase 2 runtime flow.
 - [x] Phase 3 padding-ratio skew (Problem A) — fixed in PR #34.
 - [x] Phase 3 runtime buffer length — bumped to 30 frames in PR #37; trim eval validates the choice.
-- [ ] Phase 2 re-clustering cadence — on demand vs periodic; tracked in *Post-implementation follow-up*.
+- [x] Phase 2 re-clustering cadence — always on demand; signals in *Post-implementation follow-up* surface a warning, never auto-fire.
+- [ ] Phase 2 cluster-id stability across re-clusters — see *Undecided*.
 - [ ] Phase 3 Problem B (length sensitivity below ~20 frames), remaining gesture-to-gesture misclassification, `thumbs_up` retake, LSTM trainer — all deferred; tracked in *Post-implementation follow-up*.
 
 ---
@@ -907,10 +909,21 @@ parameter to watch and the action to take if the metric drifts.
   for 4 gestures. Re-evaluate at every vocabulary milestone (≥ 8, ≥ 12
   gestures) using the inspector's idle-flag confusion matrix
   (suspected_idle vs reviewer-confirmed `kind`).
-- **Re-clustering cadence**. Currently on demand. Track the fraction of
-  newly captured holds whose nearest-centroid distance exceeds ε; when
-  it crosses 10 %, trigger a re-cluster + nearest-centroid migration of
-  `cluster_kinds`.
+- **Re-clustering cadence**. Re-clustering is always **on demand** via
+  `POST /train/pose`; never auto-fired. The training app surfaces a
+  **re-cluster suggestion** (warning badge in MetricsView and the
+  inspector header, naming the tripped signal) when any of these trip:
+  - Fraction of newly captured holds whose nearest-centroid distance
+    exceeds ε crosses 10 % (primary signal — distribution shift).
+  - Per-class pose-MLP recall in `evaluate_pose.py` drops by > 5 pp on
+    a previously-stable class between retraining runs with no template
+    or data-policy change (secondary — boundary drift).
+  - On-device `τ_pose_confidence` rejection rate climbs without a
+    matching shift in the offline acceptance curve (secondary —
+    runtime distribution drift).
+  Acting on the warning runs the re-cluster + nearest-centroid migration
+  of `cluster_kinds`. The manual "Re-cluster" action is always
+  available, independent of whether any warning is showing.
 
 ### Phase 3 follow-up
 
@@ -932,8 +945,6 @@ parameter to watch and the action to take if the metric drifts.
 
 ### Open implementation-shape questions
 
-- Re-clustering UX in the training app (manual button vs auto-suggest
-  when the new-cluster-distance metric crosses threshold).
 - Whether device-side confidence logs need their own upload endpoint or
   can ride on the existing film-upload path.
 
@@ -945,15 +956,13 @@ Items that are genuinely open — not deferred-to-data, but unresolved on
 paper. Distinct from *Post-implementation follow-up* (which assumes a
 shipped implementation and watches metrics).
 
-- **Phase 2 re-clustering cadence.** On demand vs. periodic is not chosen.
-  Migration of `cluster_kinds` via nearest-centroid mapping is sketched
-  but the cluster-id stability story (do we keep stable ids across
-  re-clusters, or accept renumbering and rewrite `pose_corrections.json`
-  every time?) is not specified.
-- **Re-clustering UX** in the training app — manual "re-cluster" button,
-  or auto-suggest when the new-cluster-distance metric crosses a
-  threshold? Affects how often a reviewer is forced through the
-  inspector.
+- **Phase 2 cluster-id stability across re-clusters.** Cadence is decided
+  (always on demand; the watch-list signals only raise a warning, never
+  auto-fire — see *Post-implementation follow-up*). The nearest-centroid
+  `cluster_kinds` migration is sketched. What is *not* decided: whether
+  re-clusters preserve stable cluster ids (and the migration only adjusts
+  membership), or accept renumbering and rewrite `pose_corrections.json`
+  every time.
 - **Confidence-log transport**. The on-device `τ_pose_confidence` tuning
   loop needs (confidence, reviewer-label) tuples back on the server. Not
   decided whether they ride on the existing film-upload path or get a
