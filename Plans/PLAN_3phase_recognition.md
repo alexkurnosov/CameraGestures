@@ -1110,11 +1110,10 @@ increasing complexity.
 
 ## Undecided
 
-Items that are still open. Covers both questions unresolved on paper
-and items deferred to data, device experience, or future
-implementation. For deferred items, the linked body section
-(*Post-implementation follow-up*, *Architecture changes to consider*)
-is the source of truth; the entry here serves as an index.
+Items still open on paper — design questions not yet resolved. Items
+deferred to data, device experience, or future implementation live in
+*Post-implementation follow-up* and *Architecture changes to consider*,
+not here.
 
 
 - **Phase 3 confidence threshold.** Plan mentions "low confidence →
