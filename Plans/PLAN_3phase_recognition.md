@@ -415,9 +415,10 @@ emits this curve into the metrics payload so `MetricsView` can show it.
 
 *On-device:* the holds-recognising mode in `CameraView` logs every hold's
 top-pose confidence plus a reviewer tag (correct / wrong / skipped). The
-log is uploaded to the server via `POST /pose/confidence-log` —
-independently of film upload, as batches of
-`{model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`.
+log is uploaded to the server via `POST /confidence-log` (shared with
+Phase 3 — see *Phase 3 → Confidence threshold*) — independently of film
+upload, as batches of
+`{phase: "pose", model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`.
 An optional `film_id` cross-links the entry to a film uploaded through the
 existing path, enabling landmark-level auditability without requiring it.
 The server recomputes the acceptance/conditional-accuracy curve from the
@@ -536,11 +537,16 @@ consider*).
   - `POST /analyze/holds` — reusable endpoint for the inspection tool
     (below); takes a `HandFilm`, returns detected hold intervals and
     representative frame indices.
-  - `POST /pose/confidence-log` — accepts batches of
-    `{model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`
-    from device; server recomputes the on-device acceptance/conditional-accuracy
-    curve for `τ_pose_confidence` tuning. `film_id` is optional; when present,
-    the entry is cross-linked to the stored film for landmark-level auditability.
+  - `POST /confidence-log` — shared by Phase 2 and Phase 3 tuning.
+    Accepts batches of confidence-log entries discriminated by a `phase`
+    field. Pose entries are
+    `{phase: "pose", model_version, predicted_pose_id, confidence, reviewer_label, timestamp, film_id?}`;
+    Phase 3 entries are
+    `{phase: "phase3", model_version, candidate_set_size, predicted_class, confidence, reviewer_label, timestamp, film_id?}`.
+    Server recomputes the on-device acceptance/conditional-accuracy curve
+    per phase for `τ_pose_confidence` and `τ_phase3_confidence` tuning.
+    `film_id` is optional; when present, the entry is cross-linked to the
+    stored film for landmark-level auditability.
 - `server/analyze_motion.py` becomes both a diagnostic tool and the source of
   truth for hold-detection + clustering logic that the trainer calls.
 
@@ -807,8 +813,8 @@ a defined rule for combining the two.
   logits to −∞) and take the argmax over the remaining entries.
 - Report the **pre-mask, unrenormalised** softmax probability of the
   chosen class as the Phase 3 confidence. This is the value that
-  `τ_phase3_confidence` (see *Phase 3 confidence threshold* in
-  *Undecided*) is checked against.
+  `τ_phase3_confidence` (see *Confidence threshold* below) is checked
+  against.
 
 **Why this and not the alternatives.**
 - *Renormalised softmax over S* (probabilities within S sum to 1) is
@@ -828,6 +834,43 @@ a defined rule for combining the two.
 
 The reported confidence being pre-mask rather than post-renormalisation
 is the property that keeps `τ_phase3_confidence` invariant to |S|.
+
+### Confidence threshold
+
+Phase 3 gates low-confidence outputs with `τ_phase3_confidence`
+(analogue of `τ_pose_confidence`). The value compared against the
+threshold is the pre-mask softmax probability of the masked-argmax
+class — see *Output restriction to candidate set S*. Below threshold,
+the cycle is discarded rather than committed.
+
+**Initial value: offline sweep on the validation fold.** During
+Phase 3 training, sweep `τ` over `[0.30, 0.95]` in 0.05 steps and plot
+acceptance (fraction of clips with top confidence ≥ `τ`) against
+conditional accuracy (predicted class == true label among accepted
+clips). Pick the smallest `τ` whose conditional accuracy meets ≥ 0.95
+without acceptance dropping below ~0.85. The sweep uses the **unmasked**
+validation softmax: when `|S| = 1` masking does not change the
+chosen-class probability, and when `|S| > 1` the masked probability is
+≥ the unmasked one for the true class, so a τ derived this way is at
+least as strict as a fully runtime-faithful sweep would give. Refining
+to a Phase-2-conditioned sweep (run Phase 2 on the fold, mask Phase 3
+with the resulting S) is deferred until device data shows the
+approximation matters. `trainer_rf_mlp.py` emits the curve into the
+metrics payload so `MetricsView`'s Phase 3 panel can show it.
+
+**On-device tuning.** Cycles that reach Phase 3 log
+`{model_version, candidate_set_size, predicted_class, confidence, reviewer_label, timestamp, film_id?}`
+to the server. The endpoint is shared with Phase 2:
+`POST /confidence-log` (formerly `/pose/confidence-log`) accepts a
+`phase` discriminator (`pose` | `phase3`) and per-phase fields. The
+server recomputes the acceptance / conditional-accuracy curve per phase
+and surfaces it in `MetricsView` next to the offline curve. Divergence
+is the signal that `τ_phase3_confidence` needs adjustment.
+
+Phase 3 fires once per committed cycle vs once per hold for Phase 2, so
+the on-device sample rate is materially lower and the curve stabilises
+more slowly. Treat it as a drift watch; the offline curve is the source
+of truth until on-device samples can confidently disagree with it.
 
 ### Status
 
@@ -981,7 +1024,7 @@ After PR #34 and #37 are in production:
 | `server/ml/preprocessor.js` | (unchanged — Phase 2 uses existing normalised coords) |
 | `server/analyze_motion.py` | source of truth for hold-detection + clustering logic used by trainer and `/analyze/holds` |
 | `server/data/pose_corrections.json` (new) | reviewer output: `cluster_kinds`, `excluded_holds`; consumed by trainer |
-| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds`, `/pose/corrections` (GET/PUT), `/pose/confidence-log` (POST) |
+| `server/routers/` | new `/train/pose`, `/model/pose/download`, `/model/pose/manifest`, `/analyze/holds`, `/pose/corrections` (GET/PUT), `/confidence-log` (POST — shared by Phase 2 and Phase 3) |
 
 ---
 
@@ -1003,6 +1046,12 @@ parameter to watch and the action to take if the metric drifts.
   Adjust `τ` to keep conditional accuracy ≥ 0.95 without acceptance
   dropping below ~0.85. The MetricsView Phase 2 panel shows offline and
   device curves side by side.
+- **`τ_phase3_confidence`**. Same loop as `τ_pose_confidence`,
+  computed from the Phase 3 entries on the shared `/confidence-log`
+  endpoint. Phase 3 fires once per committed cycle vs once per hold,
+  so expect the on-device curve to stabilise more slowly; treat it as
+  a drift watch against the offline curve rather than a primary tuning
+  source until sample volume catches up.
 - **Cooldown** (`cooldown_after_cycle_ms`, default 1000 ms). Watch the
   duplicate-detection rate on device (same gesture firing twice within
   2 s); if non-zero, raise the cooldown.
@@ -1110,17 +1159,10 @@ increasing complexity.
 
 ## Undecided
 
-Items that are still open. Covers both questions unresolved on paper
-and items deferred to data, device experience, or future
-implementation. For deferred items, the linked body section
-(*Post-implementation follow-up*, *Architecture changes to consider*)
-is the source of truth; the entry here serves as an index.
+Items still open on paper — design questions not yet resolved. Items
+deferred to data, device experience, or future implementation live in
+*Post-implementation follow-up* and *Architecture changes to consider*,
+not here.
 
-
-- **Phase 3 confidence threshold.** Plan mentions "low confidence →
-  discard" but no parameter name, value, or tuning method, even though
-  these are spelled out exhaustively for `τ_pose_confidence`. What is
-  *not* decided: the parameter name (e.g., `τ_phase3_confidence`), an
-  initial value, and whether tuning follows the same offline-curve
-  plus on-device-log pattern used for the pose threshold.
+*(No items currently open.)*
 
