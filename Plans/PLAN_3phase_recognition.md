@@ -294,6 +294,7 @@ monitor motion energy continuously
 Phase 2 MLP on the hold's argmin frame
   │
   ├─ top pose confidence < τ_pose_confidence            → discard capture, reset gate
+  ├─ pose is UNCONFIRMED (cluster kind == "unconfirmed") → discard capture, reset gate
   │
   ├─ pose is IDLE  (cluster kind == "idle")
   │     observed == []                                  → reset gate, keep watching
@@ -302,7 +303,7 @@ Phase 2 MLP on the hold's argmin frame
   │                                                        ancestor prefix if any, else
   │                                                        discard and reset gate
   │
-  └─ pose is REGULAR (unconfirmed clusters default here)
+  └─ pose is REGULAR
         append pose_id to observed = [p1, p2, ...]
         prefix-match observed against gesture_templates
         ├─ no template starts with observed             → discard capture, reset gate
@@ -459,7 +460,7 @@ adjustment.
 `kind` is one of:
 - `regular` — a gesture-specific pose; appears in templates and is used for prefix matching.
 - `idle` — a neutral / end-of-gesture pose; never appears in templates; detection triggers commit at runtime.
-- `unconfirmed` — default for newly discovered clusters. Treated as `regular` for safety; `suspected_idle = true` surfaces it in the inspector for human review.
+- `unconfirmed` — default for newly discovered clusters. Excluded from inference: hold representatives are not used as training labels, the cluster does not appear in any `gesture_templates` entry, and a hold whose nearest cluster is `unconfirmed` is rejected at runtime (same as sub-`τ_pose_confidence`). Surfaces in the inspector's dedicated review queue.
 
 `suspected_idle` is set by the idle-pose heuristic (gesture-entropy + tail-position + temporal-position) and is advisory only — it never changes `kind` without a human decision.
 
@@ -645,7 +646,8 @@ the manifest. Trainer reads it at manifest-build time:
 
 Keeps the training pipeline deterministic and the inspector the single source
 of truth for human overrides. Clusters not listed in `cluster_kinds` stay
-`unconfirmed` and behave as `regular`.
+`unconfirmed` and are excluded from inference (rejected at runtime, excluded
+from training labels and templates).
 
 **Per-hold exclusion survival across parameter changes.** Each exclusion
 records, in addition to `(film_id, hold_ordinal)`, the hold's representative-
@@ -780,10 +782,6 @@ is the Phase 2 headline number.
   - **Multiple new clusters → one old cluster**: all inheriting
     clusters take the old cluster's `kind`. A split cluster is still
     the same logical pose region; no limit on successor count.
-- **Default for `unconfirmed` clusters**: currently treat as `regular`. As
-  the idle heuristic matures we could consider switching the default to
-  "excluded until confirmed" to keep training cleaner; that change would
-  require the inspector to be part of the standard training workflow.
 - **Idle-pose heuristic thresholds** (entropy, tail-position count, median
   position): current values are tuned to 4 gestures; revisit at 10+.
 - **Runtime edge case** (idle detected while `observed` is a live prefix
@@ -843,12 +841,24 @@ threshold is the pre-mask softmax probability of the masked-argmax
 class — see *Output restriction to candidate set S*. Below threshold,
 the cycle is discarded rather than committed.
 
-**Initial value: offline sweep on the validation fold.** During
-Phase 3 training, sweep `τ` over `[0.30, 0.95]` in 0.05 steps and plot
-acceptance (fraction of clips with top confidence ≥ `τ`) against
-conditional accuracy (predicted class == true label among accepted
-clips). Pick the smallest `τ` whose conditional accuracy meets ≥ 0.95
-without acceptance dropping below ~0.85. The sweep uses the **unmasked**
+**Initial value: `0.70` (placeholder seed).** This is the value that
+ships before the first training run, analogous to `τ_pose_confidence`'s
+seed of `0.6`. Rationale: Phase 3 operates on a 4-class problem with
+100 % trim=30 validation accuracy; correct-class softmax probabilities
+are expected to be well above 0.5 on in-distribution captures. `0.70`
+sits slightly above the pose-classifier seed to reflect Phase 3's
+richer 256-dim feature set, while remaining loose enough that the
+acceptance floor (≥ 0.85) is not violated on the current corpus.
+
+**Offline sweep on the validation fold.** During Phase 3 training,
+sweep `τ` over `[0.30, 0.95]` in 0.05 steps and plot acceptance
+(fraction of clips with top confidence ≥ `τ`) against conditional
+accuracy (predicted class == true label among accepted clips). Pick the
+smallest `τ` whose conditional accuracy meets ≥ 0.95 without acceptance
+dropping below ~0.85. Record the sweep result and replace `0.70` in
+configuration if the sweep produces a materially different value.
+
+The sweep uses the **unmasked**
 validation softmax: when `|S| = 1` masking does not change the
 chosen-class probability, and when `|S| > 1` the masked probability is
 ≥ the unmasked one for the true class, so a τ derived this way is at
@@ -1163,41 +1173,6 @@ Items still open on paper — design questions not yet resolved. Items
 deferred to data, device experience, or future implementation live in
 *Post-implementation follow-up* and *Architecture changes to consider*,
 not here.
-
-- **Runtime behaviour of `unconfirmed` clusters.** The plan currently
-  describes both behaviours and they conflict. Phase 2 §"Why key poses
-  rather than a single initial pose" → idle-pose handling says
-  "**Unconfirmed clusters are excluded from inference**: their hold
-  representatives are not used as training labels for the pose MLP,
-  they do not appear in any `gesture_templates` entry, and at runtime
-  a hold whose nearest cluster is `unconfirmed` is rejected (treated
-  like a sub-`τ_pose_confidence` hold)." The runtime-flow diagram and
-  the manifest schema instead say unconfirmed clusters are "treated as
-  `regular` for safety". Pick one — both choices are defensible (strict
-  excludes new gesture data until reviewed; permissive lets day-1
-  capture flow without an inspector pass), but the implementer needs
-  one rule, not two.
-
-- **Phase 1 motion-gate calibration ordering.** §"Threshold calibration
-  from the existing corpus" reads `cluster_kinds` from
-  `pose_corrections.json` to seed `T_close`/`K_close` from confirmed
-  idle-pose holds, with a coarse pre-heuristic fallback when that file
-  doesn't exist. *Implementation Order* puts Phase 1 (step 2) before
-  the inspector and Phase 2 (steps 3–4), so on day 1 the file does not
-  exist. Decide between (a) shipping Phase 1 with the pre-heuristic
-  thresholds and re-tuning after the first inspector pass, or (b)
-  blocking Phase 1's gate-implementation slice on at least one
-  end-to-end clustering + inspector pass so the seeds use confirmed
-  idle clusters from the start.
-
-- **`τ_phase3_confidence` initial value.** §Phase 3 → "Confidence
-  threshold" specifies the offline-sweep tuning method but no seed
-  number, while the parallel `τ_pose_confidence` ships with `0.6` as
-  an initial guess. Pick a seed (the offline sweep runs on the
-  validation fold during Phase 3 training, so the natural answer is
-  whatever the smallest τ with conditional accuracy ≥ 0.95 turns out
-  to be on the existing corpus — but the plan should record either a
-  concrete number or "set on first training run, no a-priori value").
 
 - **`evaluate_pose.py` simulation contract.** The §"End-to-end Phase 2
   accuracy on the corpus" entry says the script runs "the full
