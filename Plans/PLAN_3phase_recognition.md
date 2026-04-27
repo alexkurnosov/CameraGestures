@@ -794,6 +794,41 @@ is the Phase 2 headline number.
 
 ## Phase 3 — Handfilm Classifier
 
+### Output restriction to candidate set S
+
+Phase 2 produces a candidate set `S` of gesture classes (those whose
+templates prefix-match `observed`). Phase 3's MLP was trained as an
+unrestricted classifier over the full vocabulary, so the runtime needs
+a defined rule for combining the two.
+
+**Mechanism: masked argmax with original-softmax confidence.**
+- Run Phase 3 normally to get a softmax distribution over all classes.
+- Mask classes ∉ S (zero them out — equivalently set their pre-softmax
+  logits to −∞) and take the argmax over the remaining entries.
+- Report the **pre-mask, unrenormalised** softmax probability of the
+  chosen class as the Phase 3 confidence. This is the value that
+  `τ_phase3_confidence` (see *Phase 3 confidence threshold* in
+  *Undecided*) is checked against.
+
+**Why this and not the alternatives.**
+- *Renormalised softmax over S* (probabilities within S sum to 1) is
+  rejected because |S| = 1 is the common case on the current corpus,
+  which collapses renormalised confidence to 1.0 and makes
+  `τ_phase3_confidence` meaningless exactly when we need it — when
+  Phase 3 actually disagrees with the lone S member.
+- *Top-1 of full output must be in S, else reject* is rejected because
+  it discards the borderline case the restriction is designed to
+  recover: true class ∈ S but a confusable distractor ∉ S has slightly
+  higher full-softmax mass. Masked argmax picks the true class and
+  reports its honest (small) probability; the confidence gate then
+  decides whether that probability is high enough to commit. Putting
+  the rejection at the masking step would force Phase 2 and Phase 3 to
+  agree on the global top-1 — a stricter requirement than the rest of
+  the design assumes from Phase 2.
+
+The reported confidence being pre-mask rather than post-renormalisation
+is the property that keeps `τ_phase3_confidence` invariant to |S|.
+
 ### Status
 
 **Solved**
@@ -1081,14 +1116,6 @@ implementation. For deferred items, the linked body section
 (*Post-implementation follow-up*, *Architecture changes to consider*)
 is the source of truth; the entry here serves as an index.
 
-
-- **Phase 3 output restriction to candidate set S.** Plan says "output
-  restricted to S" without specifying the mechanism. What is *not*
-  decided: argmax over masked softmax (zero out non-S logits before
-  argmax), renormalised softmax over S only (probabilities sum to 1
-  within S), or top-1-of-full-output-must-be-in-S-else-reject.
-  Borderline cases — e.g., true class slightly below an out-of-S
-  distractor — split differently across the three.
 
 - **Phase 3 confidence threshold.** Plan mentions "low confidence →
   discard" but no parameter name, value, or tuning method, even though
