@@ -440,7 +440,8 @@ adjustment.
   "gesture_templates": {
     "ok":         [9],
     "stop":       [10],
-    "point_left": [2]
+    "point_left": [2],
+    "thumbs_up":  [<modal_cluster_id>]
   },
   "parameters": {
     "t_hold": 0.54, "k_hold_frames": 3, "smooth_k": 3,
@@ -462,10 +463,12 @@ adjustment.
 `suspected_idle` is set by the idle-pose heuristic (gesture-entropy + tail-position + temporal-position) and is advisory only — it never changes `kind` without a human decision.
 
 Draft templates derived from the current corpus, after human review marks
-cluster 15 as idle: all four present gestures collapse to **length-1
-templates** (single `pose_id` per gesture). The multi-pose machinery is
-retained in the design for future genuinely multi-phase gestures but has no
-active users in today's corpus.
+cluster 15 as idle: all four present gestures use **length-1 templates**
+(single `pose_id` per gesture). For `ok`, `stop`, and `point_left` the
+modal cluster is unambiguous; for `thumbs_up` the template uses the single
+modal cluster (interim policy — see *Calibration observation*). The
+multi-pose machinery is retained in the design for future genuinely
+multi-phase gestures but has no active users in today's corpus.
 
 ### Calibration observation (151-film corpus, 2026-04-23)
 
@@ -499,6 +502,15 @@ primary gesture-end signal.
 `thumbs_up` remains fragmented across ~20 gesture-specific clusters at ε = 0.8
 because its training films were shot from different camera angles — the user
 plans to retake or retire this gesture; no further ε tuning needed.
+**Interim template policy (decided):** ship a length-1 modal-cluster template
+(`thumbs_up: [<modal_cluster_id>]`, where `<modal_cluster_id>` is the single
+cluster that the plurality of `thumbs_up` holds land in). The other ~19
+clusters remain in the pose vocabulary (the classifier can detect them) but
+are not matched by any template, so those holds are discarded by Phase 2's
+prefix matcher. This allows partial recognition before recapture while keeping
+the manifest well-formed. The retire-or-recapture decision itself waits for
+post-Phase-2 per-class commit-correct numbers (see *Architecture changes to
+consider*).
 
 ### Server-side changes
 
@@ -539,7 +551,7 @@ plans to retake or retire this gesture; no further ε tuning needed.
 - Second model download mirrors the existing handfilm model, with its manifest
   cached alongside.
 - `HandGestureRecognizing` runtime:
-  - Ring-buffer in-view frames while the motion gate is open.
+  - Hard-capped buffer (30 frames): accumulate in-view frames while the motion gate is open; stop accepting new frames once 30 have been stored (no ring — older frames are not dropped).
   - Monitor motion energy to detect holds.
   - On each hold, run Phase 2 on the hold's argmin frame.
   - Maintain `observed_sequence: [pose_id]` and `candidate_gestures: set`.
@@ -813,8 +825,12 @@ is the Phase 2 headline number.
   2. Time-warp augmentation in training (0.7×–1.4× resampling) to teach speed
      invariance.
   3. Motion-gated variable-length capture (Phase 1) — captures the gesture exactly
-     as it happens regardless of length, and naturally bounds it to ≤ 1 s by the
-     existing `temporalWindow`. Cleanest end-state.
+     as it happens regardless of length. The buffer is a **hard cap at 30 frames**:
+     once 30 in-view frames have been accumulated the gate stops accepting new frames
+     (no ring — older frames are not dropped). This bounds the buffer to ≤ 1 s at 30 fps
+     and matches the existing `temporalWindow`. Phase 3 therefore always sees at most
+     30 frames; gestures whose motion arc exceeds the cap are classified on the first
+     30 frames. Cleanest end-state.
 
   Recommendation: defer #1 and #2 until Phase 1 lands. If Phase 1's motion gate
   reliably catches every gesture's full motion arc, length sensitivity stops
@@ -1066,15 +1082,6 @@ implementation. For deferred items, the linked body section
 is the source of truth; the entry here serves as an index.
 
 
-- **Gate-open buffer overflow behaviour.** Plan says the variable-length
-  buffer is "naturally bounded to ≤ 1 s by the existing
-  `temporalWindow`" but doesn't say how. What is *not* decided:
-  whether the buffer is a 30-frame ring (keep the most recent 30
-  in-view frames, dropping older ones if the gate stays open longer),
-  a hard cap that stops accepting frames after 30, or a sliding window
-  re-anchored on detected hold boundaries. Affects what Phase 3 sees
-  for gestures whose motion arc exceeds the cap.
-
 - **Phase 3 output restriction to candidate set S.** Plan says "output
   restricted to S" without specifying the mechanism. What is *not*
   decided: argmax over masked softmax (zero out non-S logits before
@@ -1090,34 +1097,3 @@ is the source of truth; the entry here serves as an index.
   initial value, and whether tuning follows the same offline-curve
   plus on-device-log pattern used for the pose threshold.
 
-- **`thumbs_up` interim template policy.** `thumbs_up` fragments
-  across ~20 clusters at ε = 0.8 because of inconsistent capture
-  angles. The retire-or-recapture decision is deferred until
-  post-Phase-2 per-class numbers (see *Architecture changes to
-  consider*). What is *not* decided: what the manifest does for
-  `thumbs_up` in the meantime — ship a length-1 modal-cluster template
-  (matches only the modal cluster's holds, leaves the other ~19
-  unmatched), exclude `thumbs_up` from `gesture_templates` entirely
-  until recapture (no commits possible), or allow OR-of-clusters
-  templates (multiple cluster ids treated as the same logical pose).
-  Affects the headline commit-correct rate Phase 2 can report before
-  recapture.
-
-- **Phase 3 remaining gesture-to-gesture misclassification.**
-  Deferred to data. Re-evaluate after the post-PR-#34/#37 retrain
-  reaches the device; the Phase 3 confusion matrix in MetricsView is
-  the watch surface. Tracked in *Post-implementation follow-up*.
-
-- **Gesture set reassembly.** Deferred to data. At a vocabulary
-  milestone, review each gesture for utility, distinctiveness, and
-  training quality; retire underperformers (current candidate:
-  `thumbs_up`). Decision waits for post-Phase-2 per-class
-  commit-correct numbers. Tracked in *Architecture changes to
-  consider*.
-
-- **LSTM trainer trigger condition.** Deferred to data. Sketched as
-  "future gesture's modal template has length ≥ 2 *regular* poses
-  (not counting idle) AND single-frame MLP cannot achieve ≥ 0.95
-  per-pose recall on that gesture"; current corpus does not exercise
-  this condition, so the rule is not yet committed. Tracked in
-  *Architecture changes to consider*.
