@@ -1164,5 +1164,81 @@ deferred to data, device experience, or future implementation live in
 *Post-implementation follow-up* and *Architecture changes to consider*,
 not here.
 
-*(No items currently open.)*
+- **Runtime behaviour of `unconfirmed` clusters.** The plan currently
+  describes both behaviours and they conflict. Phase 2 §"Why key poses
+  rather than a single initial pose" → idle-pose handling says
+  "**Unconfirmed clusters are excluded from inference**: their hold
+  representatives are not used as training labels for the pose MLP,
+  they do not appear in any `gesture_templates` entry, and at runtime
+  a hold whose nearest cluster is `unconfirmed` is rejected (treated
+  like a sub-`τ_pose_confidence` hold)." The runtime-flow diagram and
+  the manifest schema instead say unconfirmed clusters are "treated as
+  `regular` for safety". Pick one — both choices are defensible (strict
+  excludes new gesture data until reviewed; permissive lets day-1
+  capture flow without an inspector pass), but the implementer needs
+  one rule, not two.
+
+- **Phase 1 motion-gate calibration ordering.** §"Threshold calibration
+  from the existing corpus" reads `cluster_kinds` from
+  `pose_corrections.json` to seed `T_close`/`K_close` from confirmed
+  idle-pose holds, with a coarse pre-heuristic fallback when that file
+  doesn't exist. *Implementation Order* puts Phase 1 (step 2) before
+  the inspector and Phase 2 (steps 3–4), so on day 1 the file does not
+  exist. Decide between (a) shipping Phase 1 with the pre-heuristic
+  thresholds and re-tuning after the first inspector pass, or (b)
+  blocking Phase 1's gate-implementation slice on at least one
+  end-to-end clustering + inspector pass so the seeds use confirmed
+  idle clusters from the start.
+
+- **`τ_phase3_confidence` initial value.** §Phase 3 → "Confidence
+  threshold" specifies the offline-sweep tuning method but no seed
+  number, while the parallel `τ_pose_confidence` ships with `0.6` as
+  an initial guess. Pick a seed (the offline sweep runs on the
+  validation fold during Phase 3 training, so the natural answer is
+  whatever the smallest τ with conditional accuracy ≥ 0.95 turns out
+  to be on the existing corpus — but the plan should record either a
+  concrete number or "set on first training run, no a-priori value").
+
+- **`evaluate_pose.py` simulation contract.** The §"End-to-end Phase 2
+  accuracy on the corpus" entry says the script runs "the full
+  pipeline that the inference path will run" — but does not say
+  whether it also simulates Phase 1's motion gate (gate-open / hold /
+  gate-close events derived from the film's energy trace) or treats
+  each labelled film as one gate-open from first to last in-view
+  frame. The two interpretations produce different headline
+  commit-correct numbers and the difference grows with the gate's
+  edge-trim behaviour. Decide which the headline number represents.
+
+- **Buffer hard-cap × late idle hold.** Phase 3's hard cap is 30
+  in-view frames after gate-open. Phase 2's calibration observation
+  reports hold #2 (the idle/release hold, the primary commit signal)
+  lands at median `position_fraction` ≈ 0.60 of the in-view duration.
+  On a slow capture that takes > 50 frames before the user relaxes,
+  the idle hold lands past frame 30 and is never observed, so Phase 2
+  never sees the idle commit signal. Decide what behaviour is correct:
+  (a) accept that gate-close becomes the only commit path on those
+  captures and verify via `evaluate_pose.py` that commit-correct stays
+  acceptable, (b) keep accumulating frames past the cap purely for
+  Phase 2 hold detection while still feeding Phase 3 only the first
+  30, or (c) raise the cap.
+
+- **Cluster-id migration: many-old → one-new.** §Re-clustering covers
+  the inverse direction (one old cluster splits into several new ones
+  → all inheritors take the old `kind`) and the lost-review case (old
+  cluster has no successor) but not this one: when several old
+  clusters fall within `d_inherit = ε` of a single new centroid, which
+  old `kind` does the new cluster inherit (closest centroid? majority
+  among those within ε? default to `unconfirmed` and surface for
+  review)? The empty middle of the rule table is what's undecided.
+
+- **`params_hash` scope for per-hold exclusion migration.**
+  §"Per-hold exclusion survival across parameter changes" hashes
+  `(T_hold, K_hold, smooth_k)` to detect when an exclusion's stored
+  ordinal can be applied directly. `edge_trim` also filters which
+  detected holds enter the labelled set (and therefore which ordinals
+  are valid), so a change to `edge_trim` silently invalidates
+  exclusions without triggering migration. Either expand the hash to
+  include `edge_trim`, or document why it's safe to leave out (e.g.
+  "`edge_trim` only applies in the trainer, not at detection time, and
+  exclusions are always re-keyed by `rep_frame` regardless").
 
