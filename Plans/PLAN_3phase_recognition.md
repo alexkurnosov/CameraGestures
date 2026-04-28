@@ -812,6 +812,15 @@ baseline once the full pipeline is live.
   - **Multiple new clusters → one old cluster**: all inheriting
     clusters take the old cluster's `kind`. A split cluster is still
     the same logical pose region; no limit on successor count.
+  - **Multiple old clusters → one new cluster** (merge): when several
+    old clusters all fall within `d_inherit = ε` of the same new
+    centroid, the new cluster defaults to `unconfirmed` regardless of
+    the `kind`s of the contributing old clusters. The inspector surfaces
+    it in the review queue naming all old cluster ids and their former
+    `kind`s. Rationale: the new centroid represents a genuinely different
+    pose region from any individual predecessor, so inheriting silently
+    would risk mis-labelling the merged pose as `idle` or `regular`
+    without confirmation.
 - **Idle-pose heuristic thresholds** (entropy, tail-position count, median
   position): current values are tuned to 4 gestures; revisit at 10+.
 - **Runtime edge case** (idle detected while `observed` is a live prefix
@@ -1233,13 +1242,3 @@ not here.
   acceptable, (b) keep accumulating frames past the cap purely for
   Phase 2 hold detection while still feeding Phase 3 only the first
   30, or (c) raise the cap.
-
-- **Cluster-id migration: many-old → one-new.** §Re-clustering covers
-  the inverse direction (one old cluster splits into several new ones
-  → all inheritors take the old `kind`) and the lost-review case (old
-  cluster has no successor) but not this one: when several old
-  clusters fall within `d_inherit = ε` of a single new centroid, which
-  old `kind` does the new cluster inherit (closest centroid? majority
-  among those within ε? default to `unconfirmed` and surface for
-  review)? The empty middle of the rule table is what's undecided.
-
