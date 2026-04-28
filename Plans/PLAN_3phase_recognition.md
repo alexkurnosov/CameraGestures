@@ -652,9 +652,14 @@ from training labels and templates).
 **Per-hold exclusion survival across parameter changes.** Each exclusion
 records, in addition to `(film_id, hold_ordinal)`, the hold's representative-
 frame index, its `[start_frame, end_frame]` range, and `params_hash` — a hash
-of the `(T_hold, K_hold, smooth_k)` triple that produced the detection. At
-trainer-build time, if the current detection parameters' hash matches
-`params_hash`, the exclusion is applied by ordinal directly (fast path).
+of `(T_hold, K_hold, smooth_k, edge_trim_fraction)` (canonical-JSON sha256)
+that produced the labelled hold sequence. `edge_trim` is included because
+the fast path applies exclusions by ordinal on hash match, and `edge_trim`
+filters which detected holds enter the labelled set — so changing it
+renumbers ordinals and would silently misapply stored exclusions if the
+hash didn't catch the change. At trainer-build time, if the current
+detection parameters' hash matches `params_hash`, the exclusion is applied
+by ordinal directly (fast path).
 Otherwise the trainer migrates each exclusion against the freshly detected
 hold set:
 - **Clean match** (exactly one new hold's `[start, end]` contains the stored
@@ -1237,15 +1242,4 @@ not here.
   old `kind` does the new cluster inherit (closest centroid? majority
   among those within ε? default to `unconfirmed` and surface for
   review)? The empty middle of the rule table is what's undecided.
-
-- **`params_hash` scope for per-hold exclusion migration.**
-  §"Per-hold exclusion survival across parameter changes" hashes
-  `(T_hold, K_hold, smooth_k)` to detect when an exclusion's stored
-  ordinal can be applied directly. `edge_trim` also filters which
-  detected holds enter the labelled set (and therefore which ordinals
-  are valid), so a change to `edge_trim` silently invalidates
-  exclusions without triggering migration. Either expand the hash to
-  include `edge_trim`, or document why it's safe to leave out (e.g.
-  "`edge_trim` only applies in the trainer, not at detection time, and
-  exclusions are always re-keyed by `rep_frame` regardless").
 
