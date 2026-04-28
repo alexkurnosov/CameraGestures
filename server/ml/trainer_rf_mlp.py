@@ -293,6 +293,8 @@ def train(
     from sklearn.model_selection import train_test_split
     from sklearn.utils.class_weight import compute_class_weight
 
+    tf.keras.utils.set_random_seed(42)
+
     if balance_strategy not in BALANCE_STRATEGIES:
         raise ValueError(
             f"Unknown balance_strategy {balance_strategy!r}; "
