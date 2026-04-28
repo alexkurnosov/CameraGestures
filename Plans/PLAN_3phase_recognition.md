@@ -698,8 +698,10 @@ Three layers of metrics; `server/analyze_motion.py` already covers the first.
 3. **End-to-end Phase 2 accuracy on the corpus** (the "#2 strategy" — Phase 1+2
    only — from the strategy comparison) — *new, not yet implemented.*
    Add `server/evaluate_pose.py` as the Phase-2 analog of `evaluate_trimmed.py`.
-   For each held-out film, run the full pipeline that the inference path will
-   run — hold detection (using the calibrated `T_hold`/`K_hold`/`smooth_k`),
+   Like `evaluate_trimmed.py`, it treats each labelled film as a single
+   gate-open from first to last in-view frame — no Phase 1 simulation.
+   For each held-out film, run hold detection (using the calibrated
+   `T_hold`/`K_hold`/`smooth_k`),
    pose classification on each hold's representative frame, idle-pose
    filtering via the manifest's `cluster_kinds`, prefix-match of the
    resulting `observed_sequence` against `gesture_templates` — and compare
@@ -730,12 +732,32 @@ Three layers of metrics; `server/analyze_motion.py` already covers the first.
    runtime edge case of "idle while `observed` is a live prefix" — the rate
    of that case on real films is observable here.
 
-**Both layer #2 (pose-MLP recognition accuracy) and layer #3 (end-to-end
-Phase 2 accuracy = "#2 strategy" headline number) MUST be exposed through the
-existing metrics surface alongside the Phase 3 numbers.** Concretely:
+4. **End-to-end 1+2+3 pipeline accuracy** — *new, not yet implemented
+   (depends on Phase 1 shipping).*
+   Add `server/evaluate_pipeline.py`. For each film, simulate Phase 1's
+   motion gate from the film's energy trace (gate-open / hold / gate-close
+   events using the calibrated `T_open`/`K_open`/`T_close`/`K_close`), then
+   run Phase 2 and Phase 3 on the resulting buffer. Report:
+   - gate-open rate and gate-miss rate (films where the gate never opens).
+   - commit-correct rate under the full **1+2+3 pipeline**.
+   - commit-correct rate under the **1+2 sub-pipeline** (Phase 3 bypassed;
+     Phase 2 commit taken as-is) — the true "#1+2 strategy" headline number.
+   - Phase 3 lift: improvement in commit-correct rate from adding Phase 3
+     on top of 1+2.
+   - Gate-trim impact: fraction of films where gate edge effects (late open,
+     early close) truncate the buffer relative to the `evaluate_pose.py`
+     full-film baseline, and the resulting accuracy delta.
 
-- `trainer_pose.py` writes them into the model-training result the same way
-  `trainer_rf_mlp.py` writes Phase 3 metrics today (see
+   Run after Phase 1 ships. The delta between `evaluate_pose.py` (no gate)
+   and `evaluate_pipeline.py` (with gate) quantifies what Phase 1's
+   edge-trim behaviour costs vs the ideal full-film case.
+
+**Layers #2 and #3 MUST be exposed through the existing metrics surface
+alongside the Phase 3 numbers.** Layer #4 is added once Phase 1 ships.
+Concretely:
+
+- `trainer_pose.py` writes layers #2 and #3 into the model-training result
+  the same way `trainer_rf_mlp.py` writes Phase 3 metrics today (see
   `_compute_extended_metrics` in `server/ml/trainer_rf_mlp.py`).
 - `/model/metrics` (or a sibling `/model/pose/metrics` keyed by the
   pose-model id) serves them with the same shape conventions used today —
@@ -744,9 +766,12 @@ existing metrics surface alongside the Phase 3 numbers.** Concretely:
   pose-MLP per-class breakdown, the headline end-to-end commit-correct rate,
   and the auxiliary rates (no-prefix, premature-idle) so a reviewer can spot
   regressions across retraining runs without opening the server.
+- Layer #4 results are served separately (e.g. `GET /model/pipeline/metrics`)
+  and shown in a dedicated MetricsView panel once Phase 1 is in production.
 
-Both layers are re-run on every retraining; layer #3's commit-correct rate
-is the Phase 2 headline number.
+Layers #2 and #3 are re-run on every retraining; layer #3's commit-correct
+rate is the Phase 2 headline number. Layer #4 is the end-to-end regression
+baseline once the full pipeline is live.
 
 ### Open questions
 
@@ -1029,6 +1054,7 @@ After PR #34 and #37 are in production:
 | `iOS/ModelTraining/.../Views/CameraView.swift` | recognising-mode switch (handfilm / holds); holds-mode overlay surfacing motion-gate state, detected holds, predicted `pose_id`/confidence, `observed_sequence`, matched template |
 | `iOS/ModelTraining/.../Views/MetricsView.swift` | new Phase 2 section: pose-MLP per-class precision/recall/F1, confusion matrix, end-to-end commit-correct rate (the "#2 strategy" headline), no-prefix and premature-idle rates, history across retraining runs; re-cluster-suggestion warning badge when any watch-list signal trips (out-of-ε rate > 10 %, per-class recall regression > 5 pp, on-device rejection-rate growth) |
 | `server/evaluate_pose.py` (new) | end-to-end Phase 2 corpus evaluation: hold detection → pose argmax → template match → committed gesture vs label; reports commit rate, commit-correct rate, premature-idle rate, length distribution at commit. Output is folded into the metrics payload served by `/model/metrics` (or a sibling `/model/pose/metrics`) so it appears in `MetricsView`. |
+| `server/evaluate_pipeline.py` (new) | end-to-end 1+2+3 pipeline evaluation: simulate Phase 1 gate from energy trace → Phase 2 → Phase 3; reports gate-open rate, 1+2 and 1+2+3 commit-correct rates, Phase 3 lift, gate-trim impact vs `evaluate_pose.py` baseline. Run after Phase 1 ships. |
 | `iOS/ModelTraining/.../ViewModels/` | hold + cluster data fetch (via `/analyze/holds`); read/write corrections |
 | `server/ml/trainer_pose.py` (new) | Phase 2 trainer: extract, cluster, apply corrections, train, export manifest |
 | `server/ml/preprocessor.js` | (unchanged — Phase 2 uses existing normalised coords) |
@@ -1109,6 +1135,22 @@ parameter to watch and the action to take if the metric drifts.
   successor), so reviewers can triage them without scanning the full
   cluster list.
 
+### End-to-end pipeline evaluation
+
+Once Phase 1 ships, run `server/evaluate_pipeline.py` to establish the
+full 1+2+3 regression baseline:
+
+- **1+2 vs 1+2+3 commit-correct gap.** If Phase 3 adds less than 2 pp
+  lift over the 1+2 sub-pipeline on the current corpus, the cost of
+  running Phase 3 at inference time buys little; note for future
+  cost/benefit review.
+- **Gate-trim impact.** Compare `evaluate_pipeline.py`'s commit-correct
+  rate against `evaluate_pose.py`'s (no-gate baseline). A gap > 5 pp
+  means Phase 1's edge behaviour is costing accuracy; revisit `T_open`,
+  `K_open`, or the gate's edge-trim handling.
+- Re-run `evaluate_pipeline.py` after every Phase 1 threshold change and
+  every model retrain so regressions are caught before device distribution.
+
 ### Phase 3 follow-up
 
 - **Problem B (length sensitivity)**. Phase 1's motion-gated
@@ -1173,16 +1215,6 @@ Items still open on paper — design questions not yet resolved. Items
 deferred to data, device experience, or future implementation live in
 *Post-implementation follow-up* and *Architecture changes to consider*,
 not here.
-
-- **`evaluate_pose.py` simulation contract.** The §"End-to-end Phase 2
-  accuracy on the corpus" entry says the script runs "the full
-  pipeline that the inference path will run" — but does not say
-  whether it also simulates Phase 1's motion gate (gate-open / hold /
-  gate-close events derived from the film's energy trace) or treats
-  each labelled film as one gate-open from first to last in-view
-  frame. The two interpretations produce different headline
-  commit-correct numbers and the difference grows with the gate's
-  edge-trim behaviour. Decide which the headline number represents.
 
 - **Buffer hard-cap × late idle hold.** Phase 3's hard cap is 30
   in-view frames after gate-open. Phase 2's calibration observation
