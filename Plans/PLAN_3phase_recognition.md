@@ -329,6 +329,23 @@ immediately. `T_commit` stays as a fallback for users who hold the gesture
 without releasing. Gate-close is the final fallback for cases where neither
 an idle pose nor another hold arrives.
 
+**Slow-capture interaction with the 30-frame hard cap.** Hold #2 (the
+idle/release hold) lands at median `position_fraction` ≈ 0.60 of the
+in-view duration (see *Calibration observation* below). On any capture
+whose total in-view duration exceeds **50 frames** (~1.7 s at 30 fps),
+the idle hold lands past frame 30 and is therefore never observed by
+Phase 2 — the buffer stops accumulating at the cap. **Decision: accept
+this.** Gate-close becomes the sole commit path on slow captures; the
+faster commit signals (idle pose, `T_commit`) remain primary on
+normal-speed captures. Validation requirement: `evaluate_pose.py` must
+confirm that commit-correct on the slow-capture subset stays within
+the acceptance band when the only available commit signal is
+gate-close. Alternatives considered and rejected: (b) accumulating
+frames past the cap purely for hold detection while feeding Phase 3
+only the first 30 — adds a second buffer length to reason about for
+marginal benefit; (c) raising the cap — would push Phase 3 into the
+length regime where it has not been validated.
+
 **Minimum-buffer gate.** Every commit path is conditional on the buffer having
 accumulated at least `T_min_buffer` (200 ms ≈ 6 frames) since gate-open. If a
 commit signal fires before that, the commit is deferred until `T_min_buffer`
@@ -380,6 +397,45 @@ Empirically chosen from the 151-film corpus (`ok`, `stop`, `point_left`,
 Calibration uses non-zero energy percentiles because MediaPipe re-emits the
 previous detection unchanged ~35 % of the time, which would pin any
 percentile-based threshold to zero.
+
+### Frame-rate handling
+
+**Decision: wall-clock time is the canonical unit; frame counts are derived
+at runtime from per-frame timestamps.**
+
+The infrastructure already exists on device: every `HandShot` carries a
+`timestamp: TimeInterval` (`HandGestureTypes/Types.swift:30`), and
+`HandFilm.inViewDuration` already accumulates the real wall-clock in-view
+time from consecutive non-absent frame timestamps
+(`HandGestureTypes/Types.swift:75–84`). No new data collection is needed.
+
+Gate parameters that are currently frame-count expressions must be converted
+at runtime using actual inter-frame intervals:
+
+| Parameter | Frame expression | Canonical time | How to implement |
+|---|---|---|---|
+| `K_hold` | 3 frames | **100 ms** | count consecutive-below-threshold run duration from timestamps |
+| `smooth_k` | 3 frames | **100 ms** | smoothing window expressed as max-age rather than count |
+| 30-frame buffer cap | 30 frames | **1.0 s** | compare `HandFilm.inViewDuration` against 1.0 s instead of counting frames |
+| `T_hold`, `K_close`, `T_min_buffer`, `T_commit` | already in ms/s | — | no change |
+
+**Existing fps metric.** `HandGestureRecognizing.updateStatistics()` computes
+`fps = recentHandshots.count / uptime` (`HandGestureRecognizing.swift:386`).
+This is a rough rolling-window estimate: `recentHandshots` is bounded by
+`gestureBufferSize` (30), so it divides the count of the last ≤ 30 frames by
+the full session uptime — yielding a number that degrades as the session
+grows. It is not per-capture and is not persisted. **There is no existing
+per-capture fps data or variance measurement.** The actual delivery rate and
+how much it drifts from the 30 fps target are unknown.
+
+**Server-side implication.** `evaluate_trimmed.py` (line 387) and
+`analyze_motion.py` (line 1266) both synthesise timestamps as `idx / 30.0`.
+The training corpus has therefore been analysed under an exact 30 fps
+assumption regardless of what the device actually delivered. Once the
+runtime shifts to real timestamps, both scripts must be updated to use the
+stored `HandShot.timestamp` values rather than synthesising them. Until that
+update, calibration numbers (hold positions, `position_fraction`, energy
+percentiles) implicitly assume 30 fps.
 
 ### Classifier
 
@@ -1215,6 +1271,28 @@ increasing complexity.
   angles, fragmenting its pose cluster across ~20 ids at ε = 0.8, and
   its Phase 3 accuracy at trim=30 already shows variance. No action
   until post-Phase-2 per-class numbers exist.
+- **Landmark coord resampling to fixed 30 Hz** *(frame-rate option 2)*.
+  After adopting wall-clock time as the canonical unit (see §Frame-rate
+  handling), resample the 21×3 normalised landmark coords onto a strict
+  30 Hz grid by linear interpolation between the two flanking samples on
+  their real timestamps. Apply *after* wrist-relative normalisation so
+  the lerp operates on scale-invariant coords. Benefit: Phase 3 MLP
+  always sees data at the density it was trained on, regardless of
+  device capture rate. Prerequisite: `evaluate_trimmed.py` and
+  `analyze_motion.py` must already use real stored timestamps (i.e.,
+  §Frame-rate handling is fully implemented on the server side first).
+  Consider when device telemetry shows meaningful per-capture fps
+  variance.
+- **Time-aware feature extraction** *(frame-rate option 3)*. Replace the
+  fixed-cadence summary features with timestamp-conditioned equivalents:
+  velocity features use `Δcoord / Δt` instead of `Δcoord / 1`; arc-
+  length statistics accumulate `|Δcoord|` weighted by real `Δt`. For a
+  Phase 3 model upgrade, a 1D-conv or small Transformer with positional
+  encoding on real timestamps removes the fixed-stride assumption
+  entirely. Requires retraining and eval-harness changes. Warranted only
+  if cross-device deployment spans devices with substantially different
+  achievable frame rates (e.g., under 20 fps) and option 2 proves
+  insufficient.
 
 ### Open implementation-shape questions
 
@@ -1230,15 +1308,3 @@ deferred to data, device experience, or future implementation live in
 *Post-implementation follow-up* and *Architecture changes to consider*,
 not here.
 
-- **Buffer hard-cap × late idle hold.** Phase 3's hard cap is 30
-  in-view frames after gate-open. Phase 2's calibration observation
-  reports hold #2 (the idle/release hold, the primary commit signal)
-  lands at median `position_fraction` ≈ 0.60 of the in-view duration.
-  On a slow capture that takes > 50 frames before the user relaxes,
-  the idle hold lands past frame 30 and is never observed, so Phase 2
-  never sees the idle commit signal. Decide what behaviour is correct:
-  (a) accept that gate-close becomes the only commit path on those
-  captures and verify via `evaluate_pose.py` that commit-correct stays
-  acceptable, (b) keep accumulating frames past the cap purely for
-  Phase 2 hold detection while still feeding Phase 3 only the first
-  30, or (c) raise the cap.
