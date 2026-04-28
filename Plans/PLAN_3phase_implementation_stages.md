@@ -21,6 +21,11 @@ Cross-reference convention: design-plan section/line numbers appear as
   substage's auto + manual tests pass.
 - Stages are listed in dependency order. Stages with no dependency arrow can be
   parallelised against the previous stage.
+- **Metrics snapshots**: on completing each stage, save any CLI evaluation output
+  to `Metrics/3phase/stage<N>_<description>.txt` (e.g.
+  `Metrics/3phase/stage0_trim_eval.txt`). These are plain-text reference
+  artifacts — not code — used to compare baselines across stages as the corpus
+  and pipeline evolve.
 
 ---
 
