@@ -33,6 +33,12 @@ import numpy as np
 import py_mini_racer
 from sklearn.cluster import AgglomerativeClustering
 
+from ml.pose_corrections import (
+    PoseCorrections,
+    idle_clusters_for_calibration,
+    load_corrections,
+)
+
 
 # ---------------------------------------------------------------------------
 # JS preprocessor + helper for in-view normalised coords per frame.
@@ -583,12 +589,16 @@ def gate_calibration(
     onset_window: int = 6,
     shared_min_gestures: int = 3,
     shared_min_fraction: float = 0.05,
+    corrections: PoseCorrections | None = None,
 ) -> dict:
     """Compute Phase 1 gate-calibration statistics.
 
     Uses `epsilon` to re-run clustering on `X` so idle-candidate identification
     is consistent with the rest of the report. Returns a dict of distributions
     and suggested seed values for T_open, K_open, T_close, K_close.
+
+    If `corrections` is supplied and contains confirmed idle cluster ids, those
+    are used directly instead of the coarse pre-heuristic fallback.
     """
     out: dict[str, Any] = {
         "onset_window_frames": onset_window,
@@ -634,10 +644,14 @@ def gate_calibration(
 
     labels = cluster_hold_reps(X, epsilon)
     composition = cluster_composition(rows, labels, rep_to_film)
-    shared = idle_candidate_cluster_ids(
-        composition,
-        min_gestures=shared_min_gestures,
-        min_fraction=shared_min_fraction,
+    _corrections = corrections if corrections is not None else PoseCorrections({}, [])
+    shared = sorted(
+        idle_clusters_for_calibration(
+            _corrections,
+            composition,
+            min_gestures=shared_min_gestures,
+            min_fraction=shared_min_fraction,
+        )
     )
     out["idle_candidate_cluster_ids"] = shared
 
@@ -771,6 +785,7 @@ def print_report(
     sweep_results: list[dict],
     report_json: dict,
     film_energies: list[dict],
+    corrections: PoseCorrections | None = None,
 ) -> None:
     print("=" * 72)
     print("Key-pose calibration report")
@@ -1075,6 +1090,7 @@ def print_report(
             X=X,
             rep_to_film=rep_to_film,
             epsilon=ref_eps,
+            corrections=corrections,
         )
         print()
         print("-" * 72)
@@ -1345,6 +1361,18 @@ def generate_synthetic_examples() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def run(examples: list[dict], args: argparse.Namespace) -> dict:
+    corrections_path = getattr(args, "corrections", None)
+    corrections: PoseCorrections | None = None
+    if corrections_path:
+        corrections = load_corrections(corrections_path)
+        n_kinds = len(corrections.cluster_kinds)
+        print(
+            f"Loaded corrections from {corrections_path} "
+            f"({n_kinds} cluster_kinds, "
+            f"{len(corrections.excluded_holds)} excluded holds)",
+            file=sys.stderr,
+        )
+
     ctx = _build_js_context()
 
     # Pass 1: compute per-film energy once. Every T_hold in the sweep reuses it.
@@ -1437,8 +1465,51 @@ def run(examples: list[dict], args: argparse.Namespace) -> dict:
         sweep_results=sweep_results,
         report_json=report_json,
         film_energies=film_energies,
+        corrections=corrections,
     )
+
+    calibrate_out = getattr(args, "calibrate", None)
+    if calibrate_out:
+        _write_calibration_report(report_json, calibrate_out, params)
+
     return report_json
+
+
+def _write_calibration_report(
+    report_json: dict,
+    out_path: str,
+    params: dict,
+) -> None:
+    """Write a compact calibration JSON with just the four Phase 1 gate seeds."""
+    gate = report_json.get("gate_calibration") or {}
+    calibration = {
+        "T_open": gate.get("t_open_seed"),
+        "K_open": gate.get("k_open_seed"),
+        "T_close": gate.get("t_close_seed"),
+        "K_close": gate.get("k_close_seed"),
+        "idle_candidate_cluster_ids": gate.get("idle_candidate_cluster_ids", []),
+        "duration_separation_clean": gate.get("duration_separation_clean"),
+        "onset_window_frames": gate.get("onset_window_frames"),
+        "epsilon_used": gate.get("epsilon_used"),
+        "params_used": {
+            "t_hold": params.get("t_hold"),
+            "k_hold": params.get("k_hold"),
+            "smooth_k": params.get("smooth_k"),
+            "edge_trim_fraction": params.get("edge_trim_fraction"),
+        },
+    }
+    Path(out_path).write_text(json.dumps(calibration, indent=2))
+    print(f"Wrote calibration report to {out_path}", file=sys.stderr)
+
+    # Surface seeds on stdout for quick human review.
+    print()
+    print("=" * 50)
+    print("Phase 1 gate calibration seeds")
+    print("=" * 50)
+    for key in ("T_open", "K_open", "T_close", "K_close"):
+        val = calibration[key]
+        unit = " frames" if key.startswith("K_") else ""
+        print(f"  {key:8s} = {val if val is not None else '(no data)'}{unit}")
 
 
 def main() -> None:
@@ -1472,6 +1543,21 @@ def main() -> None:
     parser.add_argument(
         "--epsilon-grid", type=str, default=None,
         help="Comma-separated ε values for a clustering sweep. Overrides --epsilon.",
+    )
+    parser.add_argument(
+        "--calibrate", type=str, default=None, metavar="OUT_JSON",
+        help=(
+            "Write a compact calibration JSON with the four Phase 1 gate seeds "
+            "(T_open, K_open, T_close, K_close) to OUT_JSON after the full report."
+        ),
+    )
+    parser.add_argument(
+        "--corrections", type=str, default=None, metavar="PATH",
+        help=(
+            "Path to pose_corrections.json. When supplied, confirmed idle cluster "
+            "ids from the file override the coarse pre-heuristic for T_close "
+            "calibration."
+        ),
     )
     args = parser.parse_args()
 
