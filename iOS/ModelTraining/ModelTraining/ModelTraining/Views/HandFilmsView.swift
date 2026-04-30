@@ -4,8 +4,10 @@ import HandGestureTypes
 struct HandFilmsView: View {
     @EnvironmentObject var trainingDataManager: TrainingDataManager
     @EnvironmentObject var gestureRegistry: GestureRegistry
+    @EnvironmentObject var apiClient: GestureModelAPIClient
 
     @StateObject private var playbackManager = FilmPlaybackManager()
+    @StateObject private var holdVM = HoldInspectorViewModel()
 
     @State private var showingRelabelSheet = false
     @State private var showingDeleteAlert = false
@@ -39,6 +41,7 @@ struct HandFilmsView: View {
                     skeletonSection
                     Divider()
                     bottomPanel
+                    holdInspectorSection
                 }
 
                 failedFilmsSection
@@ -54,7 +57,17 @@ struct HandFilmsView: View {
         .onAppear {
             playbackManager.configure(dataManager: trainingDataManager)
         }
-        .onDisappear { playbackManager.stopPlayback() }
+        .onDisappear {
+            playbackManager.stopPlayback()
+            holdVM.clear()
+        }
+        .task(id: playbackManager.currentExample?.id) {
+            guard let film = playbackManager.currentFilm else {
+                holdVM.clear()
+                return
+            }
+            await holdVM.fetch(film: film, using: apiClient)
+        }
         .sheet(isPresented: $showingRelabelSheet) {
             RelabelSheet(
                 currentGestureId: playbackManager.currentExample?.gestureId ?? "",
@@ -124,10 +137,51 @@ struct HandFilmsView: View {
             .padding(.horizontal)
             .padding(.top, 8)
 
+            if !holdVM.holds.isEmpty {
+                GeometryReader { geo in
+                    holdTimelineView(in: geo.size.width)
+                }
+                .frame(height: 20)
+                .padding(.horizontal)
+            }
+
             playerControls
                 .padding(.horizontal)
                 .padding(.bottom, 8)
         }
+    }
+
+    private func holdTimelineView(in width: CGFloat) -> some View {
+        let n = CGFloat(max(playbackManager.frameCount - 1, 1))
+        return ZStack(alignment: .leading) {
+            Capsule()
+                .fill(Color.gray.opacity(0.2))
+                .frame(height: 6)
+
+            ForEach(holdVM.holds) { hold in
+                let x = width * CGFloat(hold.startFrame) / n
+                let endX = width * CGFloat(hold.endFrame) / n
+                Capsule()
+                    .fill((hold.isEdge ? Color.orange : Color.blue).opacity(0.65))
+                    .frame(width: max(endX - x, 4), height: 6)
+                    .offset(x: x)
+            }
+
+            ForEach(holdVM.holds) { hold in
+                let cx = width * CGFloat(hold.repFrame) / n
+                Circle()
+                    .fill(hold.isEdge ? Color.orange : Color.blue)
+                    .frame(width: 10, height: 10)
+                    .offset(x: cx - 5)
+            }
+
+            let px = min(width * CGFloat(playbackManager.currentFrameIndex) / n, width - 2)
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.white.opacity(0.9))
+                .frame(width: 2, height: 16)
+                .offset(x: px)
+        }
+        .frame(height: 20)
     }
 
     private var playerControls: some View {
@@ -272,6 +326,100 @@ struct HandFilmsView: View {
         .cornerRadius(8)
     }
 
+    // MARK: - Hold Inspector (Stage 2)
+
+    private var holdInspectorSection: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            HStack(spacing: 6) {
+                Text("Holds")
+                    .font(.subheadline.weight(.semibold))
+                if holdVM.isLoading {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Text(holdVM.holds.isEmpty ? "None detected" : "(\(holdVM.holds.count))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                if let err = holdVM.error {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            if !holdVM.holds.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(holdVM.holds) { hold in
+                            holdThumbnail(hold: hold)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
+                }
+            }
+        }
+    }
+
+    private func holdThumbnail(hold: HoldInfo) -> some View {
+        VStack(spacing: 4) {
+            ZStack {
+                Color.black.opacity(0.75)
+                if let film = playbackManager.currentFilm, hold.repFrame < film.frames.count {
+                    HandSkeletonView(points: film.frames[hold.repFrame].landmarks)
+                }
+                if hold.isEdge {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Text("edge")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.85))
+                                .cornerRadius(4)
+                                .padding(3)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+            .frame(width: 80, height: 80)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(hold.isEdge ? Color.orange.opacity(0.6) : Color.blue.opacity(0.5), lineWidth: 1.5)
+            )
+
+            Text("#\(hold.ordinal)")
+                .font(.caption.weight(.medium))
+            Text("f\(hold.repFrame)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            Button("Exclude") {
+                let payload: [String: Any] = [
+                    "hold_ordinal": hold.ordinal,
+                    "params_hash": holdVM.paramsHash,
+                    "example_id": playbackManager.currentExample?.id.uuidString ?? "",
+                ]
+                print("[HoldInspector] Exclude stub — PUT /pose/corrections payload: \(payload)")
+            }
+            .font(.caption2)
+            .foregroundColor(.red)
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.mini)
+        }
+    }
+
     // MARK: - Filter Menu
 
     private var filterMenu: some View {
@@ -395,6 +543,37 @@ struct HandFilmsView: View {
         if diff < 3600 { return "\(Int(diff / 60))m ago" }
         if diff < 86400 { return "\(Int(diff / 3600))h ago" }
         return "\(Int(diff / 86400))d ago"
+    }
+}
+
+// MARK: - Hold Inspector View Model
+
+@MainActor
+private final class HoldInspectorViewModel: ObservableObject {
+    @Published var holds: [HoldInfo] = []
+    @Published var paramsHash: String = ""
+    @Published var isLoading: Bool = false
+    @Published var error: String? = nil
+
+    func fetch(film: HandFilm, using client: GestureModelAPIClient) async {
+        isLoading = true
+        error = nil
+        holds = []
+        do {
+            let response = try await client.analyzeHolds(film: film)
+            holds = response.holds
+            paramsHash = response.paramsHash
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func clear() {
+        holds = []
+        paramsHash = ""
+        error = nil
+        isLoading = false
     }
 }
 

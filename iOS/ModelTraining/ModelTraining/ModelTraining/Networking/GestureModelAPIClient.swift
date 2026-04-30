@@ -276,6 +276,38 @@ struct ExampleListResponse: Codable {
     let total: Int
 }
 
+// MARK: - Stage 2: /analyze/holds
+
+struct HoldInfo: Codable, Identifiable {
+    let ordinal: Int
+    let startFrame: Int
+    let endFrame: Int
+    let repFrame: Int
+    let isEdge: Bool
+    let positionFraction: Double
+
+    var id: Int { ordinal }
+
+    enum CodingKeys: String, CodingKey {
+        case ordinal
+        case startFrame = "start_frame"
+        case endFrame = "end_frame"
+        case repFrame = "rep_frame"
+        case isEdge = "is_edge"
+        case positionFraction = "position_fraction"
+    }
+}
+
+struct AnalyzeHoldsResponse: Codable {
+    let holds: [HoldInfo]
+    let paramsHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case holds
+        case paramsHash = "params_hash"
+    }
+}
+
 // MARK: - Upload State
 
 enum UploadState: Equatable {
@@ -641,6 +673,23 @@ class GestureModelAPIClient: ObservableObject {
         let _: UpdateServerResponse = try await perform(request, decoding: UpdateServerResponse.self)
     }
 
+    // MARK: - Analyze Holds (Stage 2)
+
+    func analyzeHolds(film: HandFilm) async throws -> AnalyzeHoldsResponse {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("POST", path: "/analyze/holds")
+            return AnalyzeHoldsResponse(holds: [], paramsHash: "sha256:mock")
+        }
+
+        let payload = HandFilmAnalyzePayload(from: film)
+        var request = URLRequest(url: baseURL.appendingPathComponent("analyze/holds"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(payload)
+
+        return try await perform(request, decoding: AnalyzeHoldsResponse.self)
+    }
+
     // MARK: - Server Version
 
     /// GET /version — unauthenticated. Updates `serverVersion` on success,
@@ -852,5 +901,48 @@ private struct Point3DPayload: Encodable {
 
     init(from point: Point3D) {
         x = point.x; y = point.y; z = point.z
+    }
+}
+
+// Analyze-only payload — includes is_absent so the JS preprocessor can filter absent frames.
+private struct HandFilmAnalyzePayload: Encodable {
+    let frames: [HandShotAnalyzePayload]
+    let startTime: TimeInterval
+
+    enum CodingKeys: String, CodingKey {
+        case frames
+        case startTime = "start_time"
+    }
+
+    init(from film: HandFilm) {
+        frames = film.frames.map { HandShotAnalyzePayload(from: $0) }
+        startTime = film.startTime
+    }
+}
+
+private struct HandShotAnalyzePayload: Encodable {
+    let landmarks: [Point3DPayload]
+    let timestamp: TimeInterval
+    let leftOrRight: String
+    let isAbsent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case landmarks
+        case timestamp
+        case leftOrRight = "left_or_right"
+        case isAbsent = "is_absent"
+    }
+
+    init(from shot: HandShot) {
+        landmarks = shot.landmarks.map { Point3DPayload(from: $0) }
+        timestamp = shot.timestamp
+        leftOrRight = {
+            switch shot.leftOrRight {
+            case .left: return "left"
+            case .right: return "right"
+            case .unknown: return "unknown"
+            }
+        }()
+        isAbsent = shot.isAbsent
     }
 }

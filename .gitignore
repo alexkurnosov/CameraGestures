@@ -116,6 +116,7 @@ logs/
 
 # Claude Code local data (worktrees, settings, memory)
 .claude/
+CLAUDE.md
 
 # Temporary files
 *.swp
