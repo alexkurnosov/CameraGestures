@@ -12,23 +12,77 @@ public struct HandGestureRecognizingConfig {
     public let enableRealTimeProcessing: Bool
     public let gestureBufferSize: Int
     public let confidenceThreshold: Float
-    
+    /// When non-nil, `gateEnabled` on the recognizer activates Phase 1 motion gate.
+    public let motionGateConfig: MotionGateConfig?
+
     public init(
         handsRecognizingConfig: HandsRecognizingConfig = .defaultConfig,
         gestureModelConfig: GestureModelConfig = .defaultConfig,
         enableRealTimeProcessing: Bool = true,
         gestureBufferSize: Int = 30,
-        confidenceThreshold: Float = 0.7
+        confidenceThreshold: Float = 0.7,
+        motionGateConfig: MotionGateConfig? = nil
     ) {
         self.handsRecognizingConfig = handsRecognizingConfig
         self.gestureModelConfig = gestureModelConfig
         self.enableRealTimeProcessing = enableRealTimeProcessing
         self.gestureBufferSize = gestureBufferSize
         self.confidenceThreshold = confidenceThreshold
+        self.motionGateConfig = motionGateConfig
     }
-    
+
     public static let defaultConfig = HandGestureRecognizingConfig()
 }
+
+// MARK: - Motion Gate
+
+/// Parameters for the Phase 1 hysteresis motion gate.
+/// Seeded from the 166-film corpus calibration (2026-04-30).
+public struct MotionGateConfig {
+    /// Energy threshold to open the gate (sum of per-landmark L2 deltas in wrist-relative, scale-normalised coords).
+    public let tOpen: Float
+    /// Gate opens after energy exceeds tOpen for this many milliseconds (≈1 frame at 30 fps).
+    public let kOpenMs: TimeInterval
+    /// Energy threshold to close the gate (fallback; absent-hand is the primary close path).
+    public let tClose: Float
+    /// Gate closes after energy stays below tClose for this many milliseconds (≈30 frames at 30 fps).
+    public let kCloseMs: TimeInterval
+    /// Duration of post-cycle cooldown in milliseconds. Emission is suppressed; most-recent commit queued.
+    public let cooldownMs: TimeInterval
+
+    public init(
+        tOpen: Float = 0.08585,
+        kOpenMs: TimeInterval = 33,
+        tClose: Float = 0.01,
+        kCloseMs: TimeInterval = 1000,
+        cooldownMs: TimeInterval = 1000
+    ) {
+        self.tOpen = tOpen
+        self.kOpenMs = kOpenMs
+        self.tClose = tClose
+        self.kCloseMs = kCloseMs
+        self.cooldownMs = cooldownMs
+    }
+
+    public static let defaultConfig = MotionGateConfig()
+}
+
+/// Current state of the Phase 1 motion gate.
+public enum MotionGateState: Equatable {
+    case closed
+    case open
+
+    public var displayName: String {
+        switch self {
+        case .closed: return "Closed"
+        case .open:   return "Open"
+        }
+    }
+}
+
+/// Callback fired on the main thread whenever the gate state or gate-buffer count changes.
+/// Arguments: (state, bufferFrameCount)
+public typealias MotionGateUpdateCallback = (MotionGateState, Int) -> Void
 
 // MARK: - Gesture Detection Events
 

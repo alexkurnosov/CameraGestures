@@ -6,28 +6,48 @@ import GestureModelModule
 
 /// Production-ready gesture recognition module that orchestrates hand tracking and gesture classification
 public class HandGestureRecognizing {
-    
+
     // MARK: - Properties
-    
+
     private var config: HandGestureRecognizingConfig
     private var handsRecognizer: HandsRecognizing
     private var gestureModel: GestureModel
-    
+
     private var isInitialized = false
     private var isRunning = false
     private var startTime: TimeInterval = 0
-    
+
     // Statistics tracking
     private var stats = GestureRecognizingStats()
     private var detectedGestures: [DetectedGesture] = []
     private var processingTimes: [TimeInterval] = []
     private var confidenceScores: [Float] = []
-    
-    // Gesture buffering for real-time processing
+
+    // Rolling buffer used for legacy real-time recognition and FPS stats.
     private var recentHandshots: [HandShot] = []
     private let handshotQueue = DispatchQueue(label: "com.cameragestures.handshot", qos: .userInteractive)
-    
-    // Callbacks
+
+    // MARK: - Motion Gate (Phase 1)
+    // All gate state is accessed only on handshotQueue.
+
+    /// Set to `true` to route incoming frames through the Phase 1 motion gate instead of
+    /// continuous per-frame recognition. Requires `config.motionGateConfig` to be non-nil.
+    public var gateEnabled: Bool = false
+
+    /// Fired on the main thread whenever the gate state or buffer count changes.
+    public var motionGateUpdateCallback: MotionGateUpdateCallback?
+
+    private var motionGate: MotionGate? = nil
+
+    // MARK: - Cooldown state (main thread only)
+
+    private var cooldownEndTime: TimeInterval? = nil
+    private var cooldownDuration: TimeInterval = 1.0
+    private var pendingGesture: DetectedGesture? = nil
+    private var cooldownGenerationCount: Int = 0
+
+    // MARK: - Callbacks
+
     public var gestureDetectionCallback: GestureDetectionCallback?
     public var handTrackingUpdateCallback: HandTrackingUpdateCallback?
     public var statusChangeCallback: StatusChangeCallback?
@@ -37,7 +57,7 @@ public class HandGestureRecognizing {
 
     /// Called whenever a completed handfilm is produced.
     public var handfilmCallback: HandFilmCallback?
-    
+
     private var currentStatus: GestureRecognizingStatus = .idle {
         didSet {
             DispatchQueue.main.async { [weak self] in
@@ -45,160 +65,133 @@ public class HandGestureRecognizing {
             }
         }
     }
-    
+
     // MARK: - Initialization
-    
+
     public init() {
         self.config = .defaultConfig
         self.handsRecognizer = HandsRecognizing()
         self.gestureModel = GestureModel()
     }
-    
+
     public init(config: HandGestureRecognizingConfig) {
         self.config = config
         self.handsRecognizer = HandsRecognizing()
         self.gestureModel = GestureModel(config: config.gestureModelConfig)
     }
-    
+
     // MARK: - Configuration
-    
+
     /// Initialize the gesture recognition system
     public func initialize(config: HandGestureRecognizingConfig? = nil) async throws {
         guard !isInitialized else { return }
-        
+
         currentStatus = .initializing
-        
+
         if let newConfig = config {
             self.config = newConfig
         }
-        
+
         do {
-            // Initialize hands recognizing
             try handsRecognizer.initialize(config: self.config.handsRecognizingConfig)
-            
-            // Set up hands recognizing callbacks
             setupHandsRecognizingCallbacks()
-            
-            // Initialize gesture model
             try gestureModel.initialize(config: self.config.gestureModelConfig)
-            
+            if let gateConfig = self.config.motionGateConfig {
+                motionGate = MotionGate(config: gateConfig, bufferCap: self.config.gestureBufferSize)
+            }
             isInitialized = true
             currentStatus = .idle
-            
         } catch {
             currentStatus = .error(error.localizedDescription)
             throw HandGestureRecognizingError.configurationError(error.localizedDescription)
         }
     }
-    
+
     // MARK: - Lifecycle
-    
+
     /// Start gesture recognition
     public func start() async throws {
         guard isInitialized else {
             throw HandGestureRecognizingError.notInitialized
         }
-        
         guard !isRunning else {
             throw HandGestureRecognizingError.alreadyRunning
         }
-        
-        // Check camera permission
+
         let hasPermission = await HandsRecognizing.requestCameraPermission()
         guard hasPermission else {
             throw HandGestureRecognizingError.cameraPermissionDenied
         }
-        
+
         do {
             currentStatus = .initializing
-            
-            // Start hands recognizing
             try handsRecognizer.start()
-            
             isRunning = true
             startTime = Date().timeIntervalSince1970
             resetStats()
-            
             currentStatus = .running
-            
         } catch {
             currentStatus = .error(error.localizedDescription)
             throw HandGestureRecognizingError.handsRecognizingError(error)
         }
     }
-    
+
     /// Stop gesture recognition
     public func stop() {
         guard isRunning else { return }
-        
         currentStatus = .stopping
-        
         handsRecognizer.stop()
-        
         isRunning = false
         currentStatus = .idle
     }
-    
+
     /// Pause gesture recognition
     public func pause() {
         guard isRunning else { return }
-        
         handsRecognizer.stop()
         currentStatus = .paused
     }
-    
+
     /// Resume gesture recognition from paused state
     public func resume() async throws {
         guard currentStatus == .paused else { return }
-        
         try handsRecognizer.start()
         currentStatus = .running
     }
-    
-    
+
     // MARK: - Status and Statistics
-    
-    /// Get current system status
-    public func getStatus() -> GestureRecognizingStatus {
-        return currentStatus
-    }
-    
-    /// Get current statistics
+
+    public func getStatus() -> GestureRecognizingStatus { currentStatus }
+
     public func getStatistics() -> GestureRecognizingStats {
         updateStatistics()
         return stats
     }
-    
-    /// Get recent detected gestures
+
     public func getRecentGestures(limit: Int = 10) -> [DetectedGesture] {
-        return Array(detectedGestures.suffix(limit))
+        Array(detectedGestures.suffix(limit))
     }
-    
-    /// Clear gesture history
+
     public func clearHistory() {
         detectedGestures.removeAll()
         processingTimes.removeAll()
         confidenceScores.removeAll()
         resetStats()
     }
-    
+
     // MARK: - Configuration Updates
-    
+
     /// Discard the in-progress handfilm buffer and start fresh.
-    /// Call this just before each recording window to prevent frames accumulated
-    /// during countdown/pause phases from contaminating the captured film.
     public func resetHandfilm() {
         handsRecognizer.resetHandfilm()
     }
 
     /// Return the accumulated handfilm and reset the buffer atomically.
-    /// Call this at the end of a capture window to get exactly what was recorded.
     public func harvestHandfilm() -> HandFilm {
         handsRecognizer.harvestHandfilm()
     }
 
     /// Load (or reload) the gesture model from a file path without restarting the recognizer.
-    /// Call this after downloading a new model from the server.
     public func loadModel(from path: String, gestureIds: [String] = []) throws {
         try gestureModel.loadModel(from: path)
         if !gestureIds.isEmpty {
@@ -209,182 +202,245 @@ public class HandGestureRecognizing {
     /// Update configuration while running
     public func updateConfig(_ newConfig: HandGestureRecognizingConfig) throws {
         let wasRunning = isRunning
-        
-        if wasRunning {
-            stop()
-        }
-        
+        if wasRunning { stop() }
         self.config = newConfig
-        
-        // Re-initialize with new config
         try handsRecognizer.initialize(config: newConfig.handsRecognizingConfig)
         try gestureModel.initialize(config: newConfig.gestureModelConfig)
-        
         if wasRunning {
-            Task {
-                try await start()
-            }
+            Task { try await start() }
         }
     }
-    
-    /// Get current configuration
-    public func getConfig() -> HandGestureRecognizingConfig {
-        return config
+
+    public func getConfig() -> HandGestureRecognizingConfig { config }
+
+    /// Reset all gate state. Safe to call from any thread.
+    public func resetGateState() {
+        handshotQueue.async { [weak self] in
+            guard let self else { return }
+            self.motionGate?.reset()
+            self.reportGateUpdate()
+        }
     }
-    
-    // MARK: - Private Methods
-    
+
+    // MARK: - Private Setup
+
     private func setupHandsRecognizingCallbacks() {
-        // Handle individual handshots
         handsRecognizer.handshotCallback = { [weak self] handshot in
             self?.handleHandshot(handshot)
             self?.handshotCallback?(handshot)
         }
-        
-        // Handle completed handfilms
         handsRecognizer.handfilmCallback = { [weak self] handfilm in
             self?.handleHandfilm(handfilm)
             self?.handfilmCallback?(handfilm)
         }
     }
-    
+
+    // MARK: - Per-Frame Routing
+
     private func handleHandshot(_ handshot: HandShot) {
         handshotQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
 
-            let processStart = Date().timeIntervalSince1970
-            //let lag = processStart - handshot.timestamp
-            //print(String(format: "<<--frame_timing-->> currentTime=%.4f  frameTime=%.4f  lag=%.4f s", processStart, handshot.timestamp, lag))
-
-            // Add to recent handshots buffer
+            // FPS-tracking buffer (always maintained)
             self.recentHandshots.append(handshot)
-            
-            // Maintain buffer size
             if self.recentHandshots.count > self.config.gestureBufferSize {
                 self.recentHandshots.removeFirst()
             }
-            
-            // Notify callback
+
             DispatchQueue.main.async {
                 self.handTrackingUpdateCallback?(handshot)
             }
-            
-            // Perform real-time gesture recognition if enabled
-            if self.config.enableRealTimeProcessing && self.recentHandshots.count >= 3 {
+
+            if self.gateEnabled, let gate = self.motionGate, let gateConfig = self.config.motionGateConfig {
+                self.handleHandshotWithGate(handshot, gate: gate, gateConfig: gateConfig)
+            } else if self.config.enableRealTimeProcessing && self.recentHandshots.count >= 3 {
                 self.performRealTimeGestureRecognition()
             }
-
-            //let processingDuration = Date().timeIntervalSince1970 - processStart
-            //print(String(format: "<<--frame_timing-->> processingDuration=%.4f s", processingDuration))
         }
     }
-    
+
     private func handleHandfilm(_ handfilm: HandFilm) {
+        // In gate mode recognition fires from triggerCycleEnd, not from the handfilm stream.
+        guard !gateEnabled else { return }
         Task { [weak self] in
             await self?.performGestureRecognition(on: handfilm)
         }
     }
-    
+
+    // MARK: - Gate Logic (called on handshotQueue; delegates to MotionGate)
+
+    private func handleHandshotWithGate(_ handshot: HandShot, gate: MotionGate, gateConfig: MotionGateConfig) {
+        let event = gate.process(handshot)
+        switch event {
+        case .stillClosed, .stillOpen, .opened:
+            break
+        case .cycleEnded(let buffer):
+            handleCycleEnd(buffer: buffer, gateConfig: gateConfig)
+        }
+        reportGateUpdate(state: gate.state, count: gate.bufferCount)
+    }
+
+    private func handleCycleEnd(buffer: [HandShot], gateConfig: MotionGateConfig) {
+        let cooldownSec = gateConfig.cooldownMs / 1000.0
+        Task { @MainActor [weak self] in
+            self?.startCooldown(duration: cooldownSec)
+        }
+        guard !buffer.isEmpty, gestureModel.isLoaded else { return }
+        let film = makeHandFilm(from: buffer)
+        Task { [weak self] in
+            await self?.recognizeAndEmitGated(film)
+        }
+    }
+
+    private func reportGateUpdate(state: MotionGateState, count: Int) {
+        DispatchQueue.main.async { [weak self] in
+            self?.motionGateUpdateCallback?(state, count)
+        }
+    }
+
+    private func reportGateUpdate() {
+        let state = motionGate?.state ?? .closed
+        let count = motionGate?.bufferCount ?? 0
+        reportGateUpdate(state: state, count: count)
+    }
+
+    private func makeHandFilm(from shots: [HandShot]) -> HandFilm {
+        guard let first = shots.first else { return HandFilm() }
+        var film = HandFilm(startTime: first.timestamp)
+        for shot in shots { film.addFrame(shot) }
+        return film
+    }
+
+    // MARK: - Gated Recognition
+
+    private func recognizeAndEmitGated(_ film: HandFilm) async {
+        let t0 = Date().timeIntervalSince1970
+        do {
+            let predictions = try await gestureModel.predictTopK(handfilm: film, k: 3)
+            for prediction in predictions where prediction.confidence >= config.confidenceThreshold {
+                let detected = DetectedGesture(
+                    prediction: prediction,
+                    handfilm: film,
+                    handedness: film.frames.first?.leftOrRight ?? .unknown,
+                    detectionTimestamp: Date().timeIntervalSince1970,
+                    processingLatency: Date().timeIntervalSince1970 - t0
+                )
+                await MainActor.run { [weak self] in
+                    self?.emitOrQueueGated(detected)
+                }
+                break
+            }
+        } catch {
+            print("Gate recognition error: \(error)")
+        }
+    }
+
+    // MARK: - Cooldown (MainActor-isolated)
+
+    @MainActor
+    private func startCooldown(duration: TimeInterval) {
+        cooldownGenerationCount += 1
+        let gen = cooldownGenerationCount
+        cooldownEndTime = Date().timeIntervalSince1970 + duration
+        cooldownDuration = duration
+        pendingGesture = nil
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            self?.cooldownExpired(generation: gen)
+        }
+    }
+
+    @MainActor
+    private func cooldownExpired(generation: Int) {
+        guard generation == cooldownGenerationCount else { return }
+        cooldownEndTime = nil
+        guard let gesture = pendingGesture else { return }
+        pendingGesture = nil
+        processDetectedGesture(gesture)
+        // Fresh cooldown starts from this emission.
+        startCooldown(duration: cooldownDuration)
+    }
+
+    @MainActor
+    private func emitOrQueueGated(_ gesture: DetectedGesture) {
+        let now = Date().timeIntervalSince1970
+        if let endTime = cooldownEndTime, now < endTime {
+            pendingGesture = gesture  // most-recent wins
+        } else {
+            processDetectedGesture(gesture)
+        }
+    }
+
+    // MARK: - Legacy Real-Time Recognition
+
     private func performRealTimeGestureRecognition() {
         guard gestureModel.isLoaded else { return }
-        
         Task { [weak self] in
-            guard let self = self else { return }
-            
+            guard let self else { return }
             do {
                 let predictions = try await self.gestureModel.predictStreaming(handshots: self.recentHandshots)
-                
-                // Process predictions above threshold
-                for prediction in predictions {
-                    if prediction.confidence >= self.config.confidenceThreshold {
-                        let detectedGesture = DetectedGesture(
-                            prediction: prediction,
-                            handfilm: HandFilm(), // Empty for real-time
-                            handedness: self.recentHandshots.last?.leftOrRight ?? .unknown,
-                            detectionTimestamp: Date().timeIntervalSince1970,
-                            processingLatency: 0.0 // Would be calculated in real implementation
-                        )
-                        
-                        await self.processDetectedGesture(detectedGesture)
-                    }
+                for prediction in predictions where prediction.confidence >= self.config.confidenceThreshold {
+                    let detected = DetectedGesture(
+                        prediction: prediction,
+                        handfilm: HandFilm(),
+                        handedness: self.recentHandshots.last?.leftOrRight ?? .unknown,
+                        detectionTimestamp: Date().timeIntervalSince1970,
+                        processingLatency: 0.0
+                    )
+                    await self.processDetectedGesture(detected)
                 }
-                
             } catch {
-                // Handle error silently for real-time processing
                 print("Real-time gesture recognition error: \(error)")
             }
         }
     }
-    
+
     private func performGestureRecognition(on handfilm: HandFilm) async {
-        let startTime = Date().timeIntervalSince1970
-        
+        let t0 = Date().timeIntervalSince1970
         do {
-            // Get gesture predictions
             print("<<--prediction-->>prediction start")
             let predictions = try await gestureModel.predictTopK(handfilm: handfilm, k: 3)
-            
             print("<<--prediction-->>predictions: \(predictions)")
-            
-            // Process each prediction above threshold
-            for prediction in predictions {
-                if prediction.confidence >= config.confidenceThreshold {
-                    let processingLatency = Date().timeIntervalSince1970 - startTime
-                    
-                    let detectedGesture = DetectedGesture(
-                        prediction: prediction,
-                        handfilm: handfilm,
-                        handedness: handfilm.frames.first?.leftOrRight ?? .unknown,
-                        detectionTimestamp: Date().timeIntervalSince1970,
-                        processingLatency: processingLatency
-                    )
-                    
-                    await processDetectedGesture(detectedGesture)
-                    break // Only process the highest confidence gesture
-                }
+            for prediction in predictions where prediction.confidence >= config.confidenceThreshold {
+                let detected = DetectedGesture(
+                    prediction: prediction,
+                    handfilm: handfilm,
+                    handedness: handfilm.frames.first?.leftOrRight ?? .unknown,
+                    detectionTimestamp: Date().timeIntervalSince1970,
+                    processingLatency: Date().timeIntervalSince1970 - t0
+                )
+                await processDetectedGesture(detected)
+                break
             }
-            
         } catch {
             print("Gesture recognition error: \(error)")
         }
     }
-    
+
     @MainActor
     private func processDetectedGesture(_ gesture: DetectedGesture) {
-        // Add to history
         detectedGestures.append(gesture)
-        
-        // Track statistics
         processingTimes.append(gesture.processingLatency)
         confidenceScores.append(gesture.prediction.confidence)
-        
-        // Maintain history size
         if detectedGestures.count > 1000 {
             detectedGestures.removeFirst(detectedGestures.count - 1000)
         }
-        
-        // Notify callback
         gestureDetectionCallback?(gesture)
     }
-    
+
     private func updateStatistics() {
         let currentTime = Date().timeIntervalSince1970
         let uptime = isRunning ? currentTime - startTime : 0
-        
-        let avgLatency = processingTimes.isEmpty ? 0 : 
+        let avgLatency = processingTimes.isEmpty ? 0 :
             processingTimes.reduce(0, +) / Double(processingTimes.count)
-        
         let avgConfidence = confidenceScores.isEmpty ? 0 :
             confidenceScores.reduce(0, +) / Float(confidenceScores.count)
-        
         var gesturesByType: [String: Int] = [:]
         for gesture in detectedGestures {
             let key = gesture.prediction.gestureName
             gesturesByType[key] = (gesturesByType[key] ?? 0) + 1
         }
-        
         let fps: Float = uptime > 0 ? Float(recentHandshots.count) / Float(uptime) : 0
-        
         stats = GestureRecognizingStats(
             totalGesturesDetected: detectedGestures.count,
             averageProcessingLatency: avgLatency,
@@ -394,7 +450,7 @@ public class HandGestureRecognizing {
             fps: fps
         )
     }
-    
+
     private func resetStats() {
         stats = GestureRecognizingStats()
         detectedGestures.removeAll()
@@ -407,20 +463,12 @@ public class HandGestureRecognizing {
 // MARK: - Convenience Extensions
 
 extension HandGestureRecognizing {
-    
-    /// Quick start with default configuration
+
     public func quickStart() async throws {
         try await initialize()
         try await start()
     }
-    
-    /// Check if system is ready for processing
-    public var isReady: Bool {
-        return isInitialized && gestureModel.isLoaded
-    }
-    
-    /// Check if system is actively running
-    public var isActive: Bool {
-        return isRunning && currentStatus.isActive
-    }
+
+    public var isReady: Bool { isInitialized && gestureModel.isLoaded }
+    public var isActive: Bool { isRunning && currentStatus.isActive }
 }

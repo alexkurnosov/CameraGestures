@@ -54,6 +54,11 @@ struct CameraView: View {
                     .cornerRadius(12)
 
                     capturePhaseOverlay
+
+                    // Gate indicator — visible in Holds mode during active recognition
+                    if viewModel.isRecognitionActive && viewModel.recognizingMode == .holds {
+                        holdsGateOverlay
+                    }
                 }
                 .frame(maxHeight: 400)
                 .padding(.horizontal)
@@ -207,6 +212,34 @@ struct CameraView: View {
         }
     }
 
+    // MARK: - Holds Mode Gate Indicator
+
+    private var holdsGateOverlay: some View {
+        VStack(alignment: .leading) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(gestureRecognizer.motionGateState == .open ? Color.green : Color.orange)
+                    .frame(width: 10, height: 10)
+                Text("Gate: \(gestureRecognizer.motionGateState.displayName)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.white)
+                Text("·")
+                    .foregroundColor(.white.opacity(0.6))
+                Text("Buffer: \(gestureRecognizer.gateBufferCount)/30")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.65))
+            .cornerRadius(20)
+            .padding(.leading, 10)
+            .padding(.top, 10)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Controls Section
 
     private var controlsSection: some View {
@@ -243,7 +276,8 @@ struct CameraView: View {
                 stopButton
 
             } else {
-                // Idle: timing config + both start buttons
+                // Idle: mode picker + timing config + start buttons
+                modePicker
                 timingConfig
 
                 HStack(spacing: 12) {
@@ -290,6 +324,15 @@ struct CameraView: View {
                 }
             }
         }
+    }
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $viewModel.recognizingMode) {
+            ForEach(RecognizingMode.allCases, id: \.self) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     private var timingConfig: some View {

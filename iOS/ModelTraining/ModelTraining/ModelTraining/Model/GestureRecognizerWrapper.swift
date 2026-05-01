@@ -17,6 +17,10 @@ class GestureRecognizerWrapper: ObservableObject {
     @Published var confidence: Float = 0.0
     @Published var lastError: String?
 
+    // Phase 1 gate state (updated via motionGateUpdateCallback)
+    @Published var motionGateState: MotionGateState = .closed
+    @Published var gateBufferCount: Int = 0
+
     init(recognizer: HandGestureRecognizing) {
         self.recognizer = recognizer
     }
@@ -33,6 +37,12 @@ class GestureRecognizerWrapper: ObservableObject {
         recognizer.statusChangeCallback = { [weak self] status in
             DispatchQueue.main.async { self?.statusChanged.send(status) }
         }
+        recognizer.motionGateUpdateCallback = { [weak self] state, count in
+            DispatchQueue.main.async {
+                self?.motionGateState = state
+                self?.gateBufferCount = count
+            }
+        }
     }
 
     /// Build a config and initialize the underlying recognizer.
@@ -44,7 +54,8 @@ class GestureRecognizerWrapper: ObservableObject {
             gestureModelConfig: appSettings.modelConfig,
             enableRealTimeProcessing: true,
             gestureBufferSize: 30,
-            confidenceThreshold: appSettings.confidenceThreshold
+            confidenceThreshold: appSettings.confidenceThreshold,
+            motionGateConfig: .defaultConfig
         )
         try await recognizer.initialize(config: config)
     }

@@ -10,11 +10,11 @@ import Foundation
 // MARK: - Core Data Types
 
 /// 3D point coordinates
-public struct Point3D {
+public struct Point3D: Equatable {
     public let x: Float
     public let y: Float
     public let z: Float
-    
+
     public init(x: Float, y: Float, z: Float) {
         self.x = x
         self.y = y
@@ -25,7 +25,7 @@ public struct Point3D {
 /// Single frame of hand landmarks.
 /// When `isAbsent` is `true` the hand was not detected in this frame;
 /// `landmarks` will be 21 zero-valued points used as a placeholder.
-public struct HandShot {
+public struct HandShot: Equatable {
     public let landmarks: [Point3D]
     public let timestamp: TimeInterval
     public let leftOrRight: LeftOrRight
@@ -104,7 +104,7 @@ public struct HandFilm {
 }
 
 /// Hand identification (left or right)
-public enum LeftOrRight {
+public enum LeftOrRight: Equatable {
     case left
     case right
     case unknown
