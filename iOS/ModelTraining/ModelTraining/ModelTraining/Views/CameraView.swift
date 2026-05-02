@@ -225,7 +225,7 @@ struct CameraView: View {
                     .foregroundColor(.white)
                 Text("·")
                     .foregroundColor(.white.opacity(0.6))
-                Text("Buffer: \(gestureRecognizer.gateBufferCount)/30")
+                Text("Buffer: \(gestureRecognizer.gateBufferCount)/\(gestureRecognizer.gateBufferCap)")
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.85))
             }

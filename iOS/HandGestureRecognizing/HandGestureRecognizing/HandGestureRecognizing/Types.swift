@@ -37,7 +37,8 @@ public struct HandGestureRecognizingConfig {
 // MARK: - Motion Gate
 
 /// Parameters for the Phase 1 hysteresis motion gate.
-/// Seeded from the 166-film corpus calibration (2026-04-30).
+/// tOpen/tClose are empirically tuned starting values (2026-05-02); replace with corpus-calibrated
+/// seeds once idle-capture films are available for Stage 1 re-calibration.
 public struct MotionGateConfig {
     /// Energy threshold to open the gate (sum of per-landmark L2 deltas in wrist-relative, scale-normalised coords).
     public let tOpen: Float
@@ -51,10 +52,10 @@ public struct MotionGateConfig {
     public let cooldownMs: TimeInterval
 
     public init(
-        tOpen: Float = 0.08585,
+        tOpen: Float = 1,
         kOpenMs: TimeInterval = 33,
-        tClose: Float = 0.01,
-        kCloseMs: TimeInterval = 1000,
+        tClose: Float = 0.5,
+        kCloseMs: TimeInterval = 200,
         cooldownMs: TimeInterval = 1000
     ) {
         self.tOpen = tOpen

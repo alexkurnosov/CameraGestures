@@ -20,6 +20,7 @@ class GestureRecognizerWrapper: ObservableObject {
     // Phase 1 gate state (updated via motionGateUpdateCallback)
     @Published var motionGateState: MotionGateState = .closed
     @Published var gateBufferCount: Int = 0
+    var gateBufferCap: Int { recognizer.getConfig().gestureBufferSize }
 
     init(recognizer: HandGestureRecognizing) {
         self.recognizer = recognizer

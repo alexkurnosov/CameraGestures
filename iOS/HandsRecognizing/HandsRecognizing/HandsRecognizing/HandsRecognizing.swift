@@ -240,6 +240,7 @@ public class HandsRecognizing: NSObject {
     /// Insert a placeholder frame for a timestamp where no hand was detected.
     private func processAbsentFrame(timestamp: TimeInterval) {
         let absent = HandShot.absent(timestamp: timestamp)
+        handshotCallback?(absent)
         currentHandfilm.addFrame(absent)
     }
 
