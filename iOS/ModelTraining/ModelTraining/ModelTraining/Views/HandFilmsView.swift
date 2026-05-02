@@ -63,11 +63,12 @@ struct HandFilmsView: View {
             holdVM.clear()
         }
         .task(id: playbackManager.currentExample?.id) {
-            guard let film = playbackManager.currentFilm else {
+            guard let film = playbackManager.currentFilm,
+                  let filmId = playbackManager.currentExample?.id.uuidString else {
                 holdVM.clear()
                 return
             }
-            await holdVM.fetch(film: film, using: apiClient)
+            await holdVM.fetch(film: film, filmId: filmId, using: apiClient)
         }
         .sheet(isPresented: $showingRelabelSheet) {
             RelabelSheet(
@@ -405,19 +406,20 @@ struct HandFilmsView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
-            Button("Exclude") {
-                let payload: [String: Any] = [
-                    "hold_ordinal": hold.ordinal,
-                    "params_hash": holdVM.paramsHash,
-                    "example_id": playbackManager.currentExample?.id.uuidString ?? "",
-                ]
-                print("[HoldInspector] Exclude stub — PUT /pose/corrections payload: \(payload)")
+            let isExcluded = holdVM.excludedOrdinals.contains(hold.ordinal)
+            Button(isExcluded ? "Excluded" : "Exclude") {
+                guard !isExcluded,
+                      let filmId = playbackManager.currentExample?.id.uuidString else { return }
+                Task {
+                    await holdVM.excludeHold(hold, filmId: filmId, using: apiClient)
+                }
             }
             .font(.caption2)
-            .foregroundColor(.red)
+            .foregroundColor(isExcluded ? .secondary : .red)
             .buttonStyle(.bordered)
-            .tint(.red)
+            .tint(isExcluded ? .gray : .red)
             .controlSize(.mini)
+            .disabled(isExcluded || holdVM.isSaving)
         }
     }
 
@@ -554,20 +556,66 @@ private final class HoldInspectorViewModel: ObservableObject {
     @Published var holds: [HoldInfo] = []
     @Published var paramsHash: String = ""
     @Published var isLoading: Bool = false
+    @Published var isSaving: Bool = false
     @Published var error: String? = nil
+    @Published var excludedOrdinals: Set<Int> = []
 
-    func fetch(film: HandFilm, using client: GestureModelAPIClient) async {
+    private var cachedExcludedHolds: [ExcludedHoldEntry] = []
+    private var cachedClusterKinds: [String: String] = [:]
+    private var currentFilmId: String? = nil
+
+    func fetch(film: HandFilm, filmId: String, using client: GestureModelAPIClient) async {
         isLoading = true
         error = nil
         holds = []
+        excludedOrdinals = []
+        currentFilmId = filmId
         do {
-            let response = try await client.analyzeHolds(film: film)
-            holds = response.holds
-            paramsHash = response.paramsHash
+            async let holdsTask = client.analyzeHolds(film: film)
+            async let correctionsTask = client.fetchPoseCorrections()
+            let (holdsResponse, corrections) = try await (holdsTask, correctionsTask)
+
+            holds = holdsResponse.holds
+            paramsHash = holdsResponse.paramsHash
+            cachedExcludedHolds = corrections.excludedHolds
+            cachedClusterKinds = corrections.clusterKinds
+
+            // Mark ordinals already excluded for this film + params
+            excludedOrdinals = Set(
+                corrections.excludedHolds
+                    .filter { $0.filmId == filmId && $0.paramsHash == holdsResponse.paramsHash }
+                    .map { $0.holdOrdinal }
+            )
         } catch {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func excludeHold(_ hold: HoldInfo, filmId: String, using client: GestureModelAPIClient) async {
+        isSaving = true
+        let entry = ExcludedHoldEntry(
+            filmId: filmId,
+            holdOrdinal: hold.ordinal,
+            repFrame: hold.repFrame,
+            startFrame: hold.startFrame,
+            endFrame: hold.endFrame,
+            paramsHash: paramsHash
+        )
+        let newExclusions = cachedExcludedHolds + [entry]
+        let body = PoseCorrectionsRequest(
+            clusterKinds: cachedClusterKinds,
+            excludedHolds: newExclusions
+        )
+        do {
+            let updated = try await client.putPoseCorrections(body)
+            cachedExcludedHolds = updated.excludedHolds
+            cachedClusterKinds = updated.clusterKinds
+            excludedOrdinals.insert(hold.ordinal)
+        } catch {
+            self.error = "Exclude failed: \(error.localizedDescription)"
+        }
+        isSaving = false
     }
 
     func clear() {
@@ -575,6 +623,11 @@ private final class HoldInspectorViewModel: ObservableObject {
         paramsHash = ""
         error = nil
         isLoading = false
+        isSaving = false
+        excludedOrdinals = []
+        cachedExcludedHolds = []
+        cachedClusterKinds = [:]
+        currentFilmId = nil
     }
 }
 

@@ -276,6 +276,141 @@ struct ExampleListResponse: Codable {
     let total: Int
 }
 
+// MARK: - Stage 4: Pose model status
+
+struct PoseReclusterSignals: Codable {
+    let outOfEpsilonFraction: Double?
+    let suggestRecluster: Bool
+    let signalMessages: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case outOfEpsilonFraction = "out_of_epsilon_fraction"
+        case suggestRecluster = "suggest_recluster"
+        case signalMessages = "signal_messages"
+    }
+}
+
+struct PoseTrainingStatusResponse: Codable {
+    let status: String
+    let trainedOn: Int
+    let nClusters: Int
+    let trainedAt: TimeInterval?
+    let error: String?
+    let reclusterSignals: PoseReclusterSignals?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case trainedOn = "trained_on"
+        case nClusters = "n_clusters"
+        case trainedAt = "trained_at"
+        case error
+        case reclusterSignals = "recluster_signals"
+    }
+}
+
+// MARK: - Stage 5: Pose manifest, corrections, cluster holds
+
+struct PoseClusterInfo: Codable {
+    let label: String
+    let kind: String          // "idle" | "regular" | "unconfirmed"
+    let suspectedIdle: Bool
+    let nSamples: Int
+    let centroid: [Double]    // 63 floats
+
+    enum CodingKeys: String, CodingKey {
+        case label, kind
+        case suspectedIdle = "suspected_idle"
+        case nSamples = "n_samples"
+        case centroid
+    }
+}
+
+struct PoseManifestResponse: Codable {
+    let version: Int
+    let poseClusters: [String: PoseClusterInfo]
+    let idlePoses: [Int]
+    let gestureTemplates: [String: [Int]]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case poseClusters = "pose_clusters"
+        case idlePoses = "idle_poses"
+        case gestureTemplates = "gesture_templates"
+    }
+}
+
+struct ExcludedHoldEntry: Codable {
+    let filmId: String
+    let holdOrdinal: Int
+    let repFrame: Int
+    let startFrame: Int
+    let endFrame: Int
+    let paramsHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case filmId = "film_id"
+        case holdOrdinal = "hold_ordinal"
+        case repFrame = "rep_frame"
+        case startFrame = "start_frame"
+        case endFrame = "end_frame"
+        case paramsHash = "params_hash"
+    }
+}
+
+struct PoseCorrectionsResponse: Codable {
+    let clusterKinds: [String: String]
+    let excludedHolds: [ExcludedHoldEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case clusterKinds = "cluster_kinds"
+        case excludedHolds = "excluded_holds"
+    }
+}
+
+struct PoseCorrectionsRequest: Encodable {
+    let clusterKinds: [String: String]
+    let excludedHolds: [ExcludedHoldEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case clusterKinds = "cluster_kinds"
+        case excludedHolds = "excluded_holds"
+    }
+}
+
+struct ClusterHoldEntry: Codable, Identifiable {
+    let filmId: String
+    let gestureId: String
+    let clusterId: Int
+    let ordinal: Int
+    let isEdge: Bool
+    let positionFraction: Double
+    let distanceFromCentroid: Double
+    let coords: [Double]     // 63 floats — wrist-relative normalised coords
+
+    var id: String { "\(filmId)_\(ordinal)" }
+
+    enum CodingKeys: String, CodingKey {
+        case filmId = "film_id"
+        case gestureId = "gesture_id"
+        case clusterId = "cluster_id"
+        case ordinal
+        case isEdge = "is_edge"
+        case positionFraction = "position_fraction"
+        case distanceFromCentroid = "distance_from_centroid"
+        case coords
+    }
+}
+
+struct ClusterHoldsResponse: Codable {
+    let holds: [ClusterHoldEntry]
+    let paramsHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case holds
+        case paramsHash = "params_hash"
+    }
+}
+
 // MARK: - Stage 2: /analyze/holds
 
 struct HoldInfo: Codable, Identifiable {
@@ -671,6 +806,36 @@ class GestureModelAPIClient: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("admin/update"))
         request.httpMethod = "POST"
         let _: UpdateServerResponse = try await perform(request, decoding: UpdateServerResponse.self)
+    }
+
+    // MARK: - Pose Model (Stage 4 / Stage 5)
+
+    func fetchPoseTrainingStatus() async throws -> PoseTrainingStatusResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/status"))
+        return try await perform(request, decoding: PoseTrainingStatusResponse.self)
+    }
+
+    func fetchPoseManifest() async throws -> PoseManifestResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/manifest"))
+        return try await perform(request, decoding: PoseManifestResponse.self)
+    }
+
+    func fetchPoseCorrections() async throws -> PoseCorrectionsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("pose/corrections"))
+        return try await perform(request, decoding: PoseCorrectionsResponse.self)
+    }
+
+    func putPoseCorrections(_ body: PoseCorrectionsRequest) async throws -> PoseCorrectionsResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("pose/corrections"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(body)
+        return try await perform(request, decoding: PoseCorrectionsResponse.self)
+    }
+
+    func fetchClusterHolds() async throws -> ClusterHoldsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/cluster-holds"))
+        return try await perform(request, decoding: ClusterHoldsResponse.self)
     }
 
     // MARK: - Analyze Holds (Stage 2)

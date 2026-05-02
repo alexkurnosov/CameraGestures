@@ -11,6 +11,7 @@ struct MetricsView: View {
     @State private var selectedModelId: String?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var reclusterSignals: PoseReclusterSignals? = nil
 
     var body: some View {
         NavigationView {
@@ -31,6 +32,17 @@ struct MetricsView: View {
             .navigationTitle("Model Metrics")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if let signals = reclusterSignals, signals.suggestRecluster {
+                        NavigationLink(destination: PoseInspectorView()
+                            .environmentObject(apiClient)
+                        ) {
+                            Label("Re-cluster suggested", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         Task { await refresh() }
@@ -72,6 +84,7 @@ struct MetricsView: View {
     private func metricsList(_ m: ModelMetricsResponse) -> some View {
         List {
             modelPickerSection
+            reclusterSection
             overviewSection(m)
             perClassSection(m)
             falseAlarmSection(m)
@@ -106,6 +119,39 @@ struct MetricsView: View {
                 Text("Version")
             } footer: {
                 Text("Switch to a previous training run to compare metrics.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var reclusterSection: some View {
+        if let signals = reclusterSignals, signals.suggestRecluster {
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Re-cluster suggested")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.orange)
+                        ForEach(signals.signalMessages, id: \.self) { msg in
+                            Text(msg)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+
+                NavigationLink("Open Pose Inspector") {
+                    PoseInspectorView()
+                        .environmentObject(apiClient)
+                }
+                .font(.subheadline)
+            } header: {
+                Text("Pose model warning")
+            } footer: {
+                Text("One or more re-cluster signals tripped. Review the cluster inspector and run POST /train/pose to rebuild.")
             }
         }
     }
@@ -329,8 +375,12 @@ struct MetricsView: View {
         isLoading = true
         errorMessage = nil
         do {
-            let list = try await apiClient.fetchMetricsList()
+            async let listTask = apiClient.fetchMetricsList()
+            async let poseStatusTask = apiClient.fetchPoseTrainingStatus()
+
+            let (list, poseStatus) = try await (listTask, poseStatusTask)
             history = list.models
+            reclusterSignals = poseStatus.reclusterSignals
 
             let id = selectedModelId ?? list.models.first?.modelId
             if let id = id {

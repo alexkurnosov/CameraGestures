@@ -54,6 +54,11 @@ struct TrainingView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 4) {
+                        NavigationLink(destination: PoseInspectorView()
+                            .environmentObject(apiClient)
+                        ) {
+                            Image(systemName: "square.grid.2x2")
+                        }
                         NavigationLink(destination: HandFilmsView()
                             .environmentObject(trainingDataManager)
                             .environmentObject(gestureRegistry)
