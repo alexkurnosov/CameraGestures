@@ -34,9 +34,10 @@ struct MetricsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if let signals = reclusterSignals, signals.suggestRecluster {
-                        NavigationLink(destination: PoseInspectorView()
-                            .environmentObject(apiClient)
-                        ) {
+                        NavigationLink {
+                            PoseInspectorView()
+                                .environmentObject(apiClient)
+                        } label: {
                             Label("Re-cluster suggested", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
                                 .font(.caption.weight(.semibold))
