@@ -12,6 +12,7 @@ struct PoseInspectorView: View {
     @EnvironmentObject var apiClient: GestureModelAPIClient
 
     @StateObject private var vm = PoseInspectorViewModel()
+    @State private var selectedHold: HoldViewModel?
 
     var body: some View {
         Group {
@@ -42,6 +43,9 @@ struct PoseInspectorView: View {
         }
         .task {
             await vm.load(using: apiClient)
+        }
+        .sheet(item: $selectedHold) { hold in
+            HoldDetailSheet(hold: hold)
         }
         .overlay {
             if vm.isSaving {
@@ -188,7 +192,10 @@ struct PoseInspectorView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(cluster.holds) { hold in
-                        holdThumbnail(hold: hold)
+                        Button { selectedHold = hold } label: {
+                            holdThumbnail(hold: hold)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.vertical, 6)
@@ -200,7 +207,7 @@ struct PoseInspectorView: View {
         VStack(spacing: 4) {
             ZStack {
                 Color.black.opacity(0.80)
-                HandSkeletonView(points: hold.landmarks)
+                HoldSkeletonView(points: hold.landmarks)
             }
             .frame(width: 72, height: 72)
             .cornerRadius(8)
@@ -237,6 +244,54 @@ struct PoseInspectorView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Hold detail sheet
+
+private struct HoldDetailSheet: View {
+    let hold: HoldViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                ZStack {
+                    Color.black.opacity(0.85)
+                    HoldSkeletonView(points: hold.landmarks)
+                }
+                .aspectRatio(1, contentMode: .fit)
+                .cornerRadius(16)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(hold.isEdge ? Color.orange.opacity(0.7) : Color.blue.opacity(0.5), lineWidth: 2)
+                )
+                .padding(.horizontal, 32)
+
+                VStack(spacing: 8) {
+                    LabeledContent("Gesture", value: hold.gestureId)
+                    LabeledContent("Hold ID", value: hold.id)
+                    LabeledContent("Distance from centroid", value: String(format: "%.4f", hold.distanceFromCentroid))
+                    if hold.isEdge {
+                        Label("Edge hold", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+                .font(.callout)
+                .padding(.horizontal, 32)
+
+                Spacer()
+            }
+            .padding(.top, 24)
+            .navigationTitle("Hold Detail")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 

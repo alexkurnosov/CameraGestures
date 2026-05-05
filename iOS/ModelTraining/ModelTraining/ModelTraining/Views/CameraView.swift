@@ -619,6 +619,64 @@ struct HandSkeletonView: UIViewRepresentable {
     }
 }
 
+// MARK: - Hold Skeleton View (wrist-relative coords)
+
+/// Renders a hand skeleton from wrist-relative, scale-normalised, rotation-aligned
+/// coords (the 63-float hold representation). Auto-fits the skeleton to the view
+/// bounds with padding so the hand always fills the available space.
+struct HoldSkeletonView: View {
+    let points: [Point3D]
+
+    private static let connections: [(Int, Int)] = [
+        (0,1),(1,2),(2,3),(3,4),
+        (0,5),(5,6),(6,7),(7,8),
+        (0,9),(9,10),(10,11),(11,12),
+        (0,13),(13,14),(14,15),(15,16),
+        (0,17),(17,18),(18,19),(19,20)
+    ]
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard points.count >= 21 else { return }
+
+            let xs = points.map { CGFloat($0.x) }
+            let ys = points.map { CGFloat($0.y) }
+            guard let xMin = xs.min(), let xMax = xs.max(),
+                  let yMin = ys.min(), let yMax = ys.max() else { return }
+
+            let pad: CGFloat = 10
+            let xRange = max(xMax - xMin, 1e-4)
+            let yRange = max(yMax - yMin, 1e-4)
+            let drawW = size.width  - 2 * pad
+            let drawH = size.height - 2 * pad
+
+            // y is flipped: positive y = fingertips = top of view
+            func pt(_ p: Point3D) -> CGPoint {
+                CGPoint(
+                    x: pad + (CGFloat(p.x) - xMin) / xRange * drawW,
+                    y: pad + (yMax - CGFloat(p.y)) / yRange * drawH
+                )
+            }
+
+            for (a, b) in Self.connections where a < points.count && b < points.count {
+                var path = Path()
+                path.move(to: pt(points[a]))
+                path.addLine(to: pt(points[b]))
+                ctx.stroke(path, with: .color(.blue), lineWidth: 1.5)
+            }
+
+            for p in points {
+                let c = pt(p)
+                let r: CGFloat = 3
+                ctx.fill(
+                    Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2*r, height: 2*r)),
+                    with: .color(.green)
+                )
+            }
+        }
+    }
+}
+
 // MARK: - Hand Tracking Overlay
 
 class HandTrackingOverlayView: UIView {

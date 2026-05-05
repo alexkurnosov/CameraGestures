@@ -38,6 +38,7 @@ struct TrainingView: View {
                     trainingControlsSection
                     inViewThresholdSection
                     serverControlsSection
+                    poseInspectorSection
                     dangerZoneSection
                 }
                 .padding()
@@ -54,12 +55,6 @@ struct TrainingView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 4) {
-                        NavigationLink {
-                            PoseInspectorView()
-                                .environmentObject(apiClient)
-                        } label: {
-                            Image(systemName: "square.grid.2x2")
-                        }
                         NavigationLink(destination: HandFilmsView()
                             .environmentObject(trainingDataManager)
                             .environmentObject(gestureRegistry)
@@ -592,6 +587,27 @@ struct TrainingView: View {
                 .disabled(serverManager.isPollingStatus)
             }
         }
+    }
+
+    private var poseInspectorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Pose Model")
+                .font(.headline)
+            NavigationLink {
+                PoseInspectorView()
+                    .environmentObject(apiClient)
+            } label: {
+                Label("Open Cluster Inspector", systemImage: "square.grid.2x2")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            Text("Review and label pose clusters before training the pose model.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color.indigo.opacity(0.06))
+        .cornerRadius(8)
     }
 
     private var dangerZoneSection: some View {
