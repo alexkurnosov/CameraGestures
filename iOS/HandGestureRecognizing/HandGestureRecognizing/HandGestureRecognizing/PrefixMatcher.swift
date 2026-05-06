@@ -90,22 +90,26 @@ public final class PrefixMatcher {
     private func handleRegular(poseId: Int) -> Action {
         let candidate = observedSequence + [poseId]
 
-        // Does any template start with this candidate?
-        let templatesWithPrefix = manifest.gestureTemplates.filter { (_, template) in
-            template.count >= candidate.count &&
-            Array(template.prefix(candidate.count)) == candidate
+        // Does any template (across all gestures) start with this candidate?
+        let gesturesWithPrefix = manifest.gestureTemplates.filter { (_, templates) in
+            templates.contains { template in
+                template.count >= candidate.count &&
+                Array(template.prefix(candidate.count)) == candidate
+            }
         }
 
-        guard !templatesWithPrefix.isEmpty else {
+        guard !gesturesWithPrefix.isEmpty else {
             return .noPrefix
         }
 
         // Commit candidate as the new observed
         observedSequence = candidate
 
-        // Which templates are an exact match?
+        // Which gestures have an exact template match?
         let exactMatches = gesturesMatchingExactly(candidate)
-        let longerPossible = templatesWithPrefix.values.contains { $0.count > candidate.count }
+        let longerPossible = gesturesWithPrefix.values.contains { templates in
+            templates.contains { $0.count > candidate.count }
+        }
 
         if exactMatches.isEmpty {
             // Only live prefixes — keep waiting
@@ -122,8 +126,8 @@ public final class PrefixMatcher {
     // MARK: - Private helpers
 
     private func gesturesMatchingExactly(_ sequence: [Int]) -> Set<String> {
-        Set(manifest.gestureTemplates.compactMap { (gestureId, template) in
-            template == sequence ? gestureId : nil
+        Set(manifest.gestureTemplates.compactMap { (gestureId, templates) in
+            templates.contains { $0 == sequence } ? gestureId : nil
         })
     }
 
@@ -143,10 +147,12 @@ public final class PrefixMatcher {
     /// Returns the candidate set that was pending at timer start — the caller
     /// is responsible for not calling this if the gate has already closed.
     public func commitTimerFiredSet(for candidateSet: Set<String>) -> Set<String> {
-        // Re-validate: gestures in the set whose templates are still a match
+        // Re-validate: gestures in the set that still have a template prefixed by observed
         let valid = candidateSet.filter { gestureId in
-            guard let template = manifest.gestureTemplates[gestureId] else { return false }
-            return Array(template.prefix(observedSequence.count)) == observedSequence
+            guard let templates = manifest.gestureTemplates[gestureId] else { return false }
+            return templates.contains { template in
+                Array(template.prefix(observedSequence.count)) == observedSequence
+            }
         }
         return valid.isEmpty ? candidateSet : valid
     }

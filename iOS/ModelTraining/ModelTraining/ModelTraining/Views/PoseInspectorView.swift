@@ -29,16 +29,31 @@ struct PoseInspectorView: View {
                 clusterList
             }
         }
+        .sheet(isPresented: $vm.showMigrationReport) {
+            if let report = vm.migrationReport {
+                MigrationReportSheet(report: report)
+            }
+        }
         .navigationTitle("Pose Inspector")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    Task { await vm.load(using: apiClient) }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                HStack(spacing: 12) {
+                    if vm.migrationReport?.hasExclusionIssues == true {
+                        Button {
+                            vm.showMigrationReport = true
+                        } label: {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    Button {
+                        Task { await vm.load(using: apiClient) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(vm.isLoading)
                 }
-                .disabled(vm.isLoading)
             }
         }
         .task {
@@ -70,6 +85,9 @@ struct PoseInspectorView: View {
 
     private var clusterList: some View {
         List {
+            if !vm.gestureTemplates.isEmpty {
+                gestureTemplatesSection
+            }
             ForEach(vm.clusters) { cluster in
                 Section {
                     clusterHoldsRow(cluster: cluster)
@@ -80,6 +98,32 @@ struct PoseInspectorView: View {
         }
         .listStyle(.insetGrouped)
         .refreshable { await vm.load(using: apiClient) }
+    }
+
+    private var gestureTemplatesSection: some View {
+        Section("Gesture Templates") {
+            ForEach(vm.gestureTemplates.sorted(by: { $0.key < $1.key }), id: \.key) { gid, templates in
+                let fractions = vm.templateFractions[gid] ?? []
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(gid)
+                        .font(.caption.weight(.semibold))
+                    ForEach(Array(templates.enumerated()), id: \.offset) { idx, tmpl in
+                        HStack {
+                            Text(tmpl.map(String.init).joined(separator: " → "))
+                                .font(.caption2.monospaced())
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            if idx < fractions.count {
+                                Text(String(format: "%.0f%%", fractions[idx] * 100))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
     }
 
     // MARK: - Cluster header
@@ -247,6 +291,76 @@ struct PoseInspectorView: View {
     }
 }
 
+// MARK: - Migration report sheet
+
+private struct MigrationReportSheet: View {
+    let report: MigrationReport
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !report.exclusionLost.isEmpty {
+                    Section("Lost exclusions (\(report.exclusionLost.count))") {
+                        ForEach(report.exclusionLost) { e in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(e.filmId).font(.caption.monospaced())
+                                Text("Ordinal \(e.oldOrdinal.map(String.init) ?? "?") — no matching hold in new params")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !report.exclusionSplit.isEmpty {
+                    Section("Split exclusions (\(report.exclusionSplit.count))") {
+                        ForEach(report.exclusionSplit) { e in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(e.filmId).font(.caption.monospaced())
+                                Text("Old ordinal \(e.oldOrdinal.map(String.init) ?? "?") → holds \(e.newHoldOrdinals.map(String.init).joined(separator: ", "))")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !report.exclusionMerge.isEmpty {
+                    Section("Merged exclusions (\(report.exclusionMerge.count))") {
+                        ForEach(report.exclusionMerge) { e in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(e.filmId).font(.caption.monospaced())
+                                Text("Old ordinal \(e.oldOrdinal.map(String.init) ?? "?") → ordinal \(e.newOrdinal.map(String.init) ?? "?")")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !report.exclusionClean.isEmpty {
+                    Section("Clean migrations (\(report.exclusionClean.count))") {
+                        ForEach(report.exclusionClean) { e in
+                            Text(e.filmId).font(.caption.monospaced())
+                        }
+                    }
+                }
+                let lostReviews = report.clusterMigration.filter { $0.case == "lost_review" }
+                if !lostReviews.isEmpty {
+                    Section("Lost cluster reviews (\(lostReviews.count))") {
+                        ForEach(lostReviews) { e in
+                            Text("Cluster \(e.oldId.map(String.init) ?? "?")\(e.oldKind.map { " (\($0))" } ?? "")")
+                                .font(.caption2).foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Migration Report")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Hold detail sheet
 
 private struct HoldDetailSheet: View {
@@ -317,12 +431,16 @@ private struct HoldViewModel: Identifiable {
 @MainActor
 private final class PoseInspectorViewModel: ObservableObject {
     @Published var clusters: [ClusterViewModel] = []
+    @Published var gestureTemplates: [String: [[Int]]] = [:]
+    @Published var templateFractions: [String: [Double]] = [:]
+    @Published var migrationReport: MigrationReport? = nil
+    @Published var showMigrationReport = false
     @Published var isLoading = false
     @Published var isSaving = false
     @Published var error: String? = nil
     @Published var saveError: String? = nil
 
-    private var pendingKinds: [String: String] = [:]  // cluster_id → kind (accumulated edits)
+    private var pendingKinds: [String: String] = [:]
     private var cachedCorrections: PoseCorrectionsResponse? = nil
 
     func load(using client: GestureModelAPIClient) async {
@@ -334,10 +452,15 @@ private final class PoseInspectorViewModel: ObservableObject {
             async let holdsTask = client.fetchClusterHolds()
 
             let (manifest, corrections, clusterHolds) = try await (manifestTask, correctionsTask, holdsTask)
+
             cachedCorrections = corrections
             pendingKinds = corrections.clusterKinds
-
+            gestureTemplates = manifest.gestureTemplates
+            templateFractions = manifest.templateFractions ?? [:]
             clusters = buildClusters(manifest: manifest, corrections: corrections, clusterHolds: clusterHolds)
+
+            // Best-effort metrics load for migration report
+            migrationReport = (try? await client.fetchPoseMetrics())?.migrationReport
         } catch {
             self.error = error.localizedDescription
         }
@@ -345,7 +468,6 @@ private final class PoseInspectorViewModel: ObservableObject {
     }
 
     func setKind(_ kind: String, for clusterId: String, using client: GestureModelAPIClient) async {
-        // Optimistic update
         if let idx = clusters.firstIndex(where: { $0.id == clusterId }) {
             clusters[idx].currentKind = kind
         }
@@ -356,14 +478,14 @@ private final class PoseInspectorViewModel: ObservableObject {
         do {
             let body = PoseCorrectionsRequest(
                 clusterKinds: pendingKinds,
-                excludedHolds: cachedCorrections?.excludedHolds ?? []
+                excludedHolds: cachedCorrections?.excludedHolds ?? [],
+                extraTemplates: cachedCorrections?.extraTemplates ?? [:]
             )
             let updated = try await client.putPoseCorrections(body)
             cachedCorrections = updated
             pendingKinds = updated.clusterKinds
         } catch {
             saveError = error.localizedDescription
-            // Revert optimistic update on failure
             if let cached = cachedCorrections,
                let idx = clusters.firstIndex(where: { $0.id == clusterId }) {
                 clusters[idx].currentKind = cached.clusterKinds[clusterId] ?? "unconfirmed"

@@ -63,7 +63,7 @@ public struct PoseManifest: Codable {
     public let version: Int
     public let poseClusters: [String: PoseCluster]
     public let idlePoses: [Int]
-    public let gestureTemplates: [String: [Int]]
+    public let gestureTemplates: [String: [[Int]]]
     public let parameters: PoseManifestParameters?
 
     enum CodingKeys: String, CodingKey {

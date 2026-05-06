@@ -113,16 +113,16 @@ final class HoldDetectorTests: XCTestCase {
 
 final class PrefixMatcherTests: XCTestCase {
 
-    private func makeManifest(templates: [String: [Int]], idlePoses: [Int] = [99]) -> PoseManifest {
+    private func makeManifest(templates: [String: [[Int]]], idlePoses: [Int] = [99]) -> PoseManifest {
         var clusters: [String: PoseCluster] = [:]
-        let allIds = Set(templates.values.flatMap { $0 } + idlePoses)
+        let allIds = Set(templates.values.flatMap { $0 }.flatMap { $0 } + idlePoses)
         for id in allIds {
             let kind = idlePoses.contains(id) ? "idle" : "regular"
             clusters[String(id)] = PoseCluster(label: "pose_\(id)", kind: kind,
                                                suspectedIdle: false, nSamples: 10, centroid: [])
         }
         return try! JSONDecoder().decode(PoseManifest.self, from: JSONEncoder().encode(
-            PoseManifestCodableHelper(version: 1, poseClusters: clusters,
+            PoseManifestCodableHelper(version: 2, poseClusters: clusters,
                                      idlePoses: idlePoses, gestureTemplates: templates,
                                      parameters: nil)
         ))
@@ -131,7 +131,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Complete + no longer prefix → commitNow
 
     func testCommitNowWhenCompleteAndNoLongerPrefix() {
-        let manifest = makeManifest(templates: ["ok": [9], "stop": [10]])
+        let manifest = makeManifest(templates: ["ok": [[9]], "stop": [[10]]])
         let matcher = PrefixMatcher(manifest: manifest)
 
         let action = matcher.observe(poseId: 9, kind: .regular)
@@ -145,7 +145,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Complete + longer prefix → startCommitTimer
 
     func testStartCommitTimerWhenLongerPrefixPossible() {
-        let manifest = makeManifest(templates: ["short": [9], "long": [9, 10]])
+        let manifest = makeManifest(templates: ["short": [[9]], "long": [[9, 10]]])
         let matcher = PrefixMatcher(manifest: manifest)
 
         let action = matcher.observe(poseId: 9, kind: .regular)
@@ -159,7 +159,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - No prefix → noPrefix
 
     func testNoPrefixWhenNoTemplateMatchesObserved() {
-        let manifest = makeManifest(templates: ["ok": [9]])
+        let manifest = makeManifest(templates: ["ok": [[9]]])
         let matcher = PrefixMatcher(manifest: manifest)
         let action = matcher.observe(poseId: 42, kind: .regular)
         XCTAssertEqual(action, .noPrefix)
@@ -168,7 +168,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Live prefix only (no complete match yet)
 
     func testLivePrefixWhenOnlyPrefixMatches() {
-        let manifest = makeManifest(templates: ["multi": [9, 10]])
+        let manifest = makeManifest(templates: ["multi": [[9, 10]]])
         let matcher = PrefixMatcher(manifest: manifest)
         let action = matcher.observe(poseId: 9, kind: .regular)
         XCTAssertEqual(action, .livePrefix)
@@ -177,7 +177,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Idle on empty observed → idleReset
 
     func testIdleOnEmptyObservedReturnsIdleReset() {
-        let manifest = makeManifest(templates: ["ok": [9]], idlePoses: [99])
+        let manifest = makeManifest(templates: ["ok": [[9]]], idlePoses: [99])
         let matcher = PrefixMatcher(manifest: manifest)
         let action = matcher.observe(poseId: 99, kind: .idle)
         XCTAssertEqual(action, .idleReset)
@@ -186,7 +186,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Idle on complete match → idleCommit
 
     func testIdleOnCompleteMatchReturnsIdleCommit() {
-        let manifest = makeManifest(templates: ["ok": [9]], idlePoses: [99])
+        let manifest = makeManifest(templates: ["ok": [[9]]], idlePoses: [99])
         let matcher = PrefixMatcher(manifest: manifest)
         _ = matcher.observe(poseId: 9, kind: .regular)  // observed = [9], matches "ok"
         let action = matcher.observe(poseId: 99, kind: .idle)
@@ -200,8 +200,8 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Idle with longest-complete-ancestor
 
     func testIdleUsesLongestCompleteAncestor() {
-        // Templates: "a" = [1], "b" = [1, 2, 3] (no template for [1,2])
-        let manifest = makeManifest(templates: ["a": [1], "b": [1, 2, 3]], idlePoses: [99])
+        // Templates: "a" = [[1]], "b" = [[1, 2, 3]] (no template for [1,2])
+        let manifest = makeManifest(templates: ["a": [[1]], "b": [[1, 2, 3]]], idlePoses: [99])
         let matcher = PrefixMatcher(manifest: manifest)
         _ = matcher.observe(poseId: 1, kind: .regular)  // matches both as prefix
         _ = matcher.observe(poseId: 2, kind: .regular)  // live prefix only (prefix of "b")
@@ -218,7 +218,7 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - Unconfirmed → noPrefix
 
     func testUnconfirmedPoseReturnsNoPrefix() {
-        let manifest = makeManifest(templates: ["ok": [9]])
+        let manifest = makeManifest(templates: ["ok": [[9]]])
         let matcher = PrefixMatcher(manifest: manifest)
         let action = matcher.observe(poseId: 9, kind: .unconfirmed)
         XCTAssertEqual(action, .noPrefix)
@@ -227,17 +227,39 @@ final class PrefixMatcherTests: XCTestCase {
     // MARK: - gateCloseCommitSet returns nil when no match
 
     func testGateCloseCommitSetNilWhenNoMatch() {
-        let manifest = makeManifest(templates: ["ok": [9, 10]])
+        let manifest = makeManifest(templates: ["ok": [[9, 10]]])
         let matcher = PrefixMatcher(manifest: manifest)
         _ = matcher.observe(poseId: 9, kind: .regular)  // live prefix only
         XCTAssertNil(matcher.gateCloseCommitSet())
     }
 
     func testGateCloseCommitSetReturnsMatchedGestures() {
-        let manifest = makeManifest(templates: ["ok": [9]])
+        let manifest = makeManifest(templates: ["ok": [[9]]])
         let matcher = PrefixMatcher(manifest: manifest)
         _ = matcher.observe(poseId: 9, kind: .regular)
         XCTAssertEqual(matcher.gateCloseCommitSet(), ["ok"])
+    }
+
+    // MARK: - Multi-template: gesture matches via second template
+
+    func testMultiTemplateMatchesViaSecondTemplate() {
+        // "ok" has two templates: [[9]] and [[11]]
+        let manifest = makeManifest(templates: ["ok": [[9], [11]]])
+        let matcher = PrefixMatcher(manifest: manifest)
+        let action = matcher.observe(poseId: 11, kind: .regular)
+        if case .commitNow(let S) = action {
+            XCTAssertEqual(S, ["ok"])
+        } else {
+            XCTFail("Expected commitNow via second template, got \(action)")
+        }
+    }
+
+    func testMultiTemplateBothTemplatesAsPrefix() {
+        // "ok" has [[9, 10]] and [[9, 11]] — both start with 9
+        let manifest = makeManifest(templates: ["ok": [[9, 10], [9, 11]]])
+        let matcher = PrefixMatcher(manifest: manifest)
+        let action = matcher.observe(poseId: 9, kind: .regular)
+        XCTAssertEqual(action, .livePrefix)
     }
 }
 
@@ -276,7 +298,7 @@ final class TMinBufferTests: XCTestCase {
 
     func testPrefixMatcherObservedSequenceUpdatesAfterRegularPose() {
         let manifest = try! PrefixMatcherTests().makeManifestHelper(
-            templates: ["ok": [9, 10]], idlePoses: [99]
+            templates: ["ok": [[9, 10]]], idlePoses: [99]
         )
         let matcher = PrefixMatcher(manifest: manifest)
         XCTAssertTrue(matcher.observedSequence.isEmpty)
@@ -288,7 +310,7 @@ final class TMinBufferTests: XCTestCase {
 
     func testPrefixMatcherResetClearsObserved() {
         let manifest = try! PrefixMatcherTests().makeManifestHelper(
-            templates: ["ok": [9]], idlePoses: [99]
+            templates: ["ok": [[9]]], idlePoses: [99]
         )
         let matcher = PrefixMatcher(manifest: manifest)
         _ = matcher.observe(poseId: 9, kind: .regular)
@@ -300,12 +322,12 @@ final class TMinBufferTests: XCTestCase {
 
 // MARK: - Test helpers
 
-// Helper struct for JSON-encoding test manifests
+// Helper struct for JSON-encoding test manifests (v2 format)
 private struct PoseManifestCodableHelper: Encodable {
     let version: Int
     let poseClusters: [String: PoseCluster]
     let idlePoses: [Int]
-    let gestureTemplates: [String: [Int]]
+    let gestureTemplates: [String: [[Int]]]
     let parameters: PoseManifestParameters?
 
     enum CodingKeys: String, CodingKey {
@@ -318,16 +340,16 @@ private struct PoseManifestCodableHelper: Encodable {
 }
 
 extension PrefixMatcherTests {
-    func makeManifestHelper(templates: [String: [Int]], idlePoses: [Int] = [99]) throws -> PoseManifest {
+    func makeManifestHelper(templates: [String: [[Int]]], idlePoses: [Int] = [99]) throws -> PoseManifest {
         var clusters: [String: PoseCluster] = [:]
-        let allIds = Set(templates.values.flatMap { $0 } + idlePoses)
+        let allIds = Set(templates.values.flatMap { $0 }.flatMap { $0 } + idlePoses)
         for id in allIds {
             let kind = idlePoses.contains(id) ? "idle" : "regular"
             clusters[String(id)] = PoseCluster(label: "pose_\(id)", kind: kind,
                                                suspectedIdle: false, nSamples: 10, centroid: [])
         }
         let data = try JSONEncoder().encode(
-            PoseManifestCodableHelper(version: 1, poseClusters: clusters,
+            PoseManifestCodableHelper(version: 2, poseClusters: clusters,
                                       idlePoses: idlePoses, gestureTemplates: templates,
                                       parameters: nil)
         )

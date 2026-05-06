@@ -435,6 +435,84 @@ struct PoseLayer3Metrics: Codable {
     }
 }
 
+// MARK: - Stage 10: Migration report + bootstrap stability
+
+struct ExclusionMigrationEntry: Codable, Identifiable {
+    let filmId: String
+    let oldOrdinal: Int?
+    let oldRepFrame: Int?
+    let newHoldOrdinals: [Int]
+    let newOrdinal: Int?
+
+    var id: String { "\(filmId)_\(oldOrdinal ?? -1)" }
+
+    enum CodingKeys: String, CodingKey {
+        case filmId = "film_id"
+        case oldOrdinal = "old_ordinal"
+        case oldRepFrame = "old_rep_frame"
+        case newHoldOrdinals = "new_hold_ordinals"
+        case newOrdinal = "new_ordinal"
+    }
+}
+
+struct ClusterMigrationEntry: Codable, Identifiable {
+    let `case`: String   // "inherited" | "new" | "split" | "merge" | "lost_review"
+    let newId: Int?
+    let oldId: Int?
+    let oldIds: [Int]
+    let newIds: [Int]
+    let distance: Double?
+    let oldKind: String?
+
+    var id: String { "\(`case`)_\(oldId ?? -1)_\(newId ?? -1)" }
+
+    enum CodingKeys: String, CodingKey {
+        case `case` = "case"
+        case newId = "new_id"
+        case oldId = "old_id"
+        case oldIds = "old_ids"
+        case newIds = "new_ids"
+        case distance
+        case oldKind = "old_kind"
+    }
+}
+
+struct MigrationReport: Codable {
+    let exclusionClean: [ExclusionMigrationEntry]
+    let exclusionSplit: [ExclusionMigrationEntry]
+    let exclusionMerge: [ExclusionMigrationEntry]
+    let exclusionLost: [ExclusionMigrationEntry]
+    let clusterMigration: [ClusterMigrationEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case exclusionClean = "exclusion_clean"
+        case exclusionSplit = "exclusion_split"
+        case exclusionMerge = "exclusion_merge"
+        case exclusionLost = "exclusion_lost"
+        case clusterMigration = "cluster_migration"
+    }
+
+    var hasExclusionIssues: Bool {
+        !exclusionSplit.isEmpty || !exclusionMerge.isEmpty || !exclusionLost.isEmpty
+    }
+}
+
+struct BootstrapStabilityResult: Codable {
+    let p95Drift: Double?
+    let isStable: Bool
+    let nStableClusters: Int
+    let nResamples: Int
+    let warning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case p95Drift = "p95_drift"
+        case isStable = "is_stable"
+        case nStableClusters = "n_stable_clusters"
+        case nResamples = "n_resamples"
+        case warning
+    }
+}
+
 struct PoseMetricsResponse: Codable {
     let modelId: String
     let trainedAt: TimeInterval
@@ -442,6 +520,8 @@ struct PoseMetricsResponse: Codable {
     let layer2: PoseLayer2Metrics?
     let layer3: PoseLayer3Metrics?
     let confidenceCurvePose: [ConfidenceCurvePoint]
+    let migrationReport: MigrationReport?
+    let bootstrapStability: BootstrapStabilityResult?
 
     enum CodingKeys: String, CodingKey {
         case modelId = "model_id"
@@ -450,6 +530,8 @@ struct PoseMetricsResponse: Codable {
         case layer2
         case layer3
         case confidenceCurvePose = "confidence_curve_pose"
+        case migrationReport = "migration_report"
+        case bootstrapStability = "bootstrap_stability"
     }
 }
 
@@ -474,13 +556,15 @@ struct PoseManifestResponse: Codable {
     let version: Int
     let poseClusters: [String: PoseClusterInfo]
     let idlePoses: [Int]
-    let gestureTemplates: [String: [Int]]
+    let gestureTemplates: [String: [[Int]]]
+    let templateFractions: [String: [Double]]?
 
     enum CodingKeys: String, CodingKey {
         case version
         case poseClusters = "pose_clusters"
         case idlePoses = "idle_poses"
         case gestureTemplates = "gesture_templates"
+        case templateFractions = "template_fractions"
     }
 }
 
@@ -505,20 +589,24 @@ struct ExcludedHoldEntry: Codable {
 struct PoseCorrectionsResponse: Codable {
     let clusterKinds: [String: String]
     let excludedHolds: [ExcludedHoldEntry]
+    let extraTemplates: [String: [[Int]]]
 
     enum CodingKeys: String, CodingKey {
         case clusterKinds = "cluster_kinds"
         case excludedHolds = "excluded_holds"
+        case extraTemplates = "extra_templates"
     }
 }
 
 struct PoseCorrectionsRequest: Encodable {
     let clusterKinds: [String: String]
     let excludedHolds: [ExcludedHoldEntry]
+    let extraTemplates: [String: [[Int]]]
 
     enum CodingKeys: String, CodingKey {
         case clusterKinds = "cluster_kinds"
         case excludedHolds = "excluded_holds"
+        case extraTemplates = "extra_templates"
     }
 }
 
