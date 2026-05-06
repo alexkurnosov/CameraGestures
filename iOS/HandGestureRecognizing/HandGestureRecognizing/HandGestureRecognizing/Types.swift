@@ -173,19 +173,23 @@ public struct DetectedGesture {
     public let handedness: LeftOrRight
     public let detectionTimestamp: TimeInterval
     public let processingLatency: TimeInterval
-    
+    /// Number of candidate gestures passed to Phase 3 masked-argmax (nil in unrestricted handfilm mode).
+    public let candidateSetSize: Int?
+
     public init(
         prediction: GesturePrediction,
         handfilm: HandFilm,
         handedness: LeftOrRight,
         detectionTimestamp: TimeInterval = Date().timeIntervalSince1970,
-        processingLatency: TimeInterval = 0.0
+        processingLatency: TimeInterval = 0.0,
+        candidateSetSize: Int? = nil
     ) {
         self.prediction = prediction
         self.handfilm = handfilm
         self.handedness = handedness
         self.detectionTimestamp = detectionTimestamp
         self.processingLatency = processingLatency
+        self.candidateSetSize = candidateSetSize
     }
 }
 

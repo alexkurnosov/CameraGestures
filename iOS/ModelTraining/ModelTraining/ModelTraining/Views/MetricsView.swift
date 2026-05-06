@@ -13,6 +13,7 @@ struct MetricsView: View {
     @State private var errorMessage: String?
     @State private var reclusterSignals: PoseReclusterSignals? = nil
     @State private var poseMetrics: PoseMetricsResponse? = nil
+    @State private var confidenceCurves: ConfidenceCurvesResponse? = nil
 
     var body: some View {
         NavigationView {
@@ -96,6 +97,9 @@ struct MetricsView: View {
             confusionMatrixSection(m)
             if let pm = poseMetrics {
                 phase2Section(pm)
+            }
+            if let curves = confidenceCurves {
+                confidenceCurvesSection(curves)
             }
         }
         .listStyle(.insetGrouped)
@@ -443,6 +447,119 @@ struct MetricsView: View {
         }
     }
 
+    // MARK: - Stage 9: Confidence curves
+
+    @ViewBuilder
+    private func confidenceCurvesSection(_ curves: ConfidenceCurvesResponse) -> some View {
+        confidenceCurveRows(
+            title: "Phase 2 τ-pose curve",
+            offline: curves.poseOffline,
+            online: curves.poseOnline,
+            nOnline: curves.nPoseSamples,
+            footer: "Acceptance rate and conditional accuracy at each confidence threshold for the pose classifier. Offline = validation fold from last training run. On-device = entries logged from the device (\(curves.nPoseSamples) samples)."
+        )
+
+        confidenceCurveRows(
+            title: "Phase 3 τ-phase3 curve",
+            offline: curves.phase3Offline,
+            online: curves.phase3Online,
+            nOnline: curves.nPhase3Samples,
+            footer: "Acceptance rate and conditional accuracy at each confidence threshold for the handfilm classifier. Offline = validation fold. On-device = entries logged from device (\(curves.nPhase3Samples) samples). Phase 3 fires once per committed cycle, so the on-device curve stabilises more slowly."
+        )
+    }
+
+    @ViewBuilder
+    private func confidenceCurveRows(
+        title: String,
+        offline: [ConfidenceCurvePoint],
+        online: [ConfidenceCurvePoint],
+        nOnline: Int,
+        footer: String
+    ) -> some View {
+        if !offline.isEmpty || !online.isEmpty {
+            Section {
+                // Table header
+                HStack {
+                    Text("τ")
+                        .frame(width: 36, alignment: .leading)
+                    Spacer()
+                    Text("Accept")
+                        .frame(width: 54, alignment: .trailing)
+                    Text("Acc")
+                        .frame(width: 48, alignment: .trailing)
+                    if !online.isEmpty {
+                        Text("↕ Accept")
+                            .frame(width: 60, alignment: .trailing)
+                            .foregroundColor(.blue)
+                        Text("↕ Acc")
+                            .frame(width: 48, alignment: .trailing)
+                            .foregroundColor(.blue)
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(.secondary)
+                .padding(.vertical, 2)
+
+                ForEach(offlineCurveRows(offline: offline, online: online)) { row in
+                    HStack {
+                        Text(String(format: "%.2f", row.tau))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 36, alignment: .leading)
+                        Spacer()
+                        Text(percent(row.acceptOffline))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 54, alignment: .trailing)
+                        Text(percent(row.accOffline))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 48, alignment: .trailing)
+                        if !online.isEmpty {
+                            Text(percent(row.acceptOnline))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.blue)
+                                .frame(width: 60, alignment: .trailing)
+                            Text(percent(row.accOnline))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.blue)
+                                .frame(width: 48, alignment: .trailing)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+            } header: {
+                Text(title)
+            } footer: {
+                Text(footer)
+            }
+        }
+    }
+
+    private struct CurveTableRow: Identifiable {
+        var id: Double { tau }
+        let tau: Double
+        let acceptOffline: Double?
+        let accOffline: Double?
+        let acceptOnline: Double?
+        let accOnline: Double?
+    }
+
+    private func offlineCurveRows(
+        offline: [ConfidenceCurvePoint],
+        online: [ConfidenceCurvePoint]
+    ) -> [CurveTableRow] {
+        let offMap = Dictionary(uniqueKeysWithValues: offline.map { ($0.tau, $0) })
+        let onMap = Dictionary(uniqueKeysWithValues: online.map { ($0.tau, $0) })
+        let taus = Set(offline.map(\.tau)).union(online.map(\.tau)).sorted()
+        return taus.map { tau in
+            CurveTableRow(
+                tau: tau,
+                acceptOffline: offMap[tau]?.acceptanceRate,
+                accOffline: offMap[tau]?.conditionalAccuracy,
+                acceptOnline: onMap[tau]?.acceptanceRate,
+                accOnline: onMap[tau]?.conditionalAccuracy
+            )
+        }
+    }
+
     // MARK: - Helpers
 
     private func metricRow(_ label: String, value: String) -> some View {
@@ -513,6 +630,9 @@ struct MetricsView: View {
 
             // Load Phase 2 metrics (Stage 8.3)
             poseMetrics = try? await apiClient.fetchPoseMetrics()
+
+            // Load confidence curves (Stage 9.3)
+            confidenceCurves = try? await apiClient.fetchConfidenceCurves()
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -18,6 +18,12 @@ struct CameraView: View {
     @State private var showingPermissionAlert = false
     @State private var recPulse = false
 
+    // Stage 9: confidence-log state
+    /// The last detected hold's log entry, pending reviewer label before it is uploaded.
+    @State private var pendingPoseEntry: PoseConfidenceLogEntry? = nil
+    /// The last committed gesture in handfilm mode, pending reviewer label.
+    @State private var pendingPhase3Gesture: DetectedGesture? = nil
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -123,6 +129,44 @@ struct CameraView: View {
         }
         .onDisappear {
             viewModel.seriesCoordinator.stop()
+        }
+        // Stage 9: log hold-level pose entries whenever a new hold is detected in Holds mode.
+        .onChange(of: gestureRecognizer.holdsTelemetry) { telemetry in
+            guard viewModel.isRecognitionActive,
+                  viewModel.recognizingMode == .holds,
+                  let poseId = telemetry.lastPoseId,
+                  let conf = telemetry.lastPoseConfidence else { return }
+            // Upload the previous entry (unlabelled) before replacing it.
+            if let old = pendingPoseEntry {
+                uploadPoseEntry(old)
+            }
+            pendingPoseEntry = PoseConfidenceLogEntry(
+                modelVersion: gestureRecognizer.poseModelVersion,
+                predictedPoseId: poseId,
+                confidence: Double(conf),
+                reviewerLabel: nil,
+                timestamp: Date().timeIntervalSince1970,
+                filmId: nil
+            )
+        }
+        // Stage 9: log phase3 entries for handfilm-mode commits.
+        .onReceive(gestureRecognizer.gestureDetected) { gesture in
+            guard viewModel.isRecognitionActive else { return }
+            if viewModel.recognizingMode == .handfilm {
+                let entry = Phase3ConfidenceLogEntry(
+                    modelVersion: gestureRecognizer.handfilmModelVersion,
+                    candidateSetSize: gesture.candidateSetSize ?? 0,
+                    predictedClass: gesture.prediction.gestureId,
+                    confidence: Double(gesture.prediction.confidence),
+                    reviewerLabel: nil,
+                    timestamp: gesture.detectionTimestamp,
+                    filmId: nil
+                )
+                uploadPhase3Entry(entry)
+            } else if viewModel.recognizingMode == .holds {
+                // In Holds mode, track for optional reviewer label on the post-commit overlay.
+                pendingPhase3Gesture = gesture
+            }
         }
     }
 
@@ -291,6 +335,72 @@ struct CameraView: View {
             .padding(.vertical, 4)
             .background(Color.black.opacity(0.60))
             .cornerRadius(16)
+
+            // Stage 9: reviewer label buttons for the last detected hold.
+            if pendingPoseEntry != nil {
+                HStack(spacing: 6) {
+                    Text("Pose:")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.6))
+                    Button { labelPoseEntry("correct") } label: {
+                        Text("✓")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.75))
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    Button { labelPoseEntry("wrong") } label: {
+                        Text("✗")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.75))
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.60))
+                .cornerRadius(16)
+            }
+
+            // Stage 9: reviewer label buttons for a committed Phase 3 gesture.
+            if let p3 = pendingPhase3Gesture {
+                HStack(spacing: 6) {
+                    Text("P3: \(p3.prediction.gestureId)")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.8))
+                    Button { labelPhase3Entry("correct", gesture: p3) } label: {
+                        Text("✓")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.75))
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    Button { labelPhase3Entry("wrong", gesture: p3) } label: {
+                        Text("✗")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.75))
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.60))
+                .cornerRadius(16)
+            }
 
             Spacer()
         }
@@ -600,6 +710,48 @@ struct CameraView: View {
     private func openAppSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)
+        }
+    }
+
+    // MARK: - Stage 9: Confidence-log helpers
+
+    private func labelPoseEntry(_ label: String) {
+        guard var entry = pendingPoseEntry else { return }
+        entry = PoseConfidenceLogEntry(
+            modelVersion: entry.modelVersion,
+            predictedPoseId: entry.predictedPoseId,
+            confidence: entry.confidence,
+            reviewerLabel: label,
+            timestamp: entry.timestamp,
+            filmId: entry.filmId
+        )
+        uploadPoseEntry(entry)
+        pendingPoseEntry = nil
+    }
+
+    private func labelPhase3Entry(_ label: String, gesture: DetectedGesture) {
+        let entry = Phase3ConfidenceLogEntry(
+            modelVersion: gestureRecognizer.handfilmModelVersion,
+            candidateSetSize: gesture.candidateSetSize ?? 0,
+            predictedClass: gesture.prediction.gestureId,
+            confidence: Double(gesture.prediction.confidence),
+            reviewerLabel: label,
+            timestamp: gesture.detectionTimestamp,
+            filmId: nil
+        )
+        uploadPhase3Entry(entry)
+        pendingPhase3Gesture = nil
+    }
+
+    private func uploadPoseEntry(_ entry: PoseConfidenceLogEntry) {
+        Task {
+            try? await apiClient.postConfidenceLog(entries: [.pose(entry)])
+        }
+    }
+
+    private func uploadPhase3Entry(_ entry: Phase3ConfidenceLogEntry) {
+        Task {
+            try? await apiClient.postConfidenceLog(entries: [.phase3(entry)])
         }
     }
 }

@@ -25,6 +25,11 @@ class GestureRecognizerWrapper: ObservableObject {
     // Phase 2 telemetry (updated via holdsModeTelemetryCallback)
     @Published var holdsTelemetry: HoldsTelemetry = HoldsTelemetry()
 
+    /// Version strings for the currently loaded models (used in confidence-log entries).
+    /// Set by the training view when a new model is downloaded.
+    var handfilmModelVersion: String = ""
+    var poseModelVersion: String = ""
+
     init(recognizer: HandGestureRecognizing) {
         self.recognizer = recognizer
     }

@@ -572,7 +572,8 @@ public class HandGestureRecognizing {
                 handfilm: film,
                 handedness: film.frames.first?.leftOrRight ?? .unknown,
                 detectionTimestamp: Date().timeIntervalSince1970,
-                processingLatency: Date().timeIntervalSince1970 - t0
+                processingLatency: Date().timeIntervalSince1970 - t0,
+                candidateSetSize: candidateSet.count
             )
             await MainActor.run { [weak self] in
                 self?.emitOrQueueGated(detected)

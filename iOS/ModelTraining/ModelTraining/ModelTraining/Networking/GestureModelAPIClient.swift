@@ -172,6 +172,7 @@ struct ModelMetricsResponse: Codable, Identifiable {
     let confidenceByClass: [ConfidenceByClass]
     let thresholdCurves: [ThresholdPoint]
     let auc: AucMetrics
+    let confidenceCurvePhase3: [ConfidenceCurvePoint]
 
     var id: String { modelId }
 
@@ -192,6 +193,7 @@ struct ModelMetricsResponse: Codable, Identifiable {
         case confidenceByClass = "confidence_by_class"
         case thresholdCurves = "threshold_curves"
         case auc
+        case confidenceCurvePhase3 = "confidence_curve_phase3"
     }
 }
 
@@ -439,6 +441,7 @@ struct PoseMetricsResponse: Codable {
     let trainedOn: Int
     let layer2: PoseLayer2Metrics?
     let layer3: PoseLayer3Metrics?
+    let confidenceCurvePose: [ConfidenceCurvePoint]
 
     enum CodingKeys: String, CodingKey {
         case modelId = "model_id"
@@ -446,6 +449,7 @@ struct PoseMetricsResponse: Codable {
         case trainedOn = "trained_on"
         case layer2
         case layer3
+        case confidenceCurvePose = "confidence_curve_pose"
     }
 }
 
@@ -581,6 +585,104 @@ struct AnalyzeHoldsResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case holds
         case paramsHash = "params_hash"
+    }
+}
+
+// MARK: - Stage 9: Confidence logging
+
+enum ConfidenceLogEntry: Encodable {
+    case pose(PoseConfidenceLogEntry)
+    case phase3(Phase3ConfidenceLogEntry)
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .pose(let e):   try e.encode(to: encoder)
+        case .phase3(let e): try e.encode(to: encoder)
+        }
+    }
+}
+
+struct PoseConfidenceLogEntry: Encodable {
+    let phase: String = "pose"
+    let modelVersion: String
+    let predictedPoseId: Int
+    let confidence: Double
+    let reviewerLabel: String?   // "correct" | "wrong" | "skip" | nil
+    let timestamp: TimeInterval
+    let filmId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case phase
+        case modelVersion   = "model_version"
+        case predictedPoseId = "predicted_pose_id"
+        case confidence
+        case reviewerLabel  = "reviewer_label"
+        case timestamp
+        case filmId         = "film_id"
+    }
+}
+
+struct Phase3ConfidenceLogEntry: Encodable {
+    let phase: String = "phase3"
+    let modelVersion: String
+    let candidateSetSize: Int
+    let predictedClass: String
+    let confidence: Double
+    let reviewerLabel: String?
+    let timestamp: TimeInterval
+    let filmId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case phase
+        case modelVersion    = "model_version"
+        case candidateSetSize = "candidate_set_size"
+        case predictedClass  = "predicted_class"
+        case confidence
+        case reviewerLabel   = "reviewer_label"
+        case timestamp
+        case filmId          = "film_id"
+    }
+}
+
+struct ConfidenceLogBatchRequest: Encodable {
+    let entries: [ConfidenceLogEntry]
+}
+
+struct ConfidenceLogResponse: Codable {
+    let accepted: Int
+}
+
+struct ConfidenceCurvePoint: Codable, Identifiable {
+    let tau: Double
+    let acceptanceRate: Double
+    let conditionalAccuracy: Double?
+    let nAccepted: Int
+
+    var id: Double { tau }
+
+    enum CodingKeys: String, CodingKey {
+        case tau
+        case acceptanceRate   = "acceptance_rate"
+        case conditionalAccuracy = "conditional_accuracy"
+        case nAccepted        = "n_accepted"
+    }
+}
+
+struct ConfidenceCurvesResponse: Codable {
+    let poseOffline: [ConfidenceCurvePoint]
+    let poseOnline: [ConfidenceCurvePoint]
+    let phase3Offline: [ConfidenceCurvePoint]
+    let phase3Online: [ConfidenceCurvePoint]
+    let nPoseSamples: Int
+    let nPhase3Samples: Int
+
+    enum CodingKeys: String, CodingKey {
+        case poseOffline   = "pose_offline"
+        case poseOnline    = "pose_online"
+        case phase3Offline = "phase3_offline"
+        case phase3Online  = "phase3_online"
+        case nPoseSamples  = "n_pose_samples"
+        case nPhase3Samples = "n_phase3_samples"
     }
 }
 
@@ -954,6 +1056,24 @@ class GestureModelAPIClient: ObservableObject {
     func fetchPoseMetrics() async throws -> PoseMetricsResponse {
         let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/metrics"))
         return try await perform(request, decoding: PoseMetricsResponse.self)
+    }
+
+    // MARK: - Confidence log (Stage 9)
+
+    /// POST /confidence-log — upload a batch of per-hold pose or per-cycle Phase 3 log entries.
+    @discardableResult
+    func postConfidenceLog(entries: [ConfidenceLogEntry]) async throws -> ConfidenceLogResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("confidence-log"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(ConfidenceLogBatchRequest(entries: entries))
+        return try await perform(request, decoding: ConfidenceLogResponse.self)
+    }
+
+    /// GET /confidence-log/curves — offline + on-device τ-sweep curves for Phase 2 and Phase 3.
+    func fetchConfidenceCurves() async throws -> ConfidenceCurvesResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("confidence-log/curves"))
+        return try await perform(request, decoding: ConfidenceCurvesResponse.self)
     }
 
     // MARK: - Pose Model (Stage 4 / Stage 5)
