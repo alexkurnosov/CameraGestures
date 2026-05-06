@@ -82,7 +82,7 @@ public struct HoldsConfig {
 // MARK: - Holds Mode Telemetry
 
 /// Snapshot of Phase 2 state for the Holds-mode overlay in CameraView.
-public struct HoldsTelemetry {
+public struct HoldsTelemetry: Equatable {
     /// Most recently detected hold's pose prediction (nil before first hold).
     public let lastPoseId: Int?
     public let lastPoseLabel: String?
