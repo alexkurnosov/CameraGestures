@@ -22,6 +22,9 @@ class GestureRecognizerWrapper: ObservableObject {
     @Published var gateBufferCount: Int = 0
     var gateBufferCap: Int { recognizer.getConfig().gestureBufferSize }
 
+    // Phase 2 telemetry (updated via holdsModeTelemetryCallback)
+    @Published var holdsTelemetry: HoldsTelemetry = HoldsTelemetry()
+
     init(recognizer: HandGestureRecognizing) {
         self.recognizer = recognizer
     }
@@ -44,6 +47,11 @@ class GestureRecognizerWrapper: ObservableObject {
                 self?.gateBufferCount = count
             }
         }
+        recognizer.holdsModeTelemetryCallback = { [weak self] telemetry in
+            DispatchQueue.main.async {
+                self?.holdsTelemetry = telemetry
+            }
+        }
     }
 
     /// Build a config and initialize the underlying recognizer.
@@ -56,8 +64,23 @@ class GestureRecognizerWrapper: ObservableObject {
             enableRealTimeProcessing: true,
             gestureBufferSize: 30,
             confidenceThreshold: appSettings.confidenceThreshold,
-            motionGateConfig: .defaultConfig
+            motionGateConfig: .defaultConfig,
+            holdsConfig: .defaultConfig
         )
         try await recognizer.initialize(config: config)
+        loadPoseModelIfAvailable(appSettings: appSettings)
+    }
+
+    /// Loads pose_model.tflite + pose_manifest.json if both exist on disk.
+    func loadPoseModelIfAvailable(appSettings: AppSettings) {
+        let tflite = appSettings.defaultPoseModelURL()
+        let manifest = appSettings.defaultPoseManifestURL()
+        guard FileManager.default.fileExists(atPath: tflite.path),
+              FileManager.default.fileExists(atPath: manifest.path) else { return }
+        do {
+            try recognizer.loadPoseModel(tflitePath: tflite.path, manifestPath: manifest.path)
+        } catch {
+            print("[GestureRecognizerWrapper] Failed to load pose model: \(error)")
+        }
     }
 }

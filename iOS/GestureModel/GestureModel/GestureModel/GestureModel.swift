@@ -17,6 +17,16 @@ public class GestureModel {
     private var supportedGestureIds: [String] = []
     private var tfliteInterpreter: Interpreter?
 
+    // MARK: - Pose model (Phase 2 single-frame classifier)
+
+    private var poseInterpreter: Interpreter?
+    private var _poseManifest: PoseManifest?
+    /// Ordered list of cluster id strings matching the pose MLP output indices.
+    private var poseClusterIds: [String] = []
+
+    public var isPoseModelLoaded: Bool { poseInterpreter != nil && _poseManifest != nil }
+    public var poseManifest: PoseManifest? { _poseManifest }
+
     // MARK: - Initialization
 
     public init() {
@@ -74,6 +84,75 @@ public class GestureModel {
 
     public var isLoaded: Bool { isModelLoaded }
 
+    // MARK: - Pose Model Management (Phase 2 single-frame classifier)
+
+    /// Load the pose MLP (.tflite) and its manifest from the given file paths.
+    /// Cluster ids in the manifest are sorted numerically to derive the output-index mapping.
+    public func loadPoseModel(tflitePath: String, manifestPath: String) throws {
+        guard FileManager.default.fileExists(atPath: tflitePath) else {
+            throw GestureModelError.invalidModelPath
+        }
+        let manifestData = try Data(contentsOf: URL(fileURLWithPath: manifestPath))
+        let manifest = try JSONDecoder().decode(PoseManifest.self, from: manifestData)
+
+        let interpreter = try Interpreter(modelPath: tflitePath)
+        try interpreter.allocateTensors()
+
+        _poseManifest = manifest
+        poseInterpreter = interpreter
+        poseClusterIds = manifest.poseClusters.keys.sorted {
+            (Int($0) ?? 0) < (Int($1) ?? 0)
+        }
+    }
+
+    /// Predict the pose cluster for a single frame given its 63-dim wrist-relative,
+    /// scale-normalised coordinate vector (output of MotionGate.normalize).
+    public func predictPose(normalizedCoords: [Float]) throws -> PosePrediction? {
+        guard isPoseModelLoaded else { throw GestureModelError.modelNotLoaded }
+        guard normalizedCoords.count == 63 else { throw GestureModelError.invalidInput }
+        guard let interpreter = poseInterpreter, let manifest = _poseManifest else {
+            throw GestureModelError.modelNotLoaded
+        }
+
+        var coords = normalizedCoords
+        let inputData = Data(bytes: &coords, count: coords.count * MemoryLayout<Float>.size)
+
+        do {
+            try interpreter.copy(inputData, toInputAt: 0)
+            try interpreter.invoke()
+
+            let outputTensor = try interpreter.output(at: 0)
+            let probabilities: [Float] = outputTensor.data.withUnsafeBytes {
+                Array($0.bindMemory(to: Float.self))
+            }
+
+            guard probabilities.count == poseClusterIds.count else {
+                throw GestureModelError.predictionFailed
+            }
+
+            guard let maxIdx = probabilities.indices.max(by: { probabilities[$0] < probabilities[$1] }) else {
+                return nil
+            }
+
+            let clusterIdStr = poseClusterIds[maxIdx]
+            let clusterId = Int(clusterIdStr) ?? maxIdx
+            let cluster = manifest.poseClusters[clusterIdStr]
+            let kind = ClusterKind(rawValue: cluster?.kind ?? "unconfirmed") ?? .unconfirmed
+            let label = cluster?.label ?? "pose_\(clusterId)"
+
+            return PosePrediction(
+                poseId: clusterId,
+                confidence: probabilities[maxIdx],
+                kind: kind,
+                clusterLabel: label
+            )
+        } catch let e as GestureModelError {
+            throw e
+        } catch {
+            throw GestureModelError.predictionFailed
+        }
+    }
+
     // MARK: - Prediction
 
     public func predict(handfilm: HandFilm) throws -> GesturePrediction? {
@@ -93,6 +172,24 @@ public class GestureModel {
             return try predictWithTensorFlow(handfilm: handfilm, k: maxK)
         case .mock:
             return try predictWithMock(handfilm: handfilm, k: maxK)
+        }
+    }
+
+    /// Phase 3 restricted prediction (plan §Phase 3 Output restriction to candidate set S).
+    ///
+    /// Runs Phase 3 normally, then takes the argmax only over classes in `candidateGestures`.
+    /// Reports the **pre-mask, unrenormalised** softmax probability of the chosen class so
+    /// τ_phase3_confidence is invariant to |S|.
+    public func predictRestrictedToSet(handfilm: HandFilm, candidateGestures: Set<String>) throws -> GesturePrediction? {
+        guard isModelLoaded else { throw GestureModelError.modelNotLoaded }
+        guard !handfilm.frames.isEmpty else { throw GestureModelError.invalidInput }
+        guard !candidateGestures.isEmpty, !supportedGestureIds.isEmpty else { return nil }
+
+        switch config.backendType {
+        case .tensorFlow:
+            return try predictMaskedArgmaxTensorFlow(handfilm: handfilm, candidateGestures: candidateGestures)
+        case .mock:
+            return nil
         }
     }
 
@@ -236,6 +333,53 @@ public class GestureModel {
             }
 
             return Array(predictions.sorted { $0.confidence > $1.confidence }.prefix(k))
+        } catch let e as GestureModelError {
+            throw e
+        } catch {
+            throw GestureModelError.predictionFailed
+        }
+    }
+
+    private func predictMaskedArgmaxTensorFlow(handfilm: HandFilm, candidateGestures: Set<String>) throws -> GesturePrediction? {
+        guard let interpreter = tfliteInterpreter else { throw GestureModelError.modelNotLoaded }
+        guard !supportedGestureIds.isEmpty else { return nil }
+
+        var floatFeatures = FeaturePreprocessor.summaryFeatures(from: handfilm)
+        let inputData = Data(bytes: &floatFeatures, count: floatFeatures.count * MemoryLayout<Float>.size)
+
+        do {
+            try interpreter.copy(inputData, toInputAt: 0)
+            try interpreter.invoke()
+
+            let outputTensor = try interpreter.output(at: 0)
+            let probabilities: [Float] = outputTensor.data.withUnsafeBytes {
+                Array($0.bindMemory(to: Float.self))
+            }
+
+            guard probabilities.count == supportedGestureIds.count else {
+                throw GestureModelError.predictionFailed
+            }
+
+            // Masked argmax: best probability only among candidateGestures
+            var bestIdx: Int? = nil
+            var bestProb: Float = -1
+            for (i, gestureId) in supportedGestureIds.enumerated() {
+                guard candidateGestures.contains(gestureId), gestureId != noneGestureID else { continue }
+                if probabilities[i] > bestProb {
+                    bestProb = probabilities[i]
+                    bestIdx = i
+                }
+            }
+
+            guard let idx = bestIdx, bestProb >= config.predictionThreshold else { return nil }
+
+            let gestureId = supportedGestureIds[idx]
+            return GesturePrediction(
+                gestureId: gestureId,
+                gestureName: gestureId,
+                confidence: bestProb,
+                timestamp: Date().timeIntervalSince1970
+            )
         } catch let e as GestureModelError {
             throw e
         } catch {

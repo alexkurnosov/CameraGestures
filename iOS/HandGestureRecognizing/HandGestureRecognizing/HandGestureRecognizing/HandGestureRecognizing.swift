@@ -39,6 +39,22 @@ public class HandGestureRecognizing {
 
     private var motionGate: MotionGate? = nil
 
+    // MARK: - Phase 2 state (all accessed only on handshotQueue)
+
+    private var holdDetector: HoldDetector? = nil
+    private var prefixMatcher: PrefixMatcher? = nil
+
+    /// Buffer of in-view frames accumulated during the current open gate cycle.
+    /// Used by Phase 3 when a Phase 2 commit fires before the gate closes.
+    private var holdsModeCycleBuffer: [HandShot] = []
+    private var holdsGateOpenTime: TimeInterval? = nil
+    /// Prevents a second Phase 3 call when the gate closes after a Phase 2 commit already fired.
+    private var holdsModeAlreadyCommitted = false
+
+    private var tCommitTask: Task<Void, Never>? = nil
+    private var tMinBufferTask: Task<Void, Never>? = nil
+    private var tCommitCandidateSet: Set<String>? = nil
+
     // MARK: - Cooldown state (main thread only)
 
     private var cooldownEndTime: TimeInterval? = nil
@@ -57,6 +73,9 @@ public class HandGestureRecognizing {
 
     /// Called whenever a completed handfilm is produced.
     public var handfilmCallback: HandFilmCallback?
+
+    /// Fired on the main thread whenever Phase 2 processes a hold in Holds mode.
+    public var holdsModeTelemetryCallback: HoldsModeTelemetryCallback?
 
     private var currentStatus: GestureRecognizingStatus = .idle {
         didSet {
@@ -98,6 +117,13 @@ public class HandGestureRecognizing {
             try gestureModel.initialize(config: self.config.gestureModelConfig)
             if let gateConfig = self.config.motionGateConfig {
                 motionGate = MotionGate(config: gateConfig, bufferCap: self.config.gestureBufferSize)
+            }
+            if let holdsConfig = self.config.holdsConfig {
+                holdDetector = HoldDetector(config: HoldDetector.Config(
+                    tHold: holdsConfig.tHold,
+                    kHoldMs: holdsConfig.kHoldMs,
+                    smoothKMs: holdsConfig.smoothKMs
+                ))
             }
             isInitialized = true
             currentStatus = .idle
@@ -199,6 +225,17 @@ public class HandGestureRecognizing {
         }
     }
 
+    /// Load the pose model (.tflite + manifest) and create the PrefixMatcher.
+    /// Safe to call at any time; takes effect on the next cycle.
+    public func loadPoseModel(tflitePath: String, manifestPath: String) throws {
+        try gestureModel.loadPoseModel(tflitePath: tflitePath, manifestPath: manifestPath)
+        if let manifest = gestureModel.poseManifest {
+            handshotQueue.async { [weak self] in
+                self?.prefixMatcher = PrefixMatcher(manifest: manifest)
+            }
+        }
+    }
+
     /// Update configuration while running
     public func updateConfig(_ newConfig: HandGestureRecognizingConfig) throws {
         let wasRunning = isRunning
@@ -271,24 +308,226 @@ public class HandGestureRecognizing {
 
     private func handleHandshotWithGate(_ handshot: HandShot, gate: MotionGate, gateConfig: MotionGateConfig) {
         let event = gate.process(handshot)
+
         switch event {
-        case .stillClosed, .stillOpen, .opened:
+        case .stillClosed:
             break
+
+        case .opened:
+            // Phase 2 reset on gate-open
+            holdsModeCycleBuffer.removeAll()
+            holdsGateOpenTime = handshot.timestamp
+            holdsModeAlreadyCommitted = false
+            cancelPendingCommitTasks()
+            holdDetector?.reset()
+            prefixMatcher?.reset()
+
+        case .stillOpen:
+            holdsModeCycleBuffer.append(handshot)
+            // Phase 2 hold detection (only when pose model available)
+            if let detector = holdDetector, gestureModel.isPoseModelLoaded {
+                let holdEvent = detector.process(handshot)
+                if case .holdDetected(let repShot, let startTime, let endTime) = holdEvent {
+                    handlePhase2Hold(repShot: repShot, startTime: startTime, endTime: endTime,
+                                     gateConfig: gateConfig)
+                }
+            }
+
         case .cycleEnded(let buffer):
+            cancelPendingCommitTasks()
             handleCycleEnd(buffer: buffer, gateConfig: gateConfig)
         }
+
         reportGateUpdate(state: gate.state, count: gate.bufferCount)
+    }
+
+    private func cancelPendingCommitTasks() {
+        tCommitTask?.cancel()
+        tCommitTask = nil
+        tMinBufferTask?.cancel()
+        tMinBufferTask = nil
+        tCommitCandidateSet = nil
     }
 
     private func handleCycleEnd(buffer: [HandShot], gateConfig: MotionGateConfig) {
         let cooldownSec = gateConfig.cooldownMs / 1000.0
+
+        // Holds mode: if Phase 2 already committed this cycle, skip Phase 3 here.
+        if gateEnabled && holdsModeAlreadyCommitted {
+            holdsModeAlreadyCommitted = false
+            holdsModeCycleBuffer.removeAll()
+            prefixMatcher?.reset()
+            Task { @MainActor [weak self] in
+                self?.startCooldown(duration: cooldownSec)
+            }
+            return
+        }
+
         Task { @MainActor [weak self] in
             self?.startCooldown(duration: cooldownSec)
         }
+
+        guard !buffer.isEmpty, gestureModel.isLoaded else { return }
+
+        if gateEnabled {
+            // Holds mode gate-close path (plan §Phase 2 Runtime flow — gate-close commit)
+            let film = makeHandFilm(from: buffer)
+            let candidateSet = prefixMatcher?.gateCloseCommitSet()
+            prefixMatcher?.reset()
+            holdsModeAlreadyCommitted = false
+            holdsModeCycleBuffer.removeAll()
+
+            if let candidateSet {
+                Task { [weak self] in
+                    await self?.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
+                }
+            }
+            // else: discard (no Phase 3 call)
+        } else {
+            let film = makeHandFilm(from: buffer)
+            Task { [weak self] in
+                await self?.recognizeAndEmitGated(film)
+            }
+        }
+    }
+
+    // MARK: - Phase 2 Hold Handler
+
+    private func handlePhase2Hold(repShot: HandShot, startTime: TimeInterval, endTime: TimeInterval,
+                                   gateConfig: MotionGateConfig) {
+        guard let holdsConfig = config.holdsConfig,
+              let matcher = prefixMatcher,
+              let coords = MotionGate.normalize(repShot) else { return }
+
+        do {
+            guard let posePrediction = try gestureModel.predictPose(normalizedCoords: coords) else { return }
+
+            // Reject if below τ_pose_confidence
+            guard posePrediction.confidence >= holdsConfig.tauPoseConfidence else {
+                reportHoldsTelemetry(posePrediction: posePrediction, matcher: matcher, matchedGesture: nil)
+                return
+            }
+
+            let action = matcher.observe(poseId: posePrediction.poseId, kind: posePrediction.kind)
+
+            // Determine current matched gesture for telemetry
+            let matchedGesture = matcher.gateCloseCommitSet().flatMap { $0.first }
+            reportHoldsTelemetry(posePrediction: posePrediction, matcher: matcher, matchedGesture: matchedGesture)
+
+            switch action {
+            case .noPrefix, .idleDiscard:
+                // Discard capture — reset gate
+                cancelPendingCommitTasks()
+                matcher.reset()
+                holdsModeCycleBuffer.removeAll()
+                motionGate?.reset()
+
+            case .livePrefix:
+                cancelPendingCommitTasks()
+
+            case .commitNow(let candidateSet):
+                cancelPendingCommitTasks()
+                scheduleCommitOrDefer(candidateSet: candidateSet, holdsConfig: holdsConfig,
+                                      gateConfig: gateConfig)
+
+            case .startCommitTimer(let candidateSet):
+                cancelPendingCommitTasks()
+                tCommitCandidateSet = candidateSet
+                let commitMs = holdsConfig.tCommitMs
+                tCommitTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(commitMs * 1_000_000))
+                    guard !Task.isCancelled else { return }
+                    await self?.handleTCommitFired(holdsConfig: holdsConfig, gateConfig: gateConfig)
+                }
+
+            case .idleReset:
+                // Idle on empty observed — reset gate, keep watching
+                cancelPendingCommitTasks()
+                matcher.reset()
+                holdsModeCycleBuffer.removeAll()
+                motionGate?.reset()
+
+            case .idleCommit(let candidateSet):
+                cancelPendingCommitTasks()
+                scheduleCommitOrDefer(candidateSet: candidateSet, holdsConfig: holdsConfig,
+                                      gateConfig: gateConfig)
+            }
+        } catch {
+            print("[Phase2] Pose prediction error: \(error)")
+        }
+    }
+
+    /// Commit or defer until T_min_buffer is satisfied.
+    private func scheduleCommitOrDefer(candidateSet: Set<String>, holdsConfig: HoldsConfig,
+                                        gateConfig: MotionGateConfig) {
+        let openTime = holdsGateOpenTime ?? Date().timeIntervalSince1970
+        let elapsed = (Date().timeIntervalSince1970 - openTime) * 1000
+        let remaining = holdsConfig.tMinBufferMs - elapsed
+
+        if remaining <= 0 {
+            // T_min_buffer already satisfied
+            triggerPhase3Commit(candidateSet: candidateSet, gateConfig: gateConfig)
+        } else {
+            // Defer until T_min_buffer elapses
+            tMinBufferTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000))
+                guard !Task.isCancelled else { return }
+                self?.handshotQueue.async { [weak self] in
+                    guard let self, !self.holdsModeAlreadyCommitted else { return }
+                    self.triggerPhase3Commit(candidateSet: candidateSet, gateConfig: gateConfig)
+                }
+            }
+        }
+    }
+
+    /// Called when the T_commit timer fires.
+    @MainActor
+    private func handleTCommitFired(holdsConfig: HoldsConfig, gateConfig: MotionGateConfig) async {
+        handshotQueue.async { [weak self] in
+            guard let self else { return }
+            guard !self.holdsModeAlreadyCommitted, let candidateSet = self.tCommitCandidateSet else { return }
+            self.tCommitCandidateSet = nil
+            self.scheduleCommitOrDefer(candidateSet: candidateSet, holdsConfig: holdsConfig,
+                                       gateConfig: gateConfig)
+        }
+    }
+
+    /// Snapshot the buffer, mark committed, run Phase 3.
+    private func triggerPhase3Commit(candidateSet: Set<String>, gateConfig: MotionGateConfig) {
+        guard !holdsModeAlreadyCommitted else { return }
+        holdsModeAlreadyCommitted = true
+
+        let buffer = holdsModeCycleBuffer
+        prefixMatcher?.reset()
+        holdsModeCycleBuffer.removeAll()
+        motionGate?.reset()
+
+        let cooldownSec = gateConfig.cooldownMs / 1000.0
+        Task { @MainActor [weak self] in
+            self?.startCooldown(duration: cooldownSec)
+        }
+
         guard !buffer.isEmpty, gestureModel.isLoaded else { return }
         let film = makeHandFilm(from: buffer)
         Task { [weak self] in
-            await self?.recognizeAndEmitGated(film)
+            await self?.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
+        }
+    }
+
+    // MARK: - Telemetry
+
+    private func reportHoldsTelemetry(posePrediction: PosePrediction, matcher: PrefixMatcher,
+                                       matchedGesture: String?) {
+        let telemetry = HoldsTelemetry(
+            lastPoseId: posePrediction.poseId,
+            lastPoseLabel: posePrediction.clusterLabel,
+            lastPoseConfidence: posePrediction.confidence,
+            lastPoseKind: posePrediction.kind.rawValue,
+            observedSequence: matcher.observedSequence,
+            matchedGesture: matchedGesture
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.holdsModeTelemetryCallback?(telemetry)
         }
     }
 
@@ -309,6 +548,34 @@ public class HandGestureRecognizing {
         var film = HandFilm(startTime: first.timestamp)
         for shot in shots { film.addFrame(shot) }
         return film
+    }
+
+    // MARK: - Holds Mode Recognition (Phase 3 with masked argmax)
+
+    private func recognizeAndEmitHoldsMode(_ film: HandFilm, candidateSet: Set<String>) async {
+        let t0 = Date().timeIntervalSince1970
+        do {
+            guard let prediction = try gestureModel.predictRestrictedToSet(
+                handfilm: film, candidateGestures: candidateSet
+            ) else { return }
+
+            let holdsConfig = config.holdsConfig
+            let threshold = holdsConfig?.tauPhase3Confidence ?? config.confidenceThreshold
+            guard prediction.confidence >= threshold else { return }
+
+            let detected = DetectedGesture(
+                prediction: prediction,
+                handfilm: film,
+                handedness: film.frames.first?.leftOrRight ?? .unknown,
+                detectionTimestamp: Date().timeIntervalSince1970,
+                processingLatency: Date().timeIntervalSince1970 - t0
+            )
+            await MainActor.run { [weak self] in
+                self?.emitOrQueueGated(detected)
+            }
+        } catch {
+            print("[Phase3-Holds] Recognition error: \(error)")
+        }
     }
 
     // MARK: - Gated Recognition

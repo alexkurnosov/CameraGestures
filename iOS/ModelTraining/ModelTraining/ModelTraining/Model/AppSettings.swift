@@ -104,4 +104,14 @@ class AppSettings: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GestureModel/gesture_model.tflite")
     }
+
+    func defaultPoseModelURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GestureModel/pose_model.tflite")
+    }
+
+    func defaultPoseManifestURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GestureModel/pose_manifest.json")
+    }
 }

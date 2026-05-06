@@ -212,10 +212,11 @@ struct CameraView: View {
         }
     }
 
-    // MARK: - Holds Mode Gate Indicator
+    // MARK: - Holds Mode Gate Indicator + Phase 2 Telemetry
 
     private var holdsGateOverlay: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 6) {
+            // Phase 1: gate state + buffer
             HStack(spacing: 6) {
                 Circle()
                     .fill(gestureRecognizer.motionGateState == .open ? Color.green : Color.orange)
@@ -233,11 +234,84 @@ struct CameraView: View {
             .padding(.vertical, 5)
             .background(Color.black.opacity(0.65))
             .cornerRadius(20)
-            .padding(.leading, 10)
-            .padding(.top, 10)
+
+            // Phase 2: last detected hold
+            let t = gestureRecognizer.holdsTelemetry
+            if let poseLabel = t.lastPoseLabel, let conf = t.lastPoseConfidence, let kind = t.lastPoseKind {
+                HStack(spacing: 6) {
+                    kindDot(kind: kind)
+                    Text(poseLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                    Text("\(Int(conf * 100))%")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                    Text("[\(kind)]")
+                        .font(.caption2)
+                        .foregroundColor(kindColor(kind: kind).opacity(0.9))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.65))
+                .cornerRadius(20)
+            }
+
+            // Phase 2: observed sequence
+            if !t.observedSequence.isEmpty {
+                HStack(spacing: 4) {
+                    Text("seq:")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.6))
+                    Text(t.observedSequence.map { String($0) }.joined(separator: "→"))
+                        .font(.caption.monospaced())
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.60))
+                .cornerRadius(16)
+            }
+
+            // Phase 2: template match
+            HStack(spacing: 4) {
+                Text("match:")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.6))
+                if let match = t.matchedGesture {
+                    Text(match)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.green)
+                } else {
+                    Text("no match")
+                        .font(.caption)
+                        .foregroundColor(.orange.opacity(0.9))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Color.black.opacity(0.60))
+            .cornerRadius(16)
+
             Spacer()
         }
+        .padding(.leading, 10)
+        .padding(.top, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func kindColor(kind: String) -> Color {
+        switch kind {
+        case "idle": return .yellow
+        case "regular": return .green
+        default: return .gray
+        }
+    }
+
+    @ViewBuilder
+    private func kindDot(kind: String) -> some View {
+        Circle()
+            .fill(kindColor(kind: kind))
+            .frame(width: 8, height: 8)
     }
 
     // MARK: - Controls Section

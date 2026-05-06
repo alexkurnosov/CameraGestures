@@ -838,6 +838,50 @@ class GestureModelAPIClient: ObservableObject {
         return try await perform(request, decoding: ClusterHoldsResponse.self)
     }
 
+    // MARK: - Download Pose Model (Stage 7)
+
+    /// Download pose_model.tflite and pose_manifest.json, saving them alongside the
+    /// handfilm model in Documents/GestureModel/.
+    /// Returns the URL of the saved .tflite file.
+    func downloadPoseModel() async throws -> URL {
+        let dir = tfliteModelURL().deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Download tflite
+        try await ensureAuthenticated()
+        var tfliteRequest = URLRequest(url: baseURL.appendingPathComponent("model/pose/download"))
+        if let token = tokenStorage.load() {
+            tfliteRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (tmpTflite, tfliteResponse) = try await session.download(for: tfliteRequest)
+        guard let http = tfliteResponse as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.httpError(statusCode: (tfliteResponse as? HTTPURLResponse)?.statusCode ?? 0,
+                                     detail: "model/pose/download failed")
+        }
+        let tfliteDest = dir.appendingPathComponent("pose_model.tflite")
+        if FileManager.default.fileExists(atPath: tfliteDest.path) {
+            try FileManager.default.removeItem(at: tfliteDest)
+        }
+        try FileManager.default.moveItem(at: tmpTflite, to: tfliteDest)
+
+        // Download manifest
+        let manifest = try await fetchPoseManifest()
+        let manifestData = try JSONEncoder().encode(manifest)
+        let manifestDest = dir.appendingPathComponent("pose_manifest.json")
+        try manifestData.write(to: manifestDest, options: .atomic)
+
+        print("[GestureModelAPIClient] Pose model saved to \(tfliteDest.path)")
+        return tfliteDest
+    }
+
+    func poseModelURL() -> URL {
+        tfliteModelURL().deletingLastPathComponent().appendingPathComponent("pose_model.tflite")
+    }
+
+    func poseManifestURL() -> URL {
+        tfliteModelURL().deletingLastPathComponent().appendingPathComponent("pose_manifest.json")
+    }
+
     // MARK: - Analyze Holds (Stage 2)
 
     func analyzeHolds(film: HandFilm) async throws -> AnalyzeHoldsResponse {

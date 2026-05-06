@@ -84,6 +84,10 @@ class ServerTrainingManager: ObservableObject {
                 let sidecarURL = mURL.deletingLastPathComponent().appendingPathComponent("gesture_ids.json")
                 let gestureIds = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: sidecarURL))) ?? []
                 try gestureRecognizer.recognizer.loadModel(from: mURL.path, gestureIds: gestureIds)
+
+                // Pose model is optional — only available after POST /train/pose has run
+                try? await apiClient.downloadPoseModel()
+                gestureRecognizer.loadPoseModelIfAvailable(appSettings: appSettings)
             } catch {
                 serverActionError = error.localizedDescription
             }
