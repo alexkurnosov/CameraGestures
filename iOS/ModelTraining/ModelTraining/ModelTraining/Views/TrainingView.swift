@@ -21,6 +21,8 @@ struct TrainingView: View {
     @State private var showingTrainingError = false
     @State private var showingServerError = false
     @State private var showingWipeModelAlert = false
+    @State private var poseTrainingStatus: String = "idle"  // idle | training | ready | failed
+    @State private var poseTrainingError: String? = nil
 
     var body: some View {
         NavigationView {
@@ -590,9 +592,25 @@ struct TrainingView: View {
     }
 
     private var poseInspectorSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Pose Model")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Pose Model")
+                    .font(.headline)
+                Spacer()
+                if poseTrainingStatus == "training" {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.75)
+                        Text("Training…").font(.caption).foregroundColor(.secondary)
+                    }
+                } else if poseTrainingStatus == "ready" {
+                    Label("Ready", systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundColor(.green)
+                } else if poseTrainingStatus == "failed" {
+                    Label("Failed", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption).foregroundColor(.red)
+                }
+            }
+
             NavigationLink {
                 PoseInspectorView()
                     .environmentObject(apiClient)
@@ -601,13 +619,56 @@ struct TrainingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
-            Text("Review and label pose clusters before training the pose model.")
+
+            Button {
+                Task { await triggerPoseTraining() }
+            } label: {
+                Label("Train Pose Model", systemImage: "brain")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.indigo)
+            .disabled(poseTrainingStatus == "training")
+
+            if let err = poseTrainingError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .lineLimit(3)
+            }
+
+            Text("Review clusters in the inspector, then train the pose model. Training is independent from server gesture training.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
         .padding()
         .background(Color.indigo.opacity(0.06))
         .cornerRadius(8)
+    }
+
+    private func triggerPoseTraining() async {
+        poseTrainingStatus = "training"
+        poseTrainingError = nil
+        do {
+            _ = try await apiClient.triggerPoseTraining()
+            // Poll until done
+            for _ in 0..<120 {
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+                let status = try await apiClient.fetchPoseTrainingStatus()
+                poseTrainingStatus = status.status
+                if status.status == "ready" || status.status == "failed" {
+                    if status.status == "failed" {
+                        poseTrainingError = status.error ?? "Training failed"
+                    }
+                    return
+                }
+            }
+            poseTrainingStatus = "failed"
+            poseTrainingError = "Timed out waiting for pose training"
+        } catch {
+            poseTrainingStatus = "failed"
+            poseTrainingError = error.localizedDescription
+        }
     }
 
     private var dangerZoneSection: some View {

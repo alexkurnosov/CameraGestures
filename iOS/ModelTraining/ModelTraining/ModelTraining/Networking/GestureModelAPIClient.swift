@@ -278,6 +278,16 @@ struct ExampleListResponse: Codable {
 
 // MARK: - Stage 4: Pose model status
 
+struct PoseTrainingJobResponse: Codable {
+    let jobId: String
+    let status: String  // "started" | "already_running"
+
+    enum CodingKeys: String, CodingKey {
+        case jobId = "job_id"
+        case status
+    }
+}
+
 struct PoseReclusterSignals: Codable {
     let outOfEpsilonFraction: Double?
     let suggestRecluster: Bool
@@ -947,6 +957,12 @@ class GestureModelAPIClient: ObservableObject {
     }
 
     // MARK: - Pose Model (Stage 4 / Stage 5)
+
+    func triggerPoseTraining() async throws -> PoseTrainingJobResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("train/pose"))
+        request.httpMethod = "POST"
+        return try await perform(request, decoding: PoseTrainingJobResponse.self)
+    }
 
     func fetchPoseTrainingStatus() async throws -> PoseTrainingStatusResponse {
         let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/status"))
