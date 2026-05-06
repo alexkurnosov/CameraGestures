@@ -605,7 +605,8 @@ private final class HoldInspectorViewModel: ObservableObject {
         let newExclusions = cachedExcludedHolds + [entry]
         let body = PoseCorrectionsRequest(
             clusterKinds: cachedClusterKinds,
-            excludedHolds: newExclusions
+            excludedHolds: newExclusions,
+            extraTemplates: [:]
         )
         do {
             let updated = try await client.putPoseCorrections(body)
