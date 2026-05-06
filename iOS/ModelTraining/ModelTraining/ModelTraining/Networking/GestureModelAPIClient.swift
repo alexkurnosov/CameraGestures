@@ -308,6 +308,137 @@ struct PoseTrainingStatusResponse: Codable {
     }
 }
 
+// MARK: - Stage 8: Phase 2 metrics
+
+struct PosePerClassMetric: Codable, Identifiable {
+    let clusterId: Int
+    let precision: Double
+    let recall: Double
+    let f1: Double
+    let supportVal: Int
+    let supportTrain: Int
+
+    var id: Int { clusterId }
+
+    enum CodingKeys: String, CodingKey {
+        case clusterId = "cluster_id"
+        case precision, recall, f1
+        case supportVal = "support_val"
+        case supportTrain = "support_train"
+    }
+}
+
+struct PoseLayer2Metrics: Codable {
+    let perClass: [PosePerClassMetric]
+    let confusionMatrix: [[Int]]
+    let valSize: Int
+    let trainSize: Int
+    let nClusters: Int
+
+    enum CodingKeys: String, CodingKey {
+        case perClass = "per_class"
+        case confusionMatrix = "confusion_matrix"
+        case valSize = "val_size"
+        case trainSize = "train_size"
+        case nClusters = "n_clusters"
+    }
+}
+
+struct PoseLengthDistEntry: Codable {
+    let length: Int
+    let count: Int
+}
+
+struct PosePerGestureMetric: Codable, Identifiable {
+    let gestureId: String
+    let nFilms: Int
+    let commitRate: Double
+    let commitCorrectRate: Double
+    let precision: Double?
+    let recall: Double?
+    let f1: Double?
+
+    var id: String { gestureId }
+
+    enum CodingKeys: String, CodingKey {
+        case gestureId = "gesture_id"
+        case nFilms = "n_films"
+        case commitRate = "commit_rate"
+        case commitCorrectRate = "commit_correct_rate"
+        case precision, recall, f1
+    }
+}
+
+struct PoseNonModalImpactEntry: Codable, Identifiable {
+    let gestureId: String
+    let recallAllFilms: Double?
+    let recallModalFilmsOnly: Double?
+    let nAll: Int
+    let nModal: Int
+
+    var id: String { gestureId }
+
+    enum CodingKeys: String, CodingKey {
+        case gestureId = "gesture_id"
+        case recallAllFilms = "recall_all_films"
+        case recallModalFilmsOnly = "recall_modal_films_only"
+        case nAll = "n_all"
+        case nModal = "n_modal"
+    }
+}
+
+struct PoseNonModalImpact: Codable {
+    let perClass: [PoseNonModalImpactEntry]
+    let note: String
+
+    enum CodingKeys: String, CodingKey {
+        case perClass = "per_class"
+        case note
+    }
+}
+
+struct PoseLayer3Metrics: Codable {
+    let nFilms: Int
+    let commitRate: Double
+    let commitCorrectRate: Double
+    let noPrefixRate: Double
+    let prematureIdleRate: Double
+    let idleWhileLivePrefixRate: Double
+    let idleWhileLivePrefixSuccessRate: Double?
+    let lengthDistributionBySignal: [String: [PoseLengthDistEntry]]
+    let perGesture: [PosePerGestureMetric]
+    let nonModalExclusionImpact: PoseNonModalImpact?
+
+    enum CodingKeys: String, CodingKey {
+        case nFilms = "n_films"
+        case commitRate = "commit_rate"
+        case commitCorrectRate = "commit_correct_rate"
+        case noPrefixRate = "no_prefix_rate"
+        case prematureIdleRate = "premature_idle_rate"
+        case idleWhileLivePrefixRate = "idle_while_live_prefix_rate"
+        case idleWhileLivePrefixSuccessRate = "idle_while_live_prefix_success_rate"
+        case lengthDistributionBySignal = "length_distribution_by_signal"
+        case perGesture = "per_gesture"
+        case nonModalExclusionImpact = "non_modal_exclusion_impact"
+    }
+}
+
+struct PoseMetricsResponse: Codable {
+    let modelId: String
+    let trainedAt: TimeInterval
+    let trainedOn: Int
+    let layer2: PoseLayer2Metrics?
+    let layer3: PoseLayer3Metrics?
+
+    enum CodingKeys: String, CodingKey {
+        case modelId = "model_id"
+        case trainedAt = "trained_at"
+        case trainedOn = "trained_on"
+        case layer2
+        case layer3
+    }
+}
+
 // MARK: - Stage 5: Pose manifest, corrections, cluster holds
 
 struct PoseClusterInfo: Codable {
@@ -806,6 +937,13 @@ class GestureModelAPIClient: ObservableObject {
         var request = URLRequest(url: baseURL.appendingPathComponent("admin/update"))
         request.httpMethod = "POST"
         let _: UpdateServerResponse = try await perform(request, decoding: UpdateServerResponse.self)
+    }
+
+    // MARK: - Pose Metrics (Stage 8)
+
+    func fetchPoseMetrics() async throws -> PoseMetricsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/pose/metrics"))
+        return try await perform(request, decoding: PoseMetricsResponse.self)
     }
 
     // MARK: - Pose Model (Stage 4 / Stage 5)

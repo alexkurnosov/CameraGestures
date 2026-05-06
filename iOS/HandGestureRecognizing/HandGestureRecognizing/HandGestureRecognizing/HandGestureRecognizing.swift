@@ -369,22 +369,26 @@ public class HandGestureRecognizing {
 
         guard !buffer.isEmpty, gestureModel.isLoaded else { return }
 
+        let film = makeHandFilm(from: buffer)
         if gateEnabled {
             // Holds mode gate-close path (plan §Phase 2 Runtime flow — gate-close commit)
-            let film = makeHandFilm(from: buffer)
             let candidateSet = prefixMatcher?.gateCloseCommitSet()
             prefixMatcher?.reset()
             holdsModeAlreadyCommitted = false
             holdsModeCycleBuffer.removeAll()
 
             if let candidateSet {
+                // Phase 2 matched — run Phase 3 restricted to candidate set
                 Task { [weak self] in
                     await self?.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
                 }
+            } else {
+                // No Phase 2 match (no pose model or no hold detected) — run Phase 3 unrestricted
+                Task { [weak self] in
+                    await self?.recognizeAndEmitGated(film)
+                }
             }
-            // else: discard (no Phase 3 call)
         } else {
-            let film = makeHandFilm(from: buffer)
             Task { [weak self] in
                 await self?.recognizeAndEmitGated(film)
             }

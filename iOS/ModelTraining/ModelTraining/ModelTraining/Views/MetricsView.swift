@@ -12,6 +12,7 @@ struct MetricsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var reclusterSignals: PoseReclusterSignals? = nil
+    @State private var poseMetrics: PoseMetricsResponse? = nil
 
     var body: some View {
         NavigationView {
@@ -93,6 +94,9 @@ struct MetricsView: View {
             thresholdSection(m)
             aucSection(m)
             confusionMatrixSection(m)
+            if let pm = poseMetrics {
+                phase2Section(pm)
+            }
         }
         .listStyle(.insetGrouped)
         .refreshable { await refresh() }
@@ -324,6 +328,121 @@ struct MetricsView: View {
         }
     }
 
+    // MARK: - Phase 2 section
+
+    @ViewBuilder
+    private func phase2Section(_ pm: PoseMetricsResponse) -> some View {
+        if let l2 = pm.layer2 {
+            Section {
+                metricRow("Clusters", value: "\(l2.nClusters)")
+                metricRow("Train holds", value: "\(l2.trainSize)")
+                metricRow("Val holds", value: "\(l2.valSize)")
+                ForEach(l2.perClass) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cluster \(row.clusterId)")
+                            .font(.headline)
+                        HStack {
+                            labelValue("Prec", percent(row.precision))
+                            Spacer()
+                            labelValue("Recall", percent(row.recall))
+                            Spacer()
+                            labelValue("F1", format(row.f1))
+                        }
+                        .font(.caption)
+                        Text("train: \(row.supportTrain)  •  val: \(row.supportVal)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                Text("Phase 2 — Pose MLP (Layer 2)")
+            } footer: {
+                Text("Per-cluster precision/recall of the pose MLP classifier on the validation hold set.")
+            }
+        }
+
+        if let l3 = pm.layer3 {
+            Section {
+                metricRow("Films evaluated", value: "\(l3.nFilms)")
+                metricRow("Commit rate", value: percent(l3.commitRate))
+                HStack {
+                    Text("Commit-correct rate").bold()
+                    Spacer()
+                    Text(percent(l3.commitCorrectRate))
+                        .bold()
+                        .foregroundColor(.secondary)
+                        .font(.system(.body, design: .monospaced))
+                }
+                metricRow("No-prefix rate", value: percent(l3.noPrefixRate))
+                metricRow("Premature idle rate", value: percent(l3.prematureIdleRate))
+                metricRow("Idle-while-live-prefix", value: percent(l3.idleWhileLivePrefixRate))
+                if let s = l3.idleWhileLivePrefixSuccessRate {
+                    metricRow("  └ success rate", value: percent(s))
+                }
+            } header: {
+                Text("Phase 2 — End-to-end pipeline (Layer 3)")
+            } footer: {
+                Text("Commit-correct rate: fraction of corpus films that committed to the correct gesture. No-prefix: Phase 2 discarded the capture entirely.")
+            }
+
+            if !l3.perGesture.isEmpty {
+                Section {
+                    ForEach(l3.perGesture) { g in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(g.gestureId)
+                                .font(.headline)
+                            HStack {
+                                labelValue("Commit%", percent(g.commitRate))
+                                Spacer()
+                                labelValue("Correct%", percent(g.commitCorrectRate))
+                                Spacer()
+                                labelValue("Recall", percent(g.recall))
+                                Spacer()
+                                labelValue("F1", format(g.f1))
+                            }
+                            .font(.caption)
+                            Text("\(g.nFilms) films")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                } header: {
+                    Text("Phase 2 — Per gesture")
+                } footer: {
+                    Text("Commit% = fraction of films with any commit. Correct% = fraction committed to the right gesture.")
+                }
+            }
+
+            if let nmi = l3.nonModalExclusionImpact, !nmi.perClass.isEmpty {
+                Section {
+                    ForEach(nmi.perClass) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.gestureId)
+                                .font(.headline)
+                            HStack {
+                                labelValue("All films", percent(entry.recallAllFilms))
+                                Spacer()
+                                labelValue("Modal only", percent(entry.recallModalFilmsOnly))
+                                Spacer()
+                                labelValue("n_all", "\(entry.nAll)")
+                                Spacer()
+                                labelValue("n_modal", "\(entry.nModal)")
+                            }
+                            .font(.caption)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                } header: {
+                    Text("Phase 2 — Non-modal exclusion impact")
+                } footer: {
+                    Text(nmi.note)
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func metricRow(_ label: String, value: String) -> some View {
@@ -391,6 +510,9 @@ struct MetricsView: View {
             } else {
                 metrics = nil
             }
+
+            // Load Phase 2 metrics (Stage 8.3)
+            poseMetrics = try? await apiClient.fetchPoseMetrics()
         } catch {
             errorMessage = error.localizedDescription
         }
