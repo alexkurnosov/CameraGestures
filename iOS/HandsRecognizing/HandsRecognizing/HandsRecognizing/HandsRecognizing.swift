@@ -218,6 +218,18 @@ public class HandsRecognizing: NSObject {
                 )
             }
 
+            // MediaPipe occasionally reports a detection with all-zero landmark
+            // coordinates (wrist and lm9 coincide) instead of an empty result.
+            // Treat those frames as absent so they don't corrupt hold detection.
+            let wrist = convertedLandmarks[0], lm9 = convertedLandmarks[9]
+            let dx = lm9.x - wrist.x, dy = lm9.y - wrist.y, dz = lm9.z - wrist.z
+            if dx*dx + dy*dy + dz*dz < 1e-12 {
+                if !currentHandfilm.frames.isEmpty {
+                    processAbsentFrame(timestamp: timestamp)
+                }
+                continue
+            }
+
             let handedness: LeftOrRight
             if handIndex < result.handedness.count,
                let firstHandedness = result.handedness[handIndex].first,
