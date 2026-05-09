@@ -774,6 +774,55 @@ struct ConfidenceCurvesResponse: Codable {
     }
 }
 
+// MARK: - Stage 11: Pipeline metrics (Layer #4)
+
+struct PipelinePerGestureMetric: Codable, Identifiable {
+    var id: String { gestureId }
+    let gestureId: String
+    let nFilms: Int
+    let gateOpenRate: Double
+    let commitCorrect12: Double
+    let commitCorrect123: Double
+
+    enum CodingKeys: String, CodingKey {
+        case gestureId       = "gesture_id"
+        case nFilms          = "n_films"
+        case gateOpenRate    = "gate_open_rate"
+        case commitCorrect12 = "commit_correct_12"
+        case commitCorrect123 = "commit_correct_123"
+    }
+}
+
+struct PipelineMetricsResponse: Codable {
+    let nFilms: Int
+    let gateOpenRate: Double
+    let gateMissRate: Double
+    let commitCorrect12: Double
+    let commitCorrect123: Double
+    let phase3Lift: Double
+    let fullFilmCommitCorrect: Double
+    let gateTrimImpact: Double
+    let avgBufferFraction: Double?
+    let perGesture: [PipelinePerGestureMetric]
+    let evaluatedAt: TimeInterval?
+    let gateParamsUsed: [String: Double]?
+
+    enum CodingKeys: String, CodingKey {
+        case nFilms                 = "n_films"
+        case gateOpenRate           = "gate_open_rate"
+        case gateMissRate           = "gate_miss_rate"
+        case commitCorrect12        = "commit_correct_12"
+        case commitCorrect123       = "commit_correct_123"
+        case phase3Lift             = "phase3_lift"
+        case fullFilmCommitCorrect  = "full_film_commit_correct"
+        case gateTrimImpact         = "gate_trim_impact"
+        case avgBufferFraction      = "avg_buffer_fraction"
+        case perGesture             = "per_gesture"
+        case evaluatedAt            = "evaluated_at"
+        case gateParamsUsed         = "gate_params_used"
+    }
+}
+
 // MARK: - Upload State
 
 enum UploadState: Equatable {
@@ -1162,6 +1211,20 @@ class GestureModelAPIClient: ObservableObject {
     func fetchConfidenceCurves() async throws -> ConfidenceCurvesResponse {
         let request = URLRequest(url: baseURL.appendingPathComponent("confidence-log/curves"))
         return try await perform(request, decoding: ConfidenceCurvesResponse.self)
+    }
+
+    // MARK: - Pipeline Metrics (Stage 11)
+
+    func fetchPipelineMetrics() async throws -> PipelineMetricsResponse {
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/pipeline/metrics"))
+        return try await perform(request, decoding: PipelineMetricsResponse.self)
+    }
+
+    @discardableResult
+    func triggerPipelineEvaluation() async throws -> [String: String] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("model/pipeline/evaluate"))
+        request.httpMethod = "POST"
+        return try await perform(request, decoding: [String: String].self)
     }
 
     // MARK: - Pose Model (Stage 4 / Stage 5)

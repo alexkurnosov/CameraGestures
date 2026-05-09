@@ -14,6 +14,7 @@ struct MetricsView: View {
     @State private var reclusterSignals: PoseReclusterSignals? = nil
     @State private var poseMetrics: PoseMetricsResponse? = nil
     @State private var confidenceCurves: ConfidenceCurvesResponse? = nil
+    @State private var pipelineMetrics: PipelineMetricsResponse? = nil
 
     var body: some View {
         NavigationView {
@@ -100,6 +101,9 @@ struct MetricsView: View {
             }
             if let curves = confidenceCurves {
                 confidenceCurvesSection(curves)
+            }
+            if let pl = pipelineMetrics {
+                pipelineSection(pl)
             }
         }
         .listStyle(.insetGrouped)
@@ -589,6 +593,82 @@ struct MetricsView: View {
         return date
     }
 
+    // MARK: - Pipeline section (Stage 11.3)
+
+    @ViewBuilder
+    private func pipelineSection(_ pl: PipelineMetricsResponse) -> some View {
+        let trimImpactLarge = abs(pl.gateTrimImpact) > 0.05
+        Section {
+            LabeledContent("Films evaluated", value: "\(pl.nFilms)")
+            LabeledContent("Gate open rate",  value: percent(pl.gateOpenRate))
+            LabeledContent("Gate miss rate",  value: percent(pl.gateMissRate))
+            if let buf = pl.avgBufferFraction {
+                LabeledContent("Avg buffer / film", value: percent(buf))
+            }
+            Divider()
+            LabeledContent("1+2 commit-correct",   value: percent(pl.commitCorrect12))
+            LabeledContent("1+2+3 commit-correct", value: percent(pl.commitCorrect123))
+            HStack {
+                Text("Phase 3 lift")
+                Spacer()
+                Text(String(format: "%+.1f pp", pl.phase3Lift * 100))
+                    .foregroundColor(pl.phase3Lift >= 0 ? .green : .red)
+            }
+            Divider()
+            HStack {
+                Text("Gate-trim impact")
+                Spacer()
+                Text(String(format: "%+.1f pp", pl.gateTrimImpact * 100))
+                    .foregroundColor(trimImpactLarge ? .red : .secondary)
+            }
+            if trimImpactLarge {
+                Text("⚠ Gate-trim impact > 5 pp — check T_open / K_open thresholds.")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            LabeledContent("Full-film baseline", value: percent(pl.fullFilmCommitCorrect))
+            if let ts = pl.evaluatedAt {
+                LabeledContent("Evaluated", value: formatDate(ts))
+            }
+        } header: {
+            Text("Pipeline (1+2+3) — Layer 4")
+        }
+
+        if !pl.perGesture.isEmpty {
+            Section("Per gesture — pipeline") {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 4) {
+                    GridRow {
+                        Text("Gesture").font(.caption2).foregroundColor(.secondary)
+                        Text("Gate%").font(.caption2).foregroundColor(.secondary)
+                        Text("1+2%").font(.caption2).foregroundColor(.secondary)
+                        Text("1+2+3%").font(.caption2).foregroundColor(.secondary)
+                    }
+                    ForEach(pl.perGesture) { g in
+                        GridRow {
+                            Text(g.gestureId).font(.caption2)
+                            Text(percent(g.gateOpenRate)).font(.caption2.monospacedDigit())
+                            Text(percent(g.commitCorrect12)).font(.caption2.monospacedDigit())
+                            Text(percent(g.commitCorrect123))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundColor(g.commitCorrect123 >= 0.85 ? .green : .orange)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+
+        Section {
+            Button("Re-evaluate pipeline") {
+                Task { try? await apiClient.triggerPipelineEvaluation() }
+            }
+        } footer: {
+            Text("Runs Phase 1 gate simulation + Phase 2 + Phase 3 on the stored corpus. "
+                 + "Requires gate_calibration.json, pose model, and Phase 3 model.")
+                .font(.caption)
+        }
+    }
+
     private func format(_ value: Double?) -> String {
         guard let v = value else { return "—" }
         return String(format: "%.3f", v)
@@ -633,6 +713,9 @@ struct MetricsView: View {
 
             // Load confidence curves (Stage 9.3)
             confidenceCurves = try? await apiClient.fetchConfidenceCurves()
+
+            // Load pipeline metrics (Stage 11.3)
+            pipelineMetrics = try? await apiClient.fetchPipelineMetrics()
         } catch {
             errorMessage = error.localizedDescription
         }
