@@ -61,9 +61,14 @@ struct CameraView: View {
 
                     capturePhaseOverlay
 
-                    // Gate indicator — visible in Holds mode during active recognition
-                    if viewModel.isRecognitionActive && viewModel.recognizingMode == .holds {
+                    // Gate indicator — visible when Enhanced Prediction Mode is on during recognition
+                    if viewModel.isRecognitionActive && appSettings.enhancedPredictionMode {
                         holdsGateOverlay
+                    }
+
+                    // Reviewer label buttons — always visible during active recognition
+                    if viewModel.isRecognitionActive {
+                        reviewerOverlay
                     }
                 }
                 .frame(maxHeight: 400)
@@ -130,10 +135,9 @@ struct CameraView: View {
         .onDisappear {
             viewModel.seriesCoordinator.stop()
         }
-        // Stage 9: log hold-level pose entries whenever a new hold is detected in Holds mode.
+        // Stage 9: log hold-level pose entries whenever a new hold is detected.
         .onChange(of: gestureRecognizer.holdsTelemetry) { telemetry in
             guard viewModel.isRecognitionActive,
-                  viewModel.recognizingMode == .holds,
                   let poseId = telemetry.lastPoseId,
                   let conf = telemetry.lastPoseConfidence else { return }
             // Upload the previous entry (unlabelled) before replacing it.
@@ -149,24 +153,13 @@ struct CameraView: View {
                 filmId: nil
             )
         }
-        // Stage 9: log phase3 entries for handfilm-mode commits.
+        // Stage 9: track committed Phase 3 gesture for optional reviewer label.
         .onReceive(gestureRecognizer.gestureDetected) { gesture in
             guard viewModel.isRecognitionActive else { return }
-            if viewModel.recognizingMode == .handfilm {
-                let entry = Phase3ConfidenceLogEntry(
-                    modelVersion: gestureRecognizer.handfilmModelVersion,
-                    candidateSetSize: gesture.candidateSetSize ?? 0,
-                    predictedClass: gesture.prediction.gestureId,
-                    confidence: Double(gesture.prediction.confidence),
-                    reviewerLabel: nil,
-                    timestamp: gesture.detectionTimestamp,
-                    filmId: nil
-                )
-                uploadPhase3Entry(entry)
-            } else if viewModel.recognizingMode == .holds {
-                // In Holds mode, track for optional reviewer label on the post-commit overlay.
-                pendingPhase3Gesture = gesture
-            }
+            pendingPhase3Gesture = gesture
+        }
+        .onChange(of: appSettings.bypassPhase2Filter) { bypass in
+            gestureRecognizer.recognizer.bypassPhase2Filter = bypass
         }
     }
 
@@ -336,7 +329,44 @@ struct CameraView: View {
             .background(Color.black.opacity(0.60))
             .cornerRadius(16)
 
-            // Stage 9: reviewer label buttons for the last detected hold.
+            // Phase 3: latest committed prediction
+            if let g = viewModel.currentGesture {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.path")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                    Text(g.prediction.gestureName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                    Text("\(Int(g.prediction.confidence * 100))%")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                    if appSettings.bypassPhase2Filter {
+                        Text("[unrestricted]")
+                            .font(.caption2)
+                            .foregroundColor(.orange.opacity(0.9))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.65))
+                .cornerRadius(20)
+            }
+
+            Spacer()
+        }
+        .padding(.leading, 10)
+        .padding(.top, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Reviewer Label Overlay (always visible during recognition)
+
+    private var reviewerOverlay: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Spacer()
+
+            // Pose reviewer
             if pendingPoseEntry != nil {
                 HStack(spacing: 6) {
                     Text("Pose:")
@@ -369,7 +399,7 @@ struct CameraView: View {
                 .cornerRadius(16)
             }
 
-            // Stage 9: reviewer label buttons for a committed Phase 3 gesture.
+            // Phase 3 reviewer
             if let p3 = pendingPhase3Gesture {
                 HStack(spacing: 6) {
                     Text("P3: \(p3.prediction.gestureId)")
@@ -401,12 +431,10 @@ struct CameraView: View {
                 .background(Color.black.opacity(0.60))
                 .cornerRadius(16)
             }
-
-            Spacer()
         }
-        .padding(.leading, 10)
-        .padding(.top, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 10)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func kindColor(kind: String) -> Color {
@@ -460,14 +488,17 @@ struct CameraView: View {
                 stopButton
 
             } else {
-                // Idle: mode picker + timing config + start buttons
-                modePicker
+                // Idle: timing config + start buttons
                 timingConfig
 
                 HStack(spacing: 12) {
                     startPredictionButton
                     startTrainingButton
                 }
+            }
+
+            if appSettings.enhancedPredictionMode {
+                bypassPhase2FilterToggle
             }
         }
     }
@@ -510,13 +541,20 @@ struct CameraView: View {
         }
     }
 
-    private var modePicker: some View {
-        Picker("Mode", selection: $viewModel.recognizingMode) {
-            ForEach(RecognizingMode.allCases, id: \.self) { mode in
-                Text(mode.rawValue).tag(mode)
+    private var bypassPhase2FilterToggle: some View {
+        Toggle(isOn: $appSettings.bypassPhase2Filter) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Bypass Phase 2 filter")
+                    .font(.subheadline)
+                Text("Phase 3 runs unrestricted. Results not uploaded.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
-        .pickerStyle(.segmented)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.08))
+        .cornerRadius(10)
     }
 
     private var timingConfig: some View {
@@ -730,6 +768,8 @@ struct CameraView: View {
     }
 
     private func labelPhase3Entry(_ label: String, gesture: DetectedGesture) {
+        pendingPhase3Gesture = nil
+        guard !appSettings.bypassPhase2Filter else { return }
         let entry = Phase3ConfidenceLogEntry(
             modelVersion: gestureRecognizer.handfilmModelVersion,
             candidateSetSize: gesture.candidateSetSize ?? 0,
@@ -740,7 +780,6 @@ struct CameraView: View {
             filmId: nil
         )
         uploadPhase3Entry(entry)
-        pendingPhase3Gesture = nil
     }
 
     private func uploadPoseEntry(_ entry: PoseConfidenceLogEntry) {

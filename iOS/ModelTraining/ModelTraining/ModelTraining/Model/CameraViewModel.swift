@@ -4,11 +4,6 @@ import HandGestureTypes
 import HandGestureRecognizingFramework
 import GestureModelModule
 
-enum RecognizingMode: String, CaseIterable {
-    case handfilm = "Handfilm"
-    case holds    = "Holds"
-}
-
 @MainActor
 class CameraViewModel: ObservableObject {
 
@@ -19,8 +14,6 @@ class CameraViewModel: ObservableObject {
     @Published var recentGestures: [DetectedGesture] = []
     @Published var recognitionHandPoints: [Point3D] = []
     @Published var stats = GestureRecognizingStats()
-    @Published var recognizingMode: RecognizingMode = .handfilm
-
     // MARK: - Permissions & banners
 
     @Published var cameraPermissionGranted = false
@@ -118,9 +111,9 @@ class CameraViewModel: ObservableObject {
             return
         }
         recentGestures.removeAll()
-        let holdsMode = recognizingMode == .holds
-        gestureRecognizer.recognizer.gateEnabled = holdsMode
-        if holdsMode { gestureRecognizer.recognizer.resetGateState() }
+        gestureRecognizer.recognizer.gateEnabled = true
+        gestureRecognizer.recognizer.bypassPhase2Filter = appSettings?.bypassPhase2Filter ?? false
+        gestureRecognizer.recognizer.resetGateState()
         Task {
             do {
                 try await gestureRecognizer.recognizer.start()

@@ -199,6 +199,25 @@ struct SettingsView: View {
     
     private var recognitionSettingsSection: some View {
         Section("Recognition") {
+            // Enhanced Prediction Mode
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "stethoscope")
+                    .foregroundColor(.purple)
+                    .frame(width: 24)
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Enhanced Prediction Mode")
+                    Text("Shows per-phase telemetry overlay and the Bypass Phase 2 filter toggle on the Camera screen.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $appSettings.enhancedPredictionMode)
+                    .labelsHidden()
+            }
             // Confidence Threshold
             VStack(alignment: .leading, spacing: 8) {
                 HStack {

@@ -35,6 +35,22 @@ class AppSettings: ObservableObject {
     @Published var enableHapticFeedback = true
     @Published var showDebugInfo = false
 
+    // MARK: - Diagnostics
+
+    private static let enhancedPredictionModeKey = "enhancedPredictionMode"
+    private static let bypassPhase2FilterKey = "bypassPhase2Filter"
+
+    /// Shows per-phase telemetry overlay and the bypass toggle on the Camera screen.
+    @Published var enhancedPredictionMode: Bool {
+        didSet { UserDefaults.standard.set(enhancedPredictionMode, forKey: Self.enhancedPredictionModeKey) }
+    }
+
+    /// When true, Phase 3 runs unrestricted (ignores the Phase 2 candidate set).
+    /// Predictions are not uploaded to the server. For diagnostics only.
+    @Published var bypassPhase2Filter: Bool {
+        didSet { UserDefaults.standard.set(bypassPhase2Filter, forKey: Self.bypassPhase2FilterKey) }
+    }
+
     @Published var cameraConfig = HandsRecognizingConfig.defaultConfig
     @Published var modelConfig = GestureModelConfig.defaultConfig
 
@@ -69,6 +85,8 @@ class AppSettings: ObservableObject {
         isThresholdLocked = UserDefaults.standard.bool(forKey: Self.isThresholdLockedKey)
         let storedStrategy = UserDefaults.standard.string(forKey: Self.balanceStrategyKey) ?? ""
         balanceStrategy = BalanceStrategy(rawValue: storedStrategy) ?? .classWeight
+        enhancedPredictionMode = UserDefaults.standard.bool(forKey: Self.enhancedPredictionModeKey)
+        bypassPhase2Filter = UserDefaults.standard.bool(forKey: Self.bypassPhase2FilterKey)
     }
 
     /// Call after the first training job fires to permanently lock the threshold.

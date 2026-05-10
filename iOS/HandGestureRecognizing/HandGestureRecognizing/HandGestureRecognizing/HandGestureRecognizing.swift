@@ -34,6 +34,11 @@ public class HandGestureRecognizing {
     /// continuous per-frame recognition. Requires `config.motionGateConfig` to be non-nil.
     public var gateEnabled: Bool = false
 
+    /// When `true`, Phase 3 always runs unrestricted (`predictTopK`) regardless of the Phase 2
+    /// candidate set. Phase 2 still runs and emits telemetry — only its output is ignored by
+    /// the Phase 3 dispatch. For diagnostics only; results are not uploaded to the server.
+    public var bypassPhase2Filter: Bool = false
+
     /// Fired on the main thread whenever the gate state or buffer count changes.
     public var motionGateUpdateCallback: MotionGateUpdateCallback?
 
@@ -377,13 +382,13 @@ public class HandGestureRecognizing {
             holdsModeAlreadyCommitted = false
             holdsModeCycleBuffer.removeAll()
 
-            if let candidateSet {
+            if let candidateSet, !bypassPhase2Filter {
                 // Phase 2 matched — run Phase 3 restricted to candidate set
                 Task { [weak self] in
                     await self?.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
                 }
             } else {
-                // No Phase 2 match (no pose model or no hold detected) — run Phase 3 unrestricted
+                // No Phase 2 match, or bypass active — run Phase 3 unrestricted
                 Task { [weak self] in
                     await self?.recognizeAndEmitGated(film)
                 }
@@ -514,7 +519,12 @@ public class HandGestureRecognizing {
         guard !buffer.isEmpty, gestureModel.isLoaded else { return }
         let film = makeHandFilm(from: buffer)
         Task { [weak self] in
-            await self?.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
+            guard let self else { return }
+            if self.bypassPhase2Filter {
+                await self.recognizeAndEmitGated(film)
+            } else {
+                await self.recognizeAndEmitHoldsMode(film, candidateSet: candidateSet)
+            }
         }
     }
 
