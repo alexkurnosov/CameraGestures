@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import GestureModelModule
 import HandGestureRecognizingFramework
 import HandGestureTypes
 
@@ -60,12 +61,20 @@ class GestureRecognizerWrapper: ObservableObject {
     }
 
     /// Build a config and initialize the underlying recognizer.
+    /// Loads any previously downloaded preprocessor, gesture model, and pose model from disk.
     func initialize(appSettings: AppSettings) async throws {
         setupCallbacks()
 
+        // Load preprocessor JS first — its constants (poseVectorSize, summaryFeaturesCount)
+        // must be set before any TFLite model's input shape is validated.
+        let preprocessorURL = appSettings.defaultPreprocessorURL()
+        if FileManager.default.fileExists(atPath: preprocessorURL.path) {
+            try? JSPreprocessorWrapper.shared.load(from: preprocessorURL)
+        }
+
         let config = HandGestureRecognizingConfig(
             handsRecognizingConfig: appSettings.cameraConfig,
-            gestureModelConfig: appSettings.modelConfig,
+            gestureModelConfig: .defaultConfig,
             enableRealTimeProcessing: true,
             gestureBufferSize: 30,
             confidenceThreshold: appSettings.confidenceThreshold,
@@ -73,6 +82,17 @@ class GestureRecognizerWrapper: ObservableObject {
             holdsConfig: .defaultConfig
         )
         try await recognizer.initialize(config: config)
+
+        // Load previously downloaded gesture model + gesture IDs sidecar.
+        let tfliteURL = appSettings.defaultTFLiteModelURL()
+        if FileManager.default.fileExists(atPath: tfliteURL.path) {
+            let ids = (try? JSONDecoder().decode(
+                [String].self,
+                from: Data(contentsOf: appSettings.defaultGestureIdsURL())
+            )) ?? []
+            try? recognizer.loadModel(from: tfliteURL.path, gestureIds: ids)
+        }
+
         loadPoseModelIfAvailable(appSettings: appSettings)
     }
 

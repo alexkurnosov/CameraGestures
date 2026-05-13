@@ -551,7 +551,9 @@ private final class PoseInspectorViewModel: ObservableObject {
 // MARK: - Landmark decode
 
 private func decodeLandmarks(_ coords: [Double]) -> [Point3D] {
-    guard coords.count == 63 else { return [] }
+    // coords is the first 63 floats of the stored pose vector (landmark coords only).
+    // Post preprocessor-v2 holds may be 83 floats; we only need the first 63.
+    guard coords.count >= 63 else { return [] }
     return stride(from: 0, to: 63, by: 3).map { i in
         Point3D(x: Float(coords[i]), y: Float(coords[i + 1]), z: Float(coords[i + 2]))
     }

@@ -123,6 +123,16 @@ class AppSettings: ObservableObject {
             .appendingPathComponent("GestureModel/gesture_model.tflite")
     }
 
+    func defaultGestureIdsURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GestureModel/gesture_ids.json")
+    }
+
+    func defaultPreprocessorURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GestureModel/preprocessor.js")
+    }
+
     func defaultPoseModelURL() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GestureModel/pose_model.tflite")

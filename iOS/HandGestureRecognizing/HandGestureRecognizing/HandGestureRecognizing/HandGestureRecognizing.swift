@@ -405,8 +405,12 @@ public class HandGestureRecognizing {
     private func handlePhase2Hold(repShot: HandShot, startTime: TimeInterval, endTime: TimeInterval,
                                    gateConfig: MotionGateConfig) {
         guard let holdsConfig = config.holdsConfig,
-              let matcher = prefixMatcher,
-              let coords = MotionGate.normalize(repShot) else { return }
+              let matcher = prefixMatcher else { return }
+
+        // Use the JS poseVector() (83 floats: 63 coords + 20 geometric extras) so the
+        // feature vector matches what the pose MLP was trained on.
+        let coords = JSPreprocessorWrapper.shared.poseVector(from: repShot)
+        guard !coords.isEmpty else { return }
 
         do {
             guard let posePrediction = try gestureModel.predictPose(normalizedCoords: coords) else { return }

@@ -78,16 +78,24 @@ class ServerTrainingManager: ObservableObject {
 
                 let (mURL, pURL) = try await (modelURL, preprocessorURL)
 
+                // Load preprocessor first so JS-exported constants (POSE_VECTOR_SIZE etc.)
+                // are up-to-date before the model's tensor shapes are validated.
                 try JSPreprocessorWrapper.shared.load(from: pURL)
+                print("[ServerTrainingManager] Preprocessor loaded: version=\(JSPreprocessorWrapper.shared.preprocVersion) poseVectorSize=\(JSPreprocessorWrapper.shared.poseVectorSize) summaryFeaturesCount=\(JSPreprocessorWrapper.shared.summaryFeaturesCount)")
 
                 appSettings.updateModelConfig()
                 let sidecarURL = mURL.deletingLastPathComponent().appendingPathComponent("gesture_ids.json")
                 let gestureIds = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: sidecarURL))) ?? []
+                // loadModel validates tensor input shape against summaryFeaturesCount — throws if mismatched.
                 try gestureRecognizer.recognizer.loadModel(from: mURL.path, gestureIds: gestureIds)
 
-                // Pose model is optional — only available after POST /train/pose has run
-                try? await apiClient.downloadPoseModel()
-                gestureRecognizer.loadPoseModelIfAvailable(appSettings: appSettings)
+                // Pose model — report failure but don't abort the main model update.
+                do {
+                    try await apiClient.downloadPoseModel()
+                    gestureRecognizer.loadPoseModelIfAvailable(appSettings: appSettings)
+                } catch {
+                    serverActionError = "Pose model: \(error.localizedDescription)"
+                }
             } catch {
                 serverActionError = error.localizedDescription
             }

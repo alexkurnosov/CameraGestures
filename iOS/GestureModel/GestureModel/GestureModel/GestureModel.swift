@@ -98,6 +98,13 @@ public class GestureModel {
         let interpreter = try Interpreter(modelPath: tflitePath)
         try interpreter.allocateTensors()
 
+        let inputDim = (try? interpreter.input(at: 0))?.shape.dimensions.last ?? 0
+        let expected = FeaturePreprocessor.poseVectorSize
+        guard inputDim == expected else {
+            print("[GestureModel] Pose model input dim \(inputDim) ≠ preprocessor poseVectorSize \(expected). Reload preprocessor.js and model together.")
+            throw GestureModelError.invalidInput
+        }
+
         _poseManifest = manifest
         poseInterpreter = interpreter
         poseClusterIds = manifest.poseClusters.keys.sorted {
@@ -105,11 +112,11 @@ public class GestureModel {
         }
     }
 
-    /// Predict the pose cluster for a single frame given its 63-dim wrist-relative,
-    /// scale-normalised coordinate vector (output of MotionGate.normalize).
+    /// Predict the pose cluster for a single frame given its pose vector
+    /// (output of JSPreprocessorWrapper.poseVector — poseVectorSize floats, currently 83).
     public func predictPose(normalizedCoords: [Float]) throws -> PosePrediction? {
         guard isPoseModelLoaded else { throw GestureModelError.modelNotLoaded }
-        guard normalizedCoords.count == 63 else { throw GestureModelError.invalidInput }
+        guard normalizedCoords.count == FeaturePreprocessor.poseVectorSize else { throw GestureModelError.invalidInput }
         guard let interpreter = poseInterpreter, let manifest = _poseManifest else {
             throw GestureModelError.modelNotLoaded
         }
@@ -288,7 +295,17 @@ public class GestureModel {
         do {
             let interpreter = try Interpreter(modelPath: path)
             try interpreter.allocateTensors()
+
+            let inputDim = (try? interpreter.input(at: 0))?.shape.dimensions.last ?? 0
+            let expected = FeaturePreprocessor.summaryFeaturesCount
+            guard inputDim == expected else {
+                print("[GestureModel] Gesture model input dim \(inputDim) ≠ preprocessor summaryFeaturesCount \(expected). Reload preprocessor.js and model together.")
+                throw GestureModelError.invalidInput
+            }
+
             tfliteInterpreter = interpreter
+        } catch let e as GestureModelError {
+            throw e
         } catch {
             throw GestureModelError.predictionFailed
         }
