@@ -533,6 +533,7 @@ struct TrainingView: View {
             uploadStatusRow
 
             balanceStrategyRow
+            geomCoefRow
 
             // Action buttons
             HStack(spacing: 12) {
@@ -566,6 +567,29 @@ struct TrainingView: View {
         .padding()
         .background(Color.purple.opacity(0.06))
         .cornerRadius(8)
+    }
+
+    private var geomCoefRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Geometric feature weight")
+                    .font(.subheadline)
+                Text("Multiplier on distances & angles (1.0 = no change)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Stepper(
+                value: $appSettings.geomCoef,
+                in: 0.5...5.0,
+                step: 0.1
+            ) {
+                Text(String(format: "%.1f×", appSettings.geomCoef))
+                    .font(.subheadline.monospacedDigit())
+                    .frame(minWidth: 40, alignment: .trailing)
+            }
+            .disabled(serverManager.isPollingStatus)
+        }
     }
 
     private var balanceStrategyRow: some View {
@@ -650,7 +674,7 @@ struct TrainingView: View {
         poseTrainingStatus = "training"
         poseTrainingError = nil
         do {
-            _ = try await apiClient.triggerPoseTraining()
+            _ = try await apiClient.triggerPoseTraining(geomCoef: appSettings.geomCoef)
             // Poll until done
             for _ in 0..<120 {
                 try await Task.sleep(nanoseconds: 3_000_000_000)

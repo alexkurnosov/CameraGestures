@@ -57,7 +57,8 @@ class ServerTrainingManager: ObservableObject {
             do {
                 let job = try await apiClient.triggerTraining(
                     minInViewDuration: appSettings.minInViewDuration,
-                    balanceStrategy: appSettings.balanceStrategy.rawValue
+                    balanceStrategy: appSettings.balanceStrategy.rawValue,
+                    geomCoef: appSettings.geomCoef
                 )
                 print("[ServerTrainingManager] Training job started: \(job.jobId)")
                 appSettings.lockThresholdIfNeeded()

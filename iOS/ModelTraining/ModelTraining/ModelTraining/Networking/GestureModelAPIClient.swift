@@ -1015,7 +1015,8 @@ class GestureModelAPIClient: ObservableObject {
 
     func triggerTraining(
         minInViewDuration: Double = 1.2,
-        balanceStrategy: String = "class_weight"
+        balanceStrategy: String = "class_weight",
+        geomCoef: Double = 1.0
     ) async throws -> TrainingJobResponse {
         if Self.IS_MOCKING_SERVER {
             simulateLog("POST", path: "/train")
@@ -1028,6 +1029,7 @@ class GestureModelAPIClient: ObservableObject {
         let body: [String: Any] = [
             "min_in_view_duration": minInViewDuration,
             "balance_strategy": balanceStrategy,
+            "geom_coef": geomCoef,
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -1229,9 +1231,12 @@ class GestureModelAPIClient: ObservableObject {
 
     // MARK: - Pose Model (Stage 4 / Stage 5)
 
-    func triggerPoseTraining() async throws -> PoseTrainingJobResponse {
+    func triggerPoseTraining(geomCoef: Double = 1.0) async throws -> PoseTrainingJobResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("train/pose"))
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["geom_coef": geomCoef]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return try await perform(request, decoding: PoseTrainingJobResponse.self)
     }
 
