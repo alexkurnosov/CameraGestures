@@ -3,25 +3,36 @@
 Cross-platform gesture-recognition library. Exposes a C ABI consumed by platform
 bindings in `../bindings/`.
 
-## Build (macOS stub — Stage 0)
+## Build — iOS (Stage 3+)
 
 ```sh
-./scripts/build-macos.sh
-# Output: bindings/macos/CameraGestures.framework
+./scripts/build-ios.sh
+# Output: bindings/ios/XCFramework/CameraGestures.xcframework
+# Then: cd apps/training-ios && pod install
 ```
 
-## iOS / Android
+## Build — Android (Stage 3+)
 
-See `scripts/build-ios.sh` and `scripts/build-android.sh`. Both require the
-respective toolchain setup documented in `cmake/ios.toolchain.cmake` and
-`cmake/android.toolchain.cmake`.
+```sh
+export ANDROID_NDK=/path/to/ndk
+./scripts/build-android.sh
+# Output: bindings/android/src/main/cpp/prebuilt/{abi}/libCameraGestures.a
+# Then open apps/demo-android/ in Android Studio
+```
 
-## macOS status
+## macOS status — SPIKE NOT YET STARTED
 
-macOS support is a stretch goal. A go/no-go spike runs in Stage 3 to determine
-whether the LiteRT-only `hand_landmarker.task` decode can match the MediaPipe
-Tasks output within tolerance. If the spike fails, the macOS target is deferred
-to a follow-up plan and this README will be updated.
+macOS support is a stretch goal (plan §10 Stage 3 step 6).
+
+The spike entry point is `src/hands_recognizing/macos/HandLandmarkerLiteRT.cpp`.
+It must implement a two-stage LiteRT-only decode of `hand_landmarker.task`
+(palm detector → ROI crop → landmark model) and reach parity with the iOS
+MediaPipe Tasks output within tolerance (mean Euclidean distance < 0.01
+normalized across a fixture set).
+
+**Current decision: PENDING** — spike not started. macOS build target is
+disabled by default (`BUILD_MACOS=OFF`). This file will be updated once the
+spike concludes with either "macOS supported" or "macOS deferred to follow-up plan".
 
 ## Third-party prebuilts
 

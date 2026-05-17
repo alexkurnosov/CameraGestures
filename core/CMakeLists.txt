@@ -19,6 +19,8 @@ add_library(CameraGestures STATIC
     # Stage 2: HandGestureTypes
     src/types/types.cpp
     src/types/gesture_registry.cpp
+    # Stage 3: HandsRecognizing (platform-agnostic buffer manager)
+    src/hands_recognizing/HandsRecognizer.cpp
 )
 
 target_include_directories(CameraGestures
@@ -27,6 +29,7 @@ target_include_directories(CameraGestures
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${NLOHMANN_JSON_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
 )
 
 install(TARGETS CameraGestures

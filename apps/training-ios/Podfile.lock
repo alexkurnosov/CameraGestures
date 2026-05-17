@@ -1,5 +1,6 @@
 PODS:
-  - CameraGestures (0.0.1)
+  - CameraGestures (0.1.0):
+    - MediaPipeTasksVision (= 0.10.14)
   - GestureModelModule (0.1.0):
     - HandGestureTypes (= 0.1.0)
     - TensorFlowLiteSwift (~> 2.17)
@@ -51,7 +52,7 @@ EXTERNAL SOURCES:
     :path: "../../iOS/HandsRecognizing"
 
 SPEC CHECKSUMS:
-  CameraGestures: adb603974ee59f41dca85ddf9a29c2f4187991bf
+  CameraGestures: 43ab787eb8519264193d5b84b2f83064c3e81190
   GestureModelModule: f6361449d117eb2463206b008f8be796b1e7f96a
   HandGestureRecognizingFramework: 8750765bdf800d9572d50df016fe3eb71185203a
   HandGestureTypes: e207e2dcdcc6acf1295e73d2b938af9619f1cdbe

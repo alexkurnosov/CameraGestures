@@ -2,6 +2,7 @@
 #define CAMERA_GESTURES_H
 
 #include "Types.h"
+#include "HandsRecognizing.h"
 
 #ifdef __cplusplus
 extern "C" {
