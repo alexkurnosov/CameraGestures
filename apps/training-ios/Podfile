@@ -1,0 +1,36 @@
+workspace 'ModelTraining/ModelTraining.xcworkspace'
+platform :ios, '16.0'
+use_frameworks! :linkage => :static
+
+# V1 pods referenced by their paths relative to this Podfile.
+# These paths will be swapped one-by-one (Stages 2–5) as C++ modules land.
+pod 'HandGestureTypes', :path => '../../iOS/HandGestureTypes'
+pod 'HandsRecognizingModule', :path => '../../iOS/HandsRecognizing'
+pod 'GestureModelModule', :path => '../../iOS/GestureModel'
+pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'
+
+target 'ModelTrainingApp' do
+  project 'ModelTraining/ModelTrainingApp.xcodeproj'
+
+  pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+      config.build_settings['SWIFT_INSTALL_OBJC_HEADER'] = 'YES'
+      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+      config.build_settings['ENABLE_TESTABILITY'] = 'YES' if config.name == 'Debug'
+    end
+  end
+  installer.aggregate_targets.each do |aggregate_target|
+    user_project = aggregate_target.user_project
+    user_project.native_targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+      end
+    end
+    user_project.save
+  end
+end

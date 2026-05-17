@@ -1,0 +1,61 @@
+PODS:
+  - GestureModelModule (0.1.0):
+    - HandGestureTypes (= 0.1.0)
+    - TensorFlowLiteSwift (~> 2.17)
+  - HandGestureRecognizingFramework (0.1.0):
+    - GestureModelModule (= 0.1.0)
+    - HandGestureTypes (= 0.1.0)
+    - HandsRecognizingModule (= 0.1.0)
+  - HandGestureTypes (0.1.0)
+  - HandsRecognizingModule (0.1.0):
+    - HandGestureTypes (= 0.1.0)
+    - MediaPipeTasksVision (= 0.10.14)
+  - MediaPipeTasksCommon (0.10.14)
+  - MediaPipeTasksVision (0.10.14):
+    - MediaPipeTasksCommon (= 0.10.14)
+  - TensorFlowLiteC (2.17.0):
+    - TensorFlowLiteC/Core (= 2.17.0)
+  - TensorFlowLiteC/Core (2.17.0)
+  - TensorFlowLiteSwift (2.17.0):
+    - TensorFlowLiteSwift/Core (= 2.17.0)
+  - TensorFlowLiteSwift/Core (2.17.0):
+    - TensorFlowLiteC (= 2.17.0)
+    - TensorFlowLiteSwift/Privacy (= 2.17.0)
+  - TensorFlowLiteSwift/Privacy (2.17.0)
+
+DEPENDENCIES:
+  - GestureModelModule (from `../../iOS/GestureModel`)
+  - HandGestureRecognizingFramework (from `../../iOS/HandGestureRecognizing`)
+  - HandGestureTypes (from `../../iOS/HandGestureTypes`)
+  - HandsRecognizingModule (from `../../iOS/HandsRecognizing`)
+
+SPEC REPOS:
+  trunk:
+    - MediaPipeTasksCommon
+    - MediaPipeTasksVision
+    - TensorFlowLiteC
+    - TensorFlowLiteSwift
+
+EXTERNAL SOURCES:
+  GestureModelModule:
+    :path: "../../iOS/GestureModel"
+  HandGestureRecognizingFramework:
+    :path: "../../iOS/HandGestureRecognizing"
+  HandGestureTypes:
+    :path: "../../iOS/HandGestureTypes"
+  HandsRecognizingModule:
+    :path: "../../iOS/HandsRecognizing"
+
+SPEC CHECKSUMS:
+  GestureModelModule: f6361449d117eb2463206b008f8be796b1e7f96a
+  HandGestureRecognizingFramework: 8750765bdf800d9572d50df016fe3eb71185203a
+  HandGestureTypes: e207e2dcdcc6acf1295e73d2b938af9619f1cdbe
+  HandsRecognizingModule: d265564e601a45aca9283ec44d0e90f740b3b6e8
+  MediaPipeTasksCommon: 5660099c2dd81f7ac4a7a5f51055785ead8e0e64
+  MediaPipeTasksVision: 0fac0db83c0b45e4d7811a9227be5e571403cf83
+  TensorFlowLiteC: eac6d689a8d391d1b202dc59e3d9165ba64aaf73
+  TensorFlowLiteSwift: 723fe42222815e72490c79feeff05305530de393
+
+PODFILE CHECKSUM: 115afc3cbb9f5149f06a5e97b332c36fa2ca3f9c
+
+COCOAPODS: 1.16.2
