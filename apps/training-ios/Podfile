@@ -2,8 +2,13 @@ workspace 'ModelTraining/ModelTraining.xcworkspace'
 platform :ios, '16.0'
 use_frameworks! :linkage => :static
 
-# V1 pods referenced by their paths relative to this Podfile.
-# These paths will be swapped one-by-one (Stages 2–5) as C++ modules land.
+# Stage 2: CameraGestures pod added alongside V1 pods.
+# HandGestureTypes (V1) stays because HandsRecognizingModule / GestureModelModule /
+# HandGestureRecognizingFramework all declare it as a transitive dependency.
+# Both pods link fine — Swift modules are separately namespaced.
+# The app's import statements still reference HandGestureTypes; the full swap
+# (imports + Podfile) happens as one step once all four modules are ported (Stage 5).
+pod 'CameraGestures', :path => '../../bindings/ios'
 pod 'HandGestureTypes', :path => '../../iOS/HandGestureTypes'
 pod 'HandsRecognizingModule', :path => '../../iOS/HandsRecognizing'
 pod 'GestureModelModule', :path => '../../iOS/GestureModel'

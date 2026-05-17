@@ -1,4 +1,5 @@
 PODS:
+  - CameraGestures (0.0.1)
   - GestureModelModule (0.1.0):
     - HandGestureTypes (= 0.1.0)
     - TensorFlowLiteSwift (~> 2.17)
@@ -24,6 +25,7 @@ PODS:
   - TensorFlowLiteSwift/Privacy (2.17.0)
 
 DEPENDENCIES:
+  - CameraGestures (from `../../bindings/ios`)
   - GestureModelModule (from `../../iOS/GestureModel`)
   - HandGestureRecognizingFramework (from `../../iOS/HandGestureRecognizing`)
   - HandGestureTypes (from `../../iOS/HandGestureTypes`)
@@ -37,6 +39,8 @@ SPEC REPOS:
     - TensorFlowLiteSwift
 
 EXTERNAL SOURCES:
+  CameraGestures:
+    :path: "../../bindings/ios"
   GestureModelModule:
     :path: "../../iOS/GestureModel"
   HandGestureRecognizingFramework:
@@ -47,6 +51,7 @@ EXTERNAL SOURCES:
     :path: "../../iOS/HandsRecognizing"
 
 SPEC CHECKSUMS:
+  CameraGestures: adb603974ee59f41dca85ddf9a29c2f4187991bf
   GestureModelModule: f6361449d117eb2463206b008f8be796b1e7f96a
   HandGestureRecognizingFramework: 8750765bdf800d9572d50df016fe3eb71185203a
   HandGestureTypes: e207e2dcdcc6acf1295e73d2b938af9619f1cdbe
@@ -56,6 +61,6 @@ SPEC CHECKSUMS:
   TensorFlowLiteC: eac6d689a8d391d1b202dc59e3d9165ba64aaf73
   TensorFlowLiteSwift: 723fe42222815e72490c79feeff05305530de393
 
-PODFILE CHECKSUM: 115afc3cbb9f5149f06a5e97b332c36fa2ca3f9c
+PODFILE CHECKSUM: 4d9ee69d0e99a1a9ffc76c49105763121efa5d16
 
 COCOAPODS: 1.16.2

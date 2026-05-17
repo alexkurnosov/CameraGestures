@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds a stub CameraGestures.xcframework for iOS (device + simulator).
-# Stage 0: no real TFLite linkage yet.
+# Builds CameraGestures.xcframework for iOS (device + simulator).
+# Stage 2: HandGestureTypes C ABI + GestureRegistry.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -8,8 +8,25 @@ CORE_DIR="$REPO_ROOT/core"
 BUILD_DIR="$REPO_ROOT/build-ios"
 OUT_DIR="$REPO_ROOT/bindings/ios/XCFramework"
 TOOLCHAIN="$CORE_DIR/cmake/ios.toolchain.cmake"
+IOS_CMAKE_DIR="$CORE_DIR/cmake/ios-cmake"
 
-echo "==> Building CameraGestures (iOS stub)"
+# ---- Ensure ios-cmake toolchain is present --------------------------------
+if [[ ! -f "$IOS_CMAKE_DIR/ios.toolchain.cmake" ]]; then
+    echo "==> Cloning leetal/ios-cmake toolchain..."
+    git clone --depth 1 --branch 4.4.1 \
+        https://github.com/leetal/ios-cmake "$IOS_CMAKE_DIR"
+fi
+
+echo "==> Building CameraGestures (iOS)"
+
+# Prefer Ninja if available; fall back to make.
+if command -v ninja &>/dev/null; then
+    GENERATOR="Ninja"
+    MAKE_PROG="$(command -v ninja)"
+else
+    GENERATOR="Unix Makefiles"
+    MAKE_PROG="/usr/bin/make"
+fi
 
 build_slice() {
     local name="$1"; shift
@@ -17,17 +34,23 @@ build_slice() {
         -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/$name/install" \
-        -G "Unix Makefiles" "$@"
+        -DCMAKE_MAKE_PROGRAM="$MAKE_PROG" \
+        -G "$GENERATOR" "$@"
     cmake --build "$BUILD_DIR/$name" --config Release
 }
 
-build_slice device  -DPLATFORM=OS64
-build_slice sim     -DPLATFORM=SIMULATOR64
+build_slice device  -DPLATFORM=OS64          -DDEPLOYMENT_TARGET=16.0
+build_slice sim     -DPLATFORM=SIMULATOR64   -DDEPLOYMENT_TARGET=16.0
 
 echo "==> Creating XCFramework"
+# Pass include/CameraGestures/ directly so the XCFramework headers directory
+# is flat: CameraGestures.h, Types.h, module.modulemap — no extra subdirectory.
+HEADERS_DIR="$CORE_DIR/include/CameraGestures"
+rm -rf "$OUT_DIR/CameraGestures.xcframework"
+mkdir -p "$OUT_DIR"
 xcodebuild -create-xcframework \
-    -library "$BUILD_DIR/device/libCameraGestures.a"    -headers "$CORE_DIR/include" \
-    -library "$BUILD_DIR/sim/libCameraGestures.a"       -headers "$CORE_DIR/include" \
+    -library "$BUILD_DIR/device/libCameraGestures.a"    -headers "$HEADERS_DIR" \
+    -library "$BUILD_DIR/sim/libCameraGestures.a"       -headers "$HEADERS_DIR" \
     -output "$OUT_DIR/CameraGestures.xcframework"
 
 echo "==> Done: $OUT_DIR/CameraGestures.xcframework"
