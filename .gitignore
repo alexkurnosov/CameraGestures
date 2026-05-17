@@ -59,6 +59,9 @@ Package.resolved
 # CocoaPods
 Pods/
 
+# ios-cmake toolchain — cloned automatically by core/scripts/build-ios.sh
+core/cmake/ios-cmake/
+
 # macOS
 .DS_Store
 .AppleDouble
