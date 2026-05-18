@@ -8,11 +8,19 @@ project(CameraGestures VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ---- Third-party includes ------------------------------------------------
+# ---- Options ---------------------------------------------------------------
+
+# Enable TFLite inference backend. Required for gesture/pose classification at runtime.
+# OFF by default so the library and tests build without a vendored TFLite binary
+# (FeaturePreprocessor and PoseManifest compile and test fine without it).
+option(CG_ENABLE_TFLITE "Build with TFLite inference backend" OFF)
+
+# ---- Third-party includes --------------------------------------------------
 
 set(NLOHMANN_JSON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json")
+set(TFLITE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/include")
 
-# ---- Library sources (accumulated per stage) ----------------------------
+# ---- Library sources (accumulated per stage) --------------------------------
 
 add_library(CameraGestures STATIC
     src/CameraGestures.cpp
@@ -21,6 +29,11 @@ add_library(CameraGestures STATIC
     src/types/gesture_registry.cpp
     # Stage 3: HandsRecognizing (platform-agnostic buffer manager)
     src/hands_recognizing/HandsRecognizer.cpp
+    # Stage 4: GestureModel
+    src/gesture_model/FeaturePreprocessor.cpp
+    src/gesture_model/PoseManifest.cpp
+    src/gesture_model/TFLiteBackend.cpp
+    src/gesture_model/GestureModel.cpp
 )
 
 target_include_directories(CameraGestures
@@ -30,14 +43,40 @@ target_include_directories(CameraGestures
     PRIVATE
         ${NLOHMANN_JSON_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gesture_model
 )
+
+if(CG_ENABLE_TFLITE)
+    target_compile_definitions(CameraGestures PRIVATE CG_ENABLE_TFLITE)
+    target_include_directories(CameraGestures PRIVATE ${TFLITE_INCLUDE_DIR})
+
+    # Platform-specific TFLite prebuilt library
+    if(IOS)
+        # TFLite is linked via the XCFramework in the podspec; nothing needed here.
+    elseif(ANDROID)
+        find_library(TFLITE_LIB tensorflowlite_c
+            PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/android/${ANDROID_ABI}
+            NO_DEFAULT_PATH)
+        if(TFLITE_LIB)
+            target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
+        endif()
+    elseif(APPLE)
+        # macOS: look for a static or shared TFLite library
+        find_library(TFLITE_LIB TensorFlowLiteC
+            PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/macos
+            NO_DEFAULT_PATH)
+        if(TFLITE_LIB)
+            target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
+        endif()
+    endif()
+endif()
 
 install(TARGETS CameraGestures
     ARCHIVE DESTINATION lib
 )
 install(DIRECTORY include/CameraGestures DESTINATION include)
 
-# ---- Tests ---------------------------------------------------------------
+# ---- Tests -----------------------------------------------------------------
 
 option(CG_BUILD_TESTS "Build gtest unit tests" OFF)
 if(CG_BUILD_TESTS)

@@ -2,17 +2,20 @@ workspace 'ModelTraining/ModelTraining.xcworkspace'
 platform :ios, '16.0'
 use_frameworks! :linkage => :static
 
-# Stage 2: CameraGestures pod added alongside V1 pods.
-# HandGestureTypes (V1) stays because HandsRecognizingModule / GestureModelModule /
-# HandGestureRecognizingFramework all declare it as a transitive dependency.
-# Both pods link fine — Swift modules are separately namespaced.
-# The app's import statements still reference HandGestureTypes; the full swap
-# (imports + Podfile) happens as one step once all four modules are ported (Stage 5).
+# Stage 2–4: CameraGestures pod (new) lives alongside the V1 pods.
+# Both pod sets coexist safely — Swift modules are separately namespaced.
+# The full swap (remove all V1 pods, update all app import statements) happens in Stage 5
+# once HandGestureRecognizing is ported and parity is confirmed by the replay rig.
+#
+# Stage 4 status: CameraGestures pod now includes GestureModel (C++ TFLite backend).
+# GestureModelModule (V1) stays until Stage 5 because HandGestureRecognizingFramework
+# depends on it transitively.  After rebuilding the XCFramework with GestureModel.h,
+# run 'pod install' to pick up the new vendored TensorFlowLiteC.xcframework.
 pod 'CameraGestures', :path => '../../bindings/ios'
 pod 'HandGestureTypes', :path => '../../iOS/HandGestureTypes'
 pod 'HandsRecognizingModule', :path => '../../iOS/HandsRecognizing'
-pod 'GestureModelModule', :path => '../../iOS/GestureModel'
-pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'
+pod 'GestureModelModule', :path => '../../iOS/GestureModel'           # removed in Stage 5
+pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'  # removed in Stage 5
 
 target 'ModelTrainingApp' do
   project 'ModelTraining/ModelTrainingApp.xcodeproj'

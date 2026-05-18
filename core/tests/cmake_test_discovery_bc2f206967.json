@@ -1,0 +1,201 @@
+{
+  "tests": 33,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "HandFilm",
+      "tests": 7,
+      "testsuite": [
+        {
+          "name": "EmptyFilm",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 12
+        },
+        {
+          "name": "GestureDuration",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 22
+        },
+        {
+          "name": "InViewDuration_NoAbsent",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 33
+        },
+        {
+          "name": "InViewDuration_WithAbsent",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 45
+        },
+        {
+          "name": "SingleVisibleFrame_ZeroInView",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 61
+        },
+        {
+          "name": "Clear",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 69
+        },
+        {
+          "name": "GetShot",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_types.cpp",
+          "line": 79
+        }
+      ]
+    },
+    {
+      "name": "GestureRegistryTest",
+      "tests": 9,
+      "testsuite": [
+        {
+          "name": "EmptyRegistry",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 27
+        },
+        {
+          "name": "AddAndRetrieve",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 33
+        },
+        {
+          "name": "SlugDerivation",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 47
+        },
+        {
+          "name": "DuplicateSlugRejected",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 55
+        },
+        {
+          "name": "EmptyNameRejected",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 63
+        },
+        {
+          "name": "Remove",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 70
+        },
+        {
+          "name": "PersistenceRoundTrip",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 81
+        },
+        {
+          "name": "LoadIOSFormat",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 101
+        },
+        {
+          "name": "FindByIdMissing",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_registry.cpp",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "name": "FeaturePreprocessor",
+      "tests": 11,
+      "testsuite": [
+        {
+          "name": "FeatureMatrixLength",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 66
+        },
+        {
+          "name": "SummaryFeaturesLength",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 74
+        },
+        {
+          "name": "PoseVectorLength",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 82
+        },
+        {
+          "name": "AbsentFramesFiltered",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 93
+        },
+        {
+          "name": "EmptyFilmZeros",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 117
+        },
+        {
+          "name": "ShortFilmPaddedWithZeros",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 132
+        },
+        {
+          "name": "LongFilmTrimsPrefix",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 154
+        },
+        {
+          "name": "LeftRightHandsDiffer",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 178
+        },
+        {
+          "name": "PoseExtrasFiniteAndInRange",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 196
+        },
+        {
+          "name": "GeomCoefScalesExtras",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 211
+        },
+        {
+          "name": "ConstantsMatchJS",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 233
+        }
+      ]
+    },
+    {
+      "name": "PoseManifest",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "ParsesInlineJSON",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 251
+        },
+        {
+          "name": "SortedClusterIds",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 297
+        },
+        {
+          "name": "ClusterKindAndLabel",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 318
+        },
+        {
+          "name": "MissingFileThrows",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 336
+        }
+      ]
+    },
+    {
+      "name": "Parity",
+      "tests": 2,
+      "testsuite": [
+        {
+          "name": "SummaryFeaturesMatchPython",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 372
+        },
+        {
+          "name": "FeatureMatrixRow0MatchesPython",
+          "file": "\/Users\/kurnosovaleksey\/Projects\/CameraGestures\/core\/tests\/test_gesture_model.cpp",
+          "line": 399
+        }
+      ]
+    }
+  ]
+}

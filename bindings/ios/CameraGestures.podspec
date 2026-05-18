@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'CameraGestures'
-  s.version          = '0.1.0'   # Stage 3: HandGestureTypes + HandsRecognizing
+  s.version          = '0.4.0'   # Stage 4: HandGestureTypes + HandsRecognizing + GestureModel
   s.summary          = 'Cross-platform gesture-recognition library — iOS binding'
   s.homepage         = 'https://github.com/yourname/CameraGestures'
   s.license          = { :type => 'MIT', :text => 'Private module — not for distribution' }
@@ -9,10 +9,16 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '16.0'
   s.swift_version    = '5.0'
 
-  # Prebuilt XCFramework produced by core/scripts/build-ios.sh.
-  # Contains the C ABI static library + headers (CameraGestures.h, Types.h,
-  # HandsRecognizing.h, module.modulemap → imported as CameraGesturesC).
-  s.vendored_frameworks = 'XCFramework/CameraGestures.xcframework'
+  # Prebuilt XCFrameworks produced by core/scripts/build-ios.sh.
+  # CameraGestures.xcframework: C ABI static library + headers
+  #   (CameraGestures.h, Types.h, HandsRecognizing.h, GestureModel.h,
+  #    module.modulemap → imported as CameraGesturesC).
+  # TensorFlowLiteC.xcframework: vendored TFLite runtime (statically linked,
+  #   no TFLite Swift pod needed).
+  s.vendored_frameworks = [
+    'XCFramework/CameraGestures.xcframework',
+    '../../core/third_party/tflite/ios/TensorFlowLiteC.xcframework'
+  ]
 
   # Swift wrapper sources.
   s.source_files = 'CameraGestures/**/*.swift'

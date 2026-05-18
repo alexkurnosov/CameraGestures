@@ -13,6 +13,8 @@ FetchContent_MakeAvailable(googletest)
 add_executable(cg_tests
     test_types.cpp
     test_gesture_registry.cpp
+    # Stage 4: GestureModel unit tests (preprocessor parity + PoseManifest JSON)
+    test_gesture_model.cpp
 )
 
 target_link_libraries(cg_tests PRIVATE
@@ -23,7 +25,9 @@ target_link_libraries(cg_tests PRIVATE
 target_include_directories(cg_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann_json
+    ${CMAKE_SOURCE_DIR}/src/gesture_model
 )
 
 include(GoogleTest)
-gtest_discover_tests(cg_tests)
+# Run tests from the source tests/ directory so "fixtures/" is a valid relative path.
+gtest_discover_tests(cg_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
