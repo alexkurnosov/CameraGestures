@@ -1,5 +1,5 @@
 import Foundation
-import HandGestureTypes
+import CameraGestures
 
 struct HandShotDTO: Codable {
     let landmarks: [Point3DDTO]

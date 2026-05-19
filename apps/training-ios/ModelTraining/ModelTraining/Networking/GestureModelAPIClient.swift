@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import HandGestureTypes
+import CameraGestures
 
 // MARK: - Response Types
 

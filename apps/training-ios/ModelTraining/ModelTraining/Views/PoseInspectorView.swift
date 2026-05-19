@@ -1,6 +1,6 @@
 import Combine
 import SwiftUI
-import HandGestureTypes
+import CameraGestures
 
 // MARK: - PoseInspectorView
 

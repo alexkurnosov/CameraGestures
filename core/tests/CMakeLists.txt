@@ -31,3 +31,16 @@ target_include_directories(cg_tests PRIVATE
 include(GoogleTest)
 # Run tests from the source tests/ directory so "fixtures/" is a valid relative path.
 gtest_discover_tests(cg_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ---- Stage 5: replay rig (standalone CLI, not a gtest target) ---------------
+
+add_executable(replay_rig replay_rig/replay_main.cpp)
+
+target_link_libraries(replay_rig PRIVATE CameraGestures)
+
+target_include_directories(replay_rig PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/nlohmann_json
+    ${CMAKE_SOURCE_DIR}/src/gesture_model
+    ${CMAKE_SOURCE_DIR}/src/hand_gesture_recognizing
+)

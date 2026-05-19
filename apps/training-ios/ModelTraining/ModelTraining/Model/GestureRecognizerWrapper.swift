@@ -1,8 +1,6 @@
 import Foundation
 import Combine
-import GestureModelModule
-import HandGestureRecognizingFramework
-import HandGestureTypes
+import CameraGestures
 
 @MainActor
 class GestureRecognizerWrapper: ObservableObject {

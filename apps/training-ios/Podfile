@@ -2,28 +2,28 @@ workspace 'ModelTraining/ModelTraining.xcworkspace'
 platform :ios, '16.0'
 use_frameworks! :linkage => :static
 
-# Stage 2–4: CameraGestures pod (new) lives alongside the V1 pods.
-# Both pod sets coexist safely — Swift modules are separately namespaced.
-# The full swap (remove all V1 pods, update all app import statements) happens in Stage 5
-# once HandGestureRecognizing is ported and parity is confirmed by the replay rig.
-#
-# Stage 4 status: CameraGestures pod now includes GestureModel (C++ TFLite backend).
-# GestureModelModule (V1) stays until Stage 5 because HandGestureRecognizingFramework
-# depends on it transitively.  After rebuilding the XCFramework with GestureModel.h,
-# run 'pod install' to pick up the new vendored TensorFlowLiteC.xcframework.
+# Stage 5: Training App v2 is now fully on the new CameraGestures pod.
+# All four V1 pods (HandGestureTypes, HandsRecognizingModule, GestureModelModule,
+# HandGestureRecognizingFramework) have been replaced by the unified pod.
 pod 'CameraGestures', :path => '../../bindings/ios'
-pod 'HandGestureTypes', :path => '../../iOS/HandGestureTypes'
-pod 'HandsRecognizingModule', :path => '../../iOS/HandsRecognizing'
-pod 'GestureModelModule', :path => '../../iOS/GestureModel'           # removed in Stage 5
-pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'  # removed in Stage 5
 
 target 'ModelTrainingApp' do
   project 'ModelTraining/ModelTrainingApp.xcodeproj'
-
-  pod 'HandGestureRecognizingFramework', :path => '../../iOS/HandGestureRecognizing'
 end
 
 post_install do |installer|
+  # CocoaPods doesn't know the .task extension, so it leaves lastKnownFileType
+  # blank on the hand_landmarker.task file reference — Xcode's build system then
+  # silently skips copying it into CameraGesturesAssets.bundle.
+  # Force the type to the generic opaque-data value so the Copy Resources phase works.
+  installer.pods_project.files.each do |file|
+    if file.path == 'hand_landmarker.task'
+      file.last_known_file_type = 'file'
+      file.explicit_file_type   = nil
+    end
+  end
+  installer.pods_project.save
+
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
       config.build_settings['ENABLE_BITCODE'] = 'NO'

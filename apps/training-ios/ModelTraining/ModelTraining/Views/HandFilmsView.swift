@@ -1,6 +1,6 @@
 import Combine
 import SwiftUI
-import HandGestureTypes
+import CameraGestures
 
 struct HandFilmsView: View {
     @EnvironmentObject var trainingDataManager: TrainingDataManager

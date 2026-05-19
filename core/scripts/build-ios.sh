@@ -40,8 +40,8 @@ build_slice() {
     cmake --build "$BUILD_DIR/$name" --config Release
 }
 
-build_slice device  -DPLATFORM=OS64          -DDEPLOYMENT_TARGET=16.0
-build_slice sim     -DPLATFORM=SIMULATOR64   -DDEPLOYMENT_TARGET=16.0
+build_slice device  -DPLATFORM=OS64          -DDEPLOYMENT_TARGET=16.0 -DCG_ENABLE_TFLITE=ON
+build_slice sim     -DPLATFORM=SIMULATOR64   -DDEPLOYMENT_TARGET=16.0 -DCG_ENABLE_TFLITE=ON
 
 echo "==> Creating XCFramework"
 # Pass include/CameraGestures/ directly so the XCFramework headers directory

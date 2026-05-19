@@ -34,14 +34,16 @@ public enum GestureModelError: Error {
     case invalidInput
     case predictionFailed
     case insufficientData
+    case trainingNotSupported   // V2 is inference-only; all training is server-side
 
     public var localizedDescription: String {
         switch self {
-        case .modelNotLoaded:    return "Model not loaded"
-        case .invalidModelPath:  return "Invalid model path"
-        case .invalidInput:      return "Invalid input data"
-        case .predictionFailed:  return "Prediction failed"
-        case .insufficientData:  return "Insufficient training data"
+        case .modelNotLoaded:       return "Model not loaded"
+        case .invalidModelPath:     return "Invalid model path"
+        case .invalidInput:         return "Invalid input data"
+        case .predictionFailed:     return "Prediction failed"
+        case .insufficientData:     return "Insufficient training data"
+        case .trainingNotSupported: return "On-device training is not supported in V2 — use server training"
         }
     }
 }
@@ -72,7 +74,8 @@ public class GestureModel {
 
     // MARK: Properties
 
-    private var modelRef:    cg_gesture_model_ref?
+    // internal so HandGestureRecognizing.swift (same module) can pass it to cg_recognizer.
+    var modelRef:    cg_gesture_model_ref?
     private var config:      GestureModelConfig
     private var isLoaded_:   Bool { modelRef != nil }
     private var registryPath: String?
@@ -122,12 +125,19 @@ public class GestureModel {
         modelRef = ref
         self.registryPath = regPath
 
-        // Apply geom_coef from .meta.json if present
-        let metaPath = (modelPath as NSString).deletingPathExtension + ".meta.json"
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: metaPath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let coef = json["geom_coef"] as? Double {
+        // Read geom_coef from preprocessor.js (the server bakes the training value into it).
+        // This keeps Stage 5 inference consistent with the JS-based V1 client.
+        let jsPath = URL(fileURLWithPath: modelPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("preprocessor.js").path
+        if let js = try? String(contentsOfFile: jsPath, encoding: .utf8),
+           let range = js.range(of: #"var GEOM_COEF = ([\d.]+);"#,
+                                options: .regularExpression),
+           let numRange = js.range(of: #"[\d.]+"#, options: .regularExpression,
+                                   range: range),
+           let coef = Double(js[numRange]) {
             cg_gesture_model_set_geom_coef(ref, Float(coef))
+            print("[GestureModel] geom_coef=\(Float(coef)) applied from preprocessor.js")
         }
     }
 
@@ -188,12 +198,17 @@ public class GestureModel {
         defer { cg_handfilm_destroy(film) }
 
         // Convert Swift strings to C strings (lifetime tied to this scope)
-        let cStrings = candidateGestures.map { ($0 as NSString).utf8String! }
+        let cStrings = candidateGestures.map { ($0 as NSString).utf8String }
         var out = cg_gesture_prediction()
         let n = cStrings.withUnsafeBufferPointer { buf in
-            cg_gesture_model_classify_restricted(ref, film, buf.baseAddress,
-                                                  Int32(cStrings.count),
-                                                  config.predictionThreshold, &out)
+            cg_gesture_model_classify_restricted (
+                ref,
+                film,
+                buf.baseAddress,
+                Int32(cStrings.count),
+                config.predictionThreshold,
+                &out
+            )
         }
         return n > 0 ? GesturePrediction(fromCStruct: out) : nil
     }
@@ -237,6 +252,14 @@ public class GestureModel {
     }
 
     public func getConfig() -> GestureModelConfig { config }
+
+    // MARK: Training (V2: inference-only — server does all training)
+
+    /// Not supported in V2. The gesture model is produced server-side and downloaded
+    /// via `GestureModelAPIClient`. Calling this throws `trainingNotSupported`.
+    public func trainAsync(dataset: TrainingDataset) async throws -> ModelMetrics {
+        throw GestureModelError.trainingNotSupported
+    }
 
     // MARK: Private
 

@@ -1,5 +1,5 @@
 import Foundation
-import HandGestureTypes
+import CameraGestures
 
 struct HandFilmDTO: Codable {
     let frames: [HandShotDTO]

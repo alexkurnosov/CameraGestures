@@ -1,5 +1,5 @@
 import Foundation
-import HandGestureTypes
+import CameraGestures
 
 struct TrainingDatasetDTO: Codable {
     let name: String

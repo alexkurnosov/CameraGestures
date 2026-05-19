@@ -1,8 +1,8 @@
 import SwiftUI
 import Combine
-import HandGestureTypes
-import GestureModelModule
-import HandGestureRecognizingFramework
+import CameraGestures
+import CameraGestures
+import CameraGestures
 
 struct TrainingView: View {
     @EnvironmentObject var gestureRecognizer: GestureRecognizerWrapper

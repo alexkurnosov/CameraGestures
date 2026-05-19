@@ -1,9 +1,9 @@
 import Foundation
 import Combine
 import UIKit
-import HandGestureTypes
-import HandGestureRecognizingFramework
-import GestureModelModule
+import CameraGestures
+import CameraGestures
+import CameraGestures
 
 class TrainingDataManager: ObservableObject {
     @Published var currentDataset: TrainingDataset?
@@ -139,7 +139,6 @@ class TrainingDataManager: ObservableObject {
 
         let modelConfig = GestureModelConfig(
             modelPath: nil,
-            backendType: .tensorFlow,
             predictionThreshold: appSettings.confidenceThreshold,
             maxPredictions: 5
         )

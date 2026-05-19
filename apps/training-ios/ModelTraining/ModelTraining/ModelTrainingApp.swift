@@ -1,6 +1,6 @@
 import SwiftUI
-import HandGestureTypes
-import HandGestureRecognizingFramework
+import CameraGestures
+import CameraGestures
 
 @main
 struct ModelTrainingApp: App {

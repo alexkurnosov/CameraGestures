@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'CameraGestures'
-  s.version          = '0.4.0'   # Stage 4: HandGestureTypes + HandsRecognizing + GestureModel
+  s.version          = '0.5.0'   # Stage 5: HandGestureTypes + HandsRecognizing + GestureModel + HandGestureRecognizing
   s.summary          = 'Cross-platform gesture-recognition library — iOS binding'
   s.homepage         = 'https://github.com/yourname/CameraGestures'
   s.license          = { :type => 'MIT', :text => 'Private module — not for distribution' }
@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   # Prebuilt XCFrameworks produced by core/scripts/build-ios.sh.
   # CameraGestures.xcframework: C ABI static library + headers
   #   (CameraGestures.h, Types.h, HandsRecognizing.h, GestureModel.h,
-  #    module.modulemap → imported as CameraGesturesC).
+  #    HandGestureRecognizing.h, module.modulemap → imported as CameraGesturesC).
   # TensorFlowLiteC.xcframework: vendored TFLite runtime (statically linked,
   #   no TFLite Swift pod needed).
   s.vendored_frameworks = [
@@ -24,7 +24,11 @@ Pod::Spec.new do |s|
   s.source_files = 'CameraGestures/**/*.swift'
 
   # hand_landmarker.task must be bundled so HandsRecognizingConfig can load it at runtime.
-  s.resources = '../../core/assets/hand_landmarker.task'
+  # resource_bundles is used instead of resources so CocoaPods reliably creates a
+  # CameraGesturesAssets.bundle build phase regardless of linkage mode.
+  s.resource_bundles = {
+    'CameraGesturesAssets' => ['hand_landmarker.task']
+  }
 
   # Stage 3+: HandsRecognizing uses MediaPipeTasksVision for iOS landmark detection.
   s.dependency 'MediaPipeTasksVision', '0.10.14'

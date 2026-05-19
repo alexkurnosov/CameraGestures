@@ -3,6 +3,8 @@
 
 #include "Types.h"
 #include "HandsRecognizing.h"
+#include "GestureModel.h"
+#include "HandGestureRecognizing.h"
 
 #ifdef __cplusplus
 extern "C" {

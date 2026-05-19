@@ -34,6 +34,11 @@ add_library(CameraGestures STATIC
     src/gesture_model/PoseManifest.cpp
     src/gesture_model/TFLiteBackend.cpp
     src/gesture_model/GestureModel.cpp
+    # Stage 5: HandGestureRecognizing (3-phase pipeline)
+    src/hand_gesture_recognizing/MotionGate.cpp
+    src/hand_gesture_recognizing/HoldDetector.cpp
+    src/hand_gesture_recognizing/PrefixMatcher.cpp
+    src/hand_gesture_recognizing/HandGestureRecognizing.cpp
 )
 
 target_include_directories(CameraGestures
@@ -44,6 +49,7 @@ target_include_directories(CameraGestures
         ${NLOHMANN_JSON_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
         ${CMAKE_CURRENT_SOURCE_DIR}/src/gesture_model
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/hand_gesture_recognizing
 )
 
 if(CG_ENABLE_TFLITE)

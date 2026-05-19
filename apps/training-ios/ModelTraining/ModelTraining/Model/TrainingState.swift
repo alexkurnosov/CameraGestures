@@ -1,5 +1,5 @@
 import Foundation
-import HandGestureTypes
+import CameraGestures
 
 enum TrainingState: Equatable {
     case idle

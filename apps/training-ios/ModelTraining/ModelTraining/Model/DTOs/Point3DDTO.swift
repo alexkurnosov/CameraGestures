@@ -1,5 +1,5 @@
 import Foundation
-import HandGestureTypes
+import CameraGestures
 
 /// DTO for Point3D (HandGestureTypes is not Codable to keep it dependency-free).
 struct Point3DDTO: Codable {

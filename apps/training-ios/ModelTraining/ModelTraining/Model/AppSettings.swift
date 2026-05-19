@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
-import HandGestureRecognizingFramework
-import GestureModelModule
+import CameraGestures
+import CameraGestures
 
 enum BalanceStrategy: String, CaseIterable, Identifiable {
     case classWeight = "class_weight"
@@ -123,7 +123,6 @@ class AppSettings: ObservableObject {
             : nil
         modelConfig = GestureModelConfig(
             modelPath: modelPath,
-            backendType: modelPath != nil ? .tensorFlow : .mock,
             predictionThreshold: confidenceThreshold,
             maxPredictions: 5
         )

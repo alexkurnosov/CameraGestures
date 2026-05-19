@@ -1,7 +1,7 @@
 import Foundation
 import Combine
-import HandGestureTypes
-import HandGestureRecognizingFramework
+import CameraGestures
+import CameraGestures
 
 /// Drives a repeating series of HandFilm captures for training data collection.
 /// Each iteration: countdown → recording window → pause → repeat.

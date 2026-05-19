@@ -1,5 +1,5 @@
 import SwiftUI
-import HandGestureTypes
+import CameraGestures
 
 /// Screen for downloading, reviewing, relabeling, and deleting server examples for a gesture.
 struct ServerExamplesView: View {

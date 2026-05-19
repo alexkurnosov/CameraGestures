@@ -62,9 +62,21 @@ public struct HandsRecognizingConfig {
     public func getHandLandmarkerOptions() -> HandLandmarkerOptions {
         let options = HandLandmarkerOptions()
         let baseOptions = BaseOptions()
+        // hand_landmarker.task lives in CameraGesturesAssets.bundle (resource_bundles in podspec).
+        // Search order: framework bundle → named asset bundle → any .bundle sidecar (fallback).
         let frameworkBundle = Bundle(for: HandsRecognizing.self)
-        if let modelPath = frameworkBundle.path(forResource: "hand_landmarker", ofType: "task") {
+        let assetsBundleURL =
+            frameworkBundle.url(forResource: "CameraGesturesAssets", withExtension: "bundle")
+            ?? Bundle.main.url(forResource: "CameraGesturesAssets", withExtension: "bundle")
+        let taskPath: String? =
+            assetsBundleURL.flatMap { Bundle(url: $0) }?
+                .path(forResource: "hand_landmarker", ofType: "task")
+            ?? frameworkBundle.path(forResource: "hand_landmarker", ofType: "task")
+            ?? Bundle.main.path(forResource: "hand_landmarker", ofType: "task")
+        if let modelPath = taskPath {
             baseOptions.modelAssetPath = modelPath
+        } else {
+            print("[HandsRecognizing] WARNING: hand_landmarker.task not found in any bundle")
         }
         options.baseOptions          = baseOptions
         options.numHands             = detectBothHands ? 2 : 1

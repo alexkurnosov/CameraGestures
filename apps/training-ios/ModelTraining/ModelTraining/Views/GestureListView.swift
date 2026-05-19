@@ -1,6 +1,6 @@
 import SwiftUI
-import HandGestureTypes
-import GestureModelModule
+import CameraGestures
+import CameraGestures
 
 struct GestureListView: View {
     @EnvironmentObject var trainingDataManager: TrainingDataManager

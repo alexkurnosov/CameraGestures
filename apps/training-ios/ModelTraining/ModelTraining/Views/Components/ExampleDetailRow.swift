@@ -1,5 +1,5 @@
 import SwiftUI
-import HandGestureTypes
+import CameraGestures
 
 struct ExampleDetailRow: View {
     let example: TrainingExample
