@@ -1,0 +1,10 @@
+Copy these two files into this directory before building the demo:
+
+  gesture_model.tflite  — server-trained Phase-3 gesture MLP
+  gestures.json         — GestureRegistry matching the model's output classes
+
+These are produced by the Python training server (CameraGestures-server).
+The latest versions live alongside your iOS Training App model.
+
+The hand_landmarker.task is bundled from core/assets/ by the :cameragestures
+Gradle module and does not need to be copied here.

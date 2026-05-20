@@ -31,7 +31,8 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDirs("src/main/assets")
+    // Bundle hand_landmarker.task from the shared core assets directory.
+    sourceSets["main"].assets.srcDirs("src/main/assets", "../../core/assets")
 }
 
 dependencies {

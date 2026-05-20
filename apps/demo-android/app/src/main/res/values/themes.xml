@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Full-screen, no action bar — camera fills the screen. -->
+    <style name="Theme.CameraGesturesDemo"
+        parent="android:Theme.Material.NoTitleBar.Fullscreen" />
+</resources>

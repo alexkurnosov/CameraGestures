@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CameraGestures Demo</string>
+    <string name="permission_rationale">Camera access is required to detect hand gestures.</string>
+    <string name="loading_model">Loading gesture model…</string>
+    <string name="model_missing">gesture_model.tflite / gestures.json not found in assets.\nCopy them from apps/demo-android/app/src/main/assets/ and rebuild.</string>
+</resources>
