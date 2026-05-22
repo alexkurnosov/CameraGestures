@@ -73,8 +73,21 @@ class HandGestureRecognizing {
 
     /** Advance T_commit / T_min_buffer timers. Call every ~10 ms from any thread. */
     fun tickTimers(nowSeconds: Double) {
+        val pending: String?
         lock.withLock {
-            if (handle != 0L) RecognizerNative.tickTimers(handle, nowSeconds)
+            if (handle == 0L) return
+            RecognizerNative.tickTimers(handle, nowSeconds)
+            pending = RecognizerNative.pollGesture(handle)
+        }
+        pending?.let { encoded ->
+            val idx = encoded.lastIndexOf('|')
+            if (idx >= 0) {
+                val name       = encoded.substring(0, idx)
+                val confidence = encoded.substring(idx + 1).toFloatOrNull() ?: 0f
+                if (name.isNotEmpty() && name != "_none") {
+                    onGestureDetected?.invoke(name, confidence)
+                }
+            }
         }
     }
 

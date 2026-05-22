@@ -9,6 +9,10 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.concurrent.futures.await
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -22,7 +26,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -113,9 +116,9 @@ fun CameraPreview(onFrame: (androidx.camera.core.ImageProxy) -> Unit, modifier: 
         factory = { ctx ->
             val previewView = PreviewView(ctx)
 
-            val future = ProcessCameraProvider.getInstance(ctx)
-            future.addListener({
-                val provider = future.get()
+            // Use await() (concurrent-futures-ktx) to avoid a direct ListenableFuture reference.
+            CoroutineScope(Dispatchers.Main).launch {
+                val provider = ProcessCameraProvider.getInstance(ctx).await()
 
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
@@ -123,6 +126,7 @@ fun CameraPreview(onFrame: (androidx.camera.core.ImageProxy) -> Unit, modifier: 
 
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setTargetRotation(previewView.display?.rotation ?: android.view.Surface.ROTATION_0)
                     .build()
                     .also { it.setAnalyzer(executor, onFrame) }
 
@@ -133,7 +137,7 @@ fun CameraPreview(onFrame: (androidx.camera.core.ImageProxy) -> Unit, modifier: 
                     preview,
                     analysis
                 )
-            }, ContextCompat.getMainExecutor(ctx))
+            }
 
             previewView
         },

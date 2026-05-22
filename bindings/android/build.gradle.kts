@@ -1,12 +1,15 @@
-// Stage 3: HandsRecognizing Android binding scaffold.
+// CameraGestures Android binding library.
+// Plugin versions are declared in the root project's pluginManagement block
+// (apps/demo-android/build.gradle.kts) — do NOT repeat them here.
 plugins {
-    id("com.android.library") version "8.3.0"
-    id("org.jetbrains.kotlin.android") version "1.9.0"
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
     namespace  = "com.cameragestures"
     compileSdk = 34
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         minSdk = 24
@@ -29,6 +32,15 @@ android {
             path    = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
     }
 
     // Bundle hand_landmarker.task from the shared core assets directory.

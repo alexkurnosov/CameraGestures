@@ -1,0 +1,7 @@
+[
+  {"id":"_none",      "name":"None",       "description":""},
+  {"id":"ok",         "name":"OK",         "description":""},
+  {"id":"point_left", "name":"Point Left", "description":""},
+  {"id":"stop",       "name":"Stop",       "description":""},
+  {"id":"thumbs_up",  "name":"Thumbs Up",  "description":""}
+]

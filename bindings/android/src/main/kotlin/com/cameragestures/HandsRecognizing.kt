@@ -4,15 +4,19 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.media.Image
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+
+private const val TAG = "CameraGestures"
 
 /**
  * Stage 3 Android binding for HandsRecognizing.
@@ -52,8 +56,13 @@ class HandsRecognizing(private val context: Context) {
             .setMinTrackingConfidence(config.minTrackingConfidence)
             .setMinHandPresenceConfidence(config.minDetectionConfidence)
             .setRunningMode(com.google.mediapipe.tasks.vision.core.RunningMode.LIVE_STREAM)
-            .setResultListener(::onLandmarkerResult)
-            .setErrorListener { e -> android.util.Log.e("CameraGestures", "MediaPipe error", e) }
+            .setResultListener { result, _ ->
+                // tasks-vision 0.10.14 passes (result, mpImage); timestamp not forwarded.
+                // Use wall-clock ms — close enough for gesture timing in LIVE_STREAM mode.
+                Log.d(TAG, "MP result: ${result.landmarks().size} hand(s) detected")
+                onLandmarkerResult(result, null, System.currentTimeMillis())
+            }
+            .setErrorListener { e -> Log.e(TAG, "MediaPipe error", e) }
             .build()
 
         landmarker = HandLandmarker.createFromOptions(context, options)
@@ -75,11 +84,23 @@ class HandsRecognizing(private val context: Context) {
         }
     }
 
-    /** Push a camera frame (BGRA8 or YUV) to MediaPipe for async processing. */
-    fun pushFrame(image: Image, timestampMs: Long) {
-        val landmarker = landmarker ?: return
-        // Convert YUV_420_888 → Bitmap → MPImage
-        val bitmap  = image.toBitmap()
+    /**
+     * Push a camera frame to MediaPipe for async processing.
+     * [rotationDegrees] is from ImageProxy.imageInfo.rotationDegrees — the rotation
+     * needed to bring the raw sensor image upright (matches display orientation).
+     */
+    fun pushFrame(image: Image, timestampMs: Long, rotationDegrees: Int = 0) {
+        val landmarker = landmarker ?: run {
+            Log.w(TAG, "pushFrame: landmarker is null — initialize() not called?")
+            return
+        }
+        // Convert YUV_420_888 → Bitmap, then rotate to display orientation.
+        var bitmap = image.toBitmap()
+        if (rotationDegrees != 0) {
+            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }
+        Log.v(TAG, "pushFrame: ${bitmap.width}x${bitmap.height} rot=${rotationDegrees}")
         val mpImage = BitmapImageBuilder(bitmap).build()
         landmarker.detectAsync(mpImage, timestampMs)
     }
@@ -97,7 +118,7 @@ class HandsRecognizing(private val context: Context) {
 
     // ---- Private — MediaPipe result handler ---------------------------------
 
-    private fun onLandmarkerResult(result: HandLandmarkerResult, input: com.google.mediapipe.framework.image.MPImage, timestampMs: Long) {
+    private fun onLandmarkerResult(result: HandLandmarkerResult, @Suppress("UNUSED_PARAMETER") input: com.google.mediapipe.framework.image.MPImage?, timestampMs: Long) {
         val ts = timestampMs / 1000.0
 
         if (result.landmarks().isEmpty()) {
@@ -139,6 +160,11 @@ class HandsRecognizing(private val context: Context) {
         HandsRecognizerNative.pushHandshot(
             nativeHandle, FloatArray(63), ts, 2 /* unknown */, 1 /* absent */
         )
+        // Forward absent shots to the gesture recognizer so it can properly
+        // reset MotionGate / HoldDetector when the hand leaves the frame.
+        handshotCallback?.invoke(
+            HandShot(List(21) { Point3D(0f, 0f, 0f) }, ts, Handedness.UNKNOWN, isAbsent = true)
+        )
     }
 
     // ---- Flat float-array → HandFilm ----------------------------------------
@@ -163,24 +189,47 @@ class HandsRecognizing(private val context: Context) {
         return HandFilm(shots, startTime)
     }
 
-    // ---- YUV → Bitmap -------------------------------------------------------
+    // ---- YUV_420_888 → NV21 → Bitmap ----------------------------------------
+    //
+    // The U/V planes in YUV_420_888 can have pixelStride == 2 (semi-planar) or 1
+    // (fully-planar). We must walk each pixel individually to build a correct NV21
+    // array; a raw buffer.get() copy only works when pixelStride == 1.
 
     private fun Image.toBitmap(): Bitmap {
-        val yBuffer = planes[0].buffer
-        val uBuffer = planes[1].buffer
-        val vBuffer = planes[2].buffer
-        val ySize   = yBuffer.remaining()
-        val uSize   = uBuffer.remaining()
-        val vSize   = vBuffer.remaining()
-        val nv21    = ByteArray(ySize + uSize + vSize)
-        yBuffer.get(nv21, 0, ySize)
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-        val out      = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, width, height), 100, out)
-        val jpegBytes = out.toByteArray()
-        return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+        val w = width; val h = height
+        val nv21 = ByteArray(w * h * 3 / 2)
+
+        // --- Y plane (always pixelStride == 1, but rowStride may be padded) ---
+        val yPlane = planes[0]
+        val yBuf   = yPlane.buffer
+        val yRowStride = yPlane.rowStride
+        if (yRowStride == w) {
+            yBuf.get(nv21, 0, w * h)
+        } else {
+            for (row in 0 until h) {
+                yBuf.position(row * yRowStride)
+                yBuf.get(nv21, row * w, w)
+            }
+        }
+
+        // --- VU interleaved for NV21 (V first, then U per pixel) --------------
+        val vPlane = planes[2]; val uPlane = planes[1]
+        val vBuf   = vPlane.buffer; val uBuf = uPlane.buffer
+        val vRowStride   = vPlane.rowStride;   val uRowStride   = uPlane.rowStride
+        val vPixelStride = vPlane.pixelStride; val uPixelStride = uPlane.pixelStride
+
+        var offset = w * h
+        for (row in 0 until h / 2) {
+            for (col in 0 until w / 2) {
+                nv21[offset++] = vBuf.get(row * vRowStride + col * vPixelStride)
+                nv21[offset++] = uBuf.get(row * uRowStride + col * uPixelStride)
+            }
+        }
+
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, w, h), 90, out)
+        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
     }
 }
 

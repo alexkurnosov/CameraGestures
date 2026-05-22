@@ -5,7 +5,7 @@ Version: **2.17.0**
 Download the Android AAR and extract the `jni/` native libraries:
 
 ```
-https://repo1.maven.org/maven2/org/tensorflow/tensorflow-lite/2.17.0/tensorflow-lite-2.17.0.aar
+https://dl.google.com/android/maven2/org/tensorflow/tensorflow-lite/2.17.0/tensorflow-lite-2.17.0.aar
 ```
 
 Extract `.so` files per ABI into subdirectories:

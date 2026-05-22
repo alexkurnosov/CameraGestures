@@ -1,0 +1,1 @@
+/Users/kurnosovaleksey/Projects/CameraGestures/bindings/android/build/intermediates/cxx/Debug/256v6632/obj/arm64-v8a

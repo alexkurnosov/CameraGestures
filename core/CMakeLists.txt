@@ -60,7 +60,7 @@ if(CG_ENABLE_TFLITE)
     if(IOS)
         # TFLite is linked via the XCFramework in the podspec; nothing needed here.
     elseif(ANDROID)
-        find_library(TFLITE_LIB tensorflowlite_c
+        find_library(TFLITE_LIB tensorflowlite_jni
             PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/android/${ANDROID_ABI}
             NO_DEFAULT_PATH)
         if(TFLITE_LIB)

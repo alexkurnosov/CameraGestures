@@ -83,6 +83,7 @@ class GestureViewModel(private val context: Context) : ViewModel() {
         }
 
         handsRecognizing.handshotCallback = { shot ->
+            if (!shot.isAbsent) Log.d(TAG, "Shot: hand present ts=${shot.timestamp}")
             pipelineExecutor.execute { gestureRecognizing.processShot(shot) }
         }
 
@@ -98,8 +99,9 @@ class GestureViewModel(private val context: Context) : ViewModel() {
         val image = imageProxy.image
         if (image != null && initialized.get()) {
             // MediaPipe detectAsync is thread-safe; call directly from the analyzer thread.
-            val tsMs = imageProxy.imageInfo.timestamp / 1_000_000L
-            handsRecognizing.pushFrame(image, tsMs)
+            val tsMs     = imageProxy.imageInfo.timestamp / 1_000_000L
+            val rotation = imageProxy.imageInfo.rotationDegrees
+            handsRecognizing.pushFrame(image, tsMs, rotation)
         }
         imageProxy.close()
     }

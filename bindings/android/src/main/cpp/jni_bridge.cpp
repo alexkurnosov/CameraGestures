@@ -17,6 +17,7 @@
 
 #define TAG "CameraGestures"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -166,10 +167,24 @@ Java_com_cameragestures_GestureModelNative_load(
 {
     const char* tflite   = env->GetStringUTFChars(jtflite,   nullptr);
     const char* registry = env->GetStringUTFChars(jregistry, nullptr);
+    LOGI("GestureModel: loading tflite=%s registry=%s", tflite, registry);
+
+    // Step 1: check registry parses
+    cg_registry_ref reg = cg_registry_create(registry);
+    if (!reg) {
+        LOGE("GestureModel: cg_registry_create failed — bad gestures.json at %s", registry);
+        env->ReleaseStringUTFChars(jtflite,   tflite);
+        env->ReleaseStringUTFChars(jregistry, registry);
+        return 0L;
+    }
+    int reg_count = (int)cg_registry_count(reg);
+    LOGI("GestureModel: registry loaded ok, %d gestures", reg_count);
+    cg_registry_destroy(reg);
+
     auto* ref = cg_gesture_model_load(tflite, registry);
     env->ReleaseStringUTFChars(jtflite,   tflite);
     env->ReleaseStringUTFChars(jregistry, registry);
-    if (!ref) LOGE("GestureModel: load failed — check model/registry paths");
+    if (!ref) LOGE("GestureModel: cg_gesture_model_load failed (TFLite alloc or dim mismatch)");
     return static_cast<jlong>(reinterpret_cast<uintptr_t>(ref));
 }
 

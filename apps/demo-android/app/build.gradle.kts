@@ -36,6 +36,13 @@ android {
     sourceSets["main"].assets.srcDirs("src/main/assets")
 }
 
+// MediaPipe brings in guava:27.0.1-android which already contains ListenableFuture.
+// Exclude the standalone listenablefuture artifact everywhere so there is only one
+// copy of the class on the classpath (the one inside guava).
+configurations.all {
+    exclude(group = "com.google.guava", module = "listenablefuture")
+}
+
 dependencies {
     implementation(project(":cameragestures"))
 
@@ -47,13 +54,18 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 
     // CameraX
-    implementation("androidx.camera:camera-camera2:1.3.2")
-    implementation("androidx.camera:camera-lifecycle:1.3.2")
-    implementation("androidx.camera:camera-view:1.3.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+
+    // ListenableFuture (needed to call ProcessCameraProvider.getInstance().await()).
+    // The standalone listenablefuture artifact is excluded above; guava provides the class.
+    implementation("com.google.guava:guava:27.0.1-android")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.1.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

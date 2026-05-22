@@ -17,6 +17,7 @@ build_abi() {
         -DANDROID_ABI="$abi" \
         -DANDROID_PLATFORM=android-24 \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCG_ENABLE_TFLITE=ON \
         -G "Unix Makefiles"
     cmake --build "$BUILD_DIR/$abi" --config Release
     mkdir -p "$OUT_DIR/$abi"

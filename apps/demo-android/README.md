@@ -62,6 +62,14 @@ apps/demo-android/
 └── gradle.properties
 ```
 
+## Follow-ups / Known Issues
+
+| # | Area | Description |
+|---|------|-------------|
+| 1 | Gesture sensitivity | Gestures are detected but require exaggerated, energetic movements. Tune the pipeline parameters: lower `MotionGate` threshold, reduce `HoldDetector` min-in-view duration, or relax confidence threshold in `HandGestureRecognizing.kt` (`name != "_none"` filter). May also need to retrain the model with more varied (slower) examples. |
+
+---
+
 ## Key dependencies
 
 | Library | Version |
