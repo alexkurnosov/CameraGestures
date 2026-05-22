@@ -22,7 +22,7 @@ set(TFLITE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/include")
 
 # ---- Library sources (accumulated per stage) --------------------------------
 
-add_library(CameraGestures STATIC
+set(CG_SOURCES
     src/CameraGestures.cpp
     # Stage 2: HandGestureTypes
     src/types/types.cpp
@@ -41,6 +41,18 @@ add_library(CameraGestures STATIC
     src/hand_gesture_recognizing/HandGestureRecognizing.cpp
 )
 
+# Stage 7: macOS LiteRT HandLandmarker (only when APPLE and not IOS)
+if(APPLE AND NOT IOS)
+    list(APPEND CG_SOURCES
+        src/hands_recognizing/macos/TaskBundleParser.cpp
+        src/hands_recognizing/macos/AnchorDecoder.cpp
+        src/hands_recognizing/macos/HandROICropper.cpp
+        src/hands_recognizing/macos/HandLandmarkerLiteRT.cpp
+    )
+endif()
+
+add_library(CameraGestures STATIC ${CG_SOURCES})
+
 target_include_directories(CameraGestures
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -50,6 +62,7 @@ target_include_directories(CameraGestures
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
         ${CMAKE_CURRENT_SOURCE_DIR}/src/gesture_model
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hand_gesture_recognizing
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing/macos
 )
 
 if(CG_ENABLE_TFLITE)
@@ -66,14 +79,17 @@ if(CG_ENABLE_TFLITE)
         if(TFLITE_LIB)
             target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
         endif()
-    elseif(APPLE)
-        # macOS: look for a static or shared TFLite library
+    elseif(APPLE AND NOT IOS)
+        # macOS: static TFLite re-platformed from iOS Simulator xcframework.
+        # Run core/scripts/vendor-tflite-macos.sh to generate this file.
         find_library(TFLITE_LIB TensorFlowLiteC
             PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/macos
             NO_DEFAULT_PATH)
         if(TFLITE_LIB)
             target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
         endif()
+        # Enable macOS LiteRT HandLandmarker C ABI
+        target_compile_definitions(CameraGestures PUBLIC CG_BUILD_MACOS_LANDMARKER)
     endif()
 endif()
 

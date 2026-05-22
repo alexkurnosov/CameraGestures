@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Builds a stub CameraGestures.framework for macOS (arm64 + x86_64).
-# Stage 0: no real TFLite linkage yet — just proves the CMake scaffold works.
+# Builds CameraGestures.framework for macOS (arm64 + x86_64).
+# Stage 7: real TFLite linkage via re-platformed libTensorFlowLiteC.a
+#
+# Prerequisites:
+#   - Run core/scripts/vendor-tflite-macos.sh at least once to populate
+#     core/third_party/tflite/macos/libTensorFlowLiteC.a
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -9,7 +13,15 @@ BUILD_DIR="$REPO_ROOT/build-macos"
 OUT_DIR="$REPO_ROOT/bindings/macos"
 FRAMEWORK="$OUT_DIR/CameraGestures.framework"
 
-echo "==> Building CameraGestures (macOS stub)"
+# Verify vendored TFLite library exists
+TFLITE_LIB="$CORE_DIR/third_party/tflite/macos/libTensorFlowLiteC.a"
+if [[ ! -f "$TFLITE_LIB" ]]; then
+    echo "ERROR: $TFLITE_LIB not found."
+    echo "Run: ./core/scripts/vendor-tflite-macos.sh"
+    exit 1
+fi
+
+echo "==> Building CameraGestures (macOS, TFLite enabled)"
 
 build_arch() {
     local arch="$1"
@@ -18,6 +30,7 @@ build_arch() {
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
         -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/$arch/install" \
+        -DCG_ENABLE_TFLITE=ON \
         -G "Unix Makefiles"
     cmake --build "$BUILD_DIR/$arch" --config Release
 }
@@ -48,7 +61,6 @@ cat > "$FRAMEWORK/Versions/A/Resources/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Canonical symlinks expected by the framework bundle layout
 ln -sfh A          "$FRAMEWORK/Versions/Current"
 ln -sfh Versions/Current/CameraGestures "$FRAMEWORK/CameraGestures"
 ln -sfh Versions/Current/Headers        "$FRAMEWORK/Headers"
