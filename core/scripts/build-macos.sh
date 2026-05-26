@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Builds CameraGestures.framework for macOS (arm64 + x86_64).
-# Stage 7: real TFLite linkage via re-platformed libTensorFlowLiteC.a
+#
+# Hand landmark detection uses Apple Vision (VNDetectHumanHandPoseRequest) in Swift —
+# no TFLite landmarker code. TFLite is still required for the gesture classifier
+# (GestureModel / TFLiteBackend).
 #
 # Prerequisites:
 #   - Run core/scripts/vendor-tflite-macos.sh at least once to populate
-#     core/third_party/tflite/macos/libTensorFlowLiteC.a
+#     core/third_party/tflite/macos/libTensorFlowLiteC.a  (gesture model backend)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,7 +16,7 @@ BUILD_DIR="$REPO_ROOT/build-macos"
 OUT_DIR="$REPO_ROOT/bindings/macos"
 FRAMEWORK="$OUT_DIR/CameraGestures.framework"
 
-# Verify vendored TFLite library exists
+# Verify vendored TFLite library exists (needed by TFLiteBackend.cpp / gesture model)
 TFLITE_LIB="$CORE_DIR/third_party/tflite/macos/libTensorFlowLiteC.a"
 if [[ ! -f "$TFLITE_LIB" ]]; then
     echo "ERROR: $TFLITE_LIB not found."
@@ -21,7 +24,7 @@ if [[ ! -f "$TFLITE_LIB" ]]; then
     exit 1
 fi
 
-echo "==> Building CameraGestures (macOS, TFLite enabled)"
+echo "==> Building CameraGestures (macOS, TFLite gesture model)"
 
 build_arch() {
     local arch="$1"

@@ -1,16 +1,17 @@
-// macOS HandsRecognizing — LiteRT-only (no MediaPipe dependency).
+// macOS HandsRecognizing — Vision-based (no TFLite / no MediaPipe dependency).
 //
-// Differences from the iOS version:
-// - No MediaPipeTasksVision import.
-// - Landmark detection runs via CG_BUILD_MACOS_LANDMARKER C ABI
-//   (cg_hand_landmarker_lrt_*), which calls our LiteRT two-stage decoder.
-// - AVCaptureSession setup and BGRA8 pipeline are identical to iOS.
+// Hand landmark detection is performed by VisionHandLandmarker, which wraps
+// Apple's VNDetectHumanHandPoseRequest. This replaces the broken two-stage
+// TFLite pipeline (palm_detection_full + hand_landmarks_detector).
+//
+// Everything downstream of cg_hands_recognizer_push_handshot — the motion gate,
+// gesture model, and HandGestureRecognizing — is unchanged.
 
 import Foundation
 import AVFoundation
 import CameraGesturesC
 
-// MARK: - Error / Config / Callback types (identical to iOS)
+// MARK: - Error / Config / Callback types
 
 public enum HandsRecognizingError: Error {
     case cameraNotAvailable
@@ -25,7 +26,7 @@ public enum HandsRecognizingError: Error {
         case .cameraPermissionNotDetermined: return "Camera permission not yet determined"
         case .invalidConfiguration:          return "Invalid configuration"
         case .initializationFailed:          return "Initialization failed"
-        case .modelLoadFailed(let m):        return "LiteRT model load failed: \(m)"
+        case .modelLoadFailed(let m):        return "Model load failed: \(m)"
         }
     }
 }
@@ -37,8 +38,6 @@ public struct HandsRecognizingConfig {
     public let minDetectionConfidence:   Float
     public let minTrackingConfidence:    Float
     public let handfilmMaxDuration:      TimeInterval
-    // Path to hand_landmarker.task; nil = auto-resolve from app bundle.
-    public let taskBundlePath:           String?
 
     public init(
         cameraIndex:            Int          = 0,
@@ -46,8 +45,7 @@ public struct HandsRecognizingConfig {
         detectBothHands:        Bool         = false,
         minDetectionConfidence: Float        = 0.5,
         minTrackingConfidence:  Float        = 0.5,
-        handfilmMaxDuration:    TimeInterval = 2.0,
-        taskBundlePath:         String?      = nil
+        handfilmMaxDuration:    TimeInterval = 2.0
     ) {
         self.cameraIndex            = cameraIndex
         self.targetFPS              = targetFPS
@@ -55,13 +53,9 @@ public struct HandsRecognizingConfig {
         self.minDetectionConfidence = minDetectionConfidence
         self.minTrackingConfidence  = minTrackingConfidence
         self.handfilmMaxDuration    = handfilmMaxDuration
-        self.taskBundlePath         = taskBundlePath
     }
 
     public static let defaultConfig = HandsRecognizingConfig()
-
-    // macOS: no MediaPipe options needed — provided for API parity with iOS.
-    // The hand_landmarker.task is resolved by HandsRecognizing.initialize().
 }
 
 public typealias HandShotCallback = (HandShot) -> Void
@@ -77,25 +71,22 @@ public class HandsRecognizing: NSObject {
     private var isRunning = false
 
     private let recognizerRef: cg_hands_recognizer_ref
-    private var landmarkerRef: cg_hand_landmarker_lrt_ref?
+    private var visionLandmarker: VisionHandLandmarker?
 
     public var handshotCallback: HandShotCallback?
     public var handfilmCallback: HandFilmCallback?
 
     private var captureSession:  AVCaptureSession?
     private var videoOutput:     AVCaptureVideoDataOutput?
-    private var processingQueue: DispatchQueue?
 
     // MARK: Init
 
     public override init() {
         self.recognizerRef = cg_hands_recognizer_create()
         super.init()
-        wireHandshotCallback()
     }
 
     deinit {
-        if let lm = landmarkerRef { cg_hand_landmarker_lrt_destroy(lm) }
         cg_hands_recognizer_destroy(recognizerRef)
     }
 
@@ -104,18 +95,12 @@ public class HandsRecognizing: NSObject {
     public func initialize(config: HandsRecognizingConfig = .defaultConfig) throws {
         self.config = config
 
-        // Resolve hand_landmarker.task path
-        let taskPath = config.taskBundlePath ?? resolveTaskBundlePath()
-        guard let taskPath else {
-            throw HandsRecognizingError.modelLoadFailed("hand_landmarker.task not found in bundle")
+        // Create Vision-based landmarker. It will push handshots into recognizerRef.
+        let lm = VisionHandLandmarker(recognizerRef: recognizerRef)
+        lm.handshotCallback = { [weak self] shot in
+            self?.handshotCallback?(shot)
         }
-
-        // Create LiteRT landmarker (loads both TFLite models from the .task bundle)
-        if let old = landmarkerRef { cg_hand_landmarker_lrt_destroy(old); landmarkerRef = nil }
-        landmarkerRef = cg_hand_landmarker_lrt_create(taskPath, recognizerRef)
-        guard landmarkerRef != nil else {
-            throw HandsRecognizingError.modelLoadFailed("cg_hand_landmarker_lrt_create failed for: \(taskPath)")
-        }
+        visionLandmarker = lm
 
         try setupCameraSession()
     }
@@ -171,7 +156,6 @@ public class HandsRecognizing: NSObject {
         session.beginConfiguration()
         session.sessionPreset = .medium
 
-        // On macOS, prefer a built-in camera
         let discovery = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera],
             mediaType: .video,
@@ -187,6 +171,7 @@ public class HandsRecognizing: NSObject {
 
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
+        // Vision accepts kCVPixelFormatType_32BGRA natively.
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
@@ -197,47 +182,8 @@ public class HandsRecognizing: NSObject {
         output.setSampleBufferDelegate(self, queue: queue)
 
         session.commitConfiguration()
-        captureSession  = session
-        videoOutput     = output
-        processingQueue = queue
-    }
-
-    // MARK: Private — handshot callback wiring
-
-    private func wireHandshotCallback() {
-        // The C++ recognizer pushes handshots from the LiteRT landmarker.
-        // We forward them to the Swift callback.
-        let selfPtr = Unmanaged.passRetained(self)
-        cg_hands_recognizer_set_callback(recognizerRef, { shotPtr, ctx in
-            guard let ctx, let shotPtr else { return }
-            let hr = Unmanaged<HandsRecognizing>.fromOpaque(ctx).takeUnretainedValue()
-            let shot = HandShot(fromCStruct: shotPtr.pointee)
-            if !shot.isAbsent {
-                print("[CG:Swift] real handshot  hand=\(shot.leftOrRight)  t=\(String(format: "%.3f", shot.timestamp))")
-            }
-            hr.handshotCallback?(shot)
-        }, selfPtr.toOpaque())
-        selfPtr.release()
-    }
-
-    // MARK: Private — task bundle path resolution
-
-    private func resolveTaskBundlePath() -> String? {
-        // Check the CameraGesturesMac framework bundle, then main bundle.
-        let bundles: [Bundle] = [Bundle(for: HandsRecognizing.self), .main]
-        for bundle in bundles {
-            // Check inside a CameraGesturesAssets.bundle resource bundle
-            if let assetURL = bundle.url(forResource: "CameraGesturesAssets", withExtension: "bundle"),
-               let assetBundle = Bundle(url: assetURL),
-               let path = assetBundle.path(forResource: "hand_landmarker", ofType: "task") {
-                return path
-            }
-            // Direct resource in the bundle
-            if let path = bundle.path(forResource: "hand_landmarker", ofType: "task") {
-                return path
-            }
-        }
-        return nil
+        captureSession = session
+        videoOutput    = output
     }
 }
 
@@ -249,42 +195,10 @@ extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection)
     {
-        guard isRunning, let lm = landmarkerRef else { return }
+        guard isRunning, let lm = visionLandmarker else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
-        let width  = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let ts     = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
-
-        cg_hand_landmarker_lrt_push_frame(
-            lm,
-            base.assumingMemoryBound(to: UInt8.self),
-            Int32(width), Int32(height), Int32(stride),
-            ts)
-    }
-}
-
-// MARK: - HandShot ↔ cg_handshot
-
-private extension HandShot {
-    init(fromCStruct c: cg_handshot) {
-        var pts: [Point3D] = []
-        pts.reserveCapacity(21)
-        withUnsafeBytes(of: c.landmarks) { buf in
-            let typed = buf.bindMemory(to: cg_point3d.self)
-            for pt in typed { pts.append(Point3D(x: pt.x, y: pt.y, z: pt.z)) }
-        }
-        self.init(
-            landmarks:   pts,
-            timestamp:   c.timestamp,
-            leftOrRight: c.handedness == CG_HAND_LEFT  ? .left
-                       : c.handedness == CG_HAND_RIGHT ? .right : .unknown,
-            isAbsent:    c.is_absent != 0)
+        let ts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        lm.process(pixelBuffer, timestamp: ts)
     }
 }
 

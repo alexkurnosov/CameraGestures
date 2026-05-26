@@ -41,15 +41,6 @@ set(CG_SOURCES
     src/hand_gesture_recognizing/HandGestureRecognizing.cpp
 )
 
-# Stage 7: macOS LiteRT HandLandmarker (only when APPLE and not IOS)
-if(APPLE AND NOT IOS)
-    list(APPEND CG_SOURCES
-        src/hands_recognizing/macos/TaskBundleParser.cpp
-        src/hands_recognizing/macos/AnchorDecoder.cpp
-        src/hands_recognizing/macos/HandROICropper.cpp
-        src/hands_recognizing/macos/HandLandmarkerLiteRT.cpp
-    )
-endif()
 
 add_library(CameraGestures STATIC ${CG_SOURCES})
 
@@ -62,7 +53,7 @@ target_include_directories(CameraGestures
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
         ${CMAKE_CURRENT_SOURCE_DIR}/src/gesture_model
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hand_gesture_recognizing
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing/macos
+
 )
 
 if(CG_ENABLE_TFLITE)
@@ -80,16 +71,15 @@ if(CG_ENABLE_TFLITE)
             target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
         endif()
     elseif(APPLE AND NOT IOS)
-        # macOS: static TFLite re-platformed from iOS Simulator xcframework.
-        # Run core/scripts/vendor-tflite-macos.sh to generate this file.
+        # macOS: TFLite used for the gesture model (TFLiteBackend.cpp).
+        # Hand landmark detection is done via Apple Vision in Swift — no LiteRT landmarker.
+        # Run core/scripts/vendor-tflite-macos.sh to generate the static library.
         find_library(TFLITE_LIB TensorFlowLiteC
             PATHS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tflite/macos
             NO_DEFAULT_PATH)
         if(TFLITE_LIB)
             target_link_libraries(CameraGestures PRIVATE ${TFLITE_LIB})
         endif()
-        # Enable macOS LiteRT HandLandmarker C ABI
-        target_compile_definitions(CameraGestures PUBLIC CG_BUILD_MACOS_LANDMARKER)
     endif()
 endif()
 

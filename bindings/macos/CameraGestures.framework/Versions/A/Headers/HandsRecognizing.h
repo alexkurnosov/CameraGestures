@@ -40,32 +40,6 @@ cg_handfilm_ref cg_hands_recognizer_harvest(cg_hands_recognizer_ref);
 /* Reset without returning the film. */
 void cg_hands_recognizer_reset(cg_hands_recognizer_ref);
 
-/* ---- macOS LiteRT HandLandmarker (macOS only) ----------------------------
- * Used by bindings/macos/Sources/HandsRecognizing.swift to run two-stage
- * TFLite inference (palm detector → landmark model) without MediaPipe SDK.
- * Note: guarded by CG_BUILD_MACOS_LANDMARKER in the C++ source; the installed
- * macOS framework header exposes these unconditionally so Swift can import them. */
-#if !defined(__APPLE__) || defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-/* Not available on iOS/Android — only on macOS. */
-#else
-
-typedef struct cg_hand_landmarker_lrt_s* cg_hand_landmarker_lrt_ref;
-
-/* Create and load. Returns NULL if the .task bundle cannot be opened. */
-cg_hand_landmarker_lrt_ref cg_hand_landmarker_lrt_create(
-    const char*             task_path,
-    cg_hands_recognizer_ref recognizer);
-
-void cg_hand_landmarker_lrt_destroy(cg_hand_landmarker_lrt_ref);
-
-/* Push a BGRA8 frame. stride = bytes per row (>= width*4). timestamp in seconds. */
-void cg_hand_landmarker_lrt_push_frame(
-    cg_hand_landmarker_lrt_ref,
-    const uint8_t* bgra,
-    int width, int height, int stride,
-    double timestamp);
-
-#endif /* macOS only */
 
 #ifdef __cplusplus
 }

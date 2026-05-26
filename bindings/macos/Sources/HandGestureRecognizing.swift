@@ -709,7 +709,9 @@ public class HandGestureRecognizing {
 // MARK: - Helpers
 // --------------------------------------------------------------------------
 
-private extension HandShot {
+// Internal (not private) so HandsRecognizing.swift and VisionHandLandmarker.swift
+// can call init(fromCStruct:) without a redeclaration conflict.
+extension HandShot {
     func toCHandshot() -> cg_handshot {
         var c        = cg_handshot()
         c.timestamp  = self.timestamp
