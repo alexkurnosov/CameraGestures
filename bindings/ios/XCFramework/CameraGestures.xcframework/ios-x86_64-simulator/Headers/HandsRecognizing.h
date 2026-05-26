@@ -40,6 +40,7 @@ cg_handfilm_ref cg_hands_recognizer_harvest(cg_hands_recognizer_ref);
 /* Reset without returning the film. */
 void cg_hands_recognizer_reset(cg_hands_recognizer_ref);
 
+
 #ifdef __cplusplus
 }
 #endif

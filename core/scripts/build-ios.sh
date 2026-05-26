@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Builds CameraGestures.xcframework for iOS (device + simulator).
-# Stage 3: HandGestureTypes + HandsRecognizing C ABI (no MediaPipe in static lib;
-# MediaPipe is a CocoaPod dep compiled separately by the podspec).
+# MediaPipe is a CocoaPod dependency compiled separately by the podspec; it is not linked into the static lib.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

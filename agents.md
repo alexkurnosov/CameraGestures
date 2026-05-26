@@ -1,292 +1,193 @@
-# CameraGestures - Dynamic Gesture Recognition System
+# CameraGestures — Architecture Reference
 
 ## Project Overview
 
-CameraGestures is a modular dynamic gesture recognition system that captures hand movements through a camera and translates them into recognizable gestures for application control. The system leverages MediaPipe Hands for real-time hand tracking and supports multiple machine learning backends for gesture classification.
-
-The project is designed with modularity and interchangeability in mind, allowing different neural network implementations while maintaining consistent APIs across modules. This architecture enables easy experimentation with different ML approaches and seamless integration into various applications.
+CameraGestures is a cross-platform C++ library for real-time dynamic hand gesture recognition. It captures hand movements through a camera and emits gesture events to the host application. The core library is written in C++17 with a C ABI; platform bindings (Swift for iOS/macOS, Kotlin for Android) wrap that ABI.
 
 ## Design Principles
 
-- **Modularity**: Each module has a single, well-defined responsibility with clear interfaces
-- **Interoperability**: Consistent APIs enable seamless integration between modules
-- **Extensibility**: New gesture types and ML backends can be added without modifying core architecture
-- **Performance**: Real-time processing optimized for <500ms latency requirement
-- **Testability**: Independent module testing and validation capabilities
-- **Flexibility**: Support for different deployment scenarios from development to production
+- **Inference-only library.** The C++ core loads a `.tflite` model, runs the recognition pipeline, and fires callbacks. Server I/O lives in the Training App, not the library.
+- **Camera-agnostic.** The library accepts pre-captured BGRA8 frames from platform code; it does not own the camera.
+- **C ABI surface.** One header (`core/include/CameraGestures/CameraGestures.h`) using `cg_*` prefixed opaque handles and callbacks. Platform wrappers call only this ABI.
+- **Vendored third-party.** LiteRT prebuilts are checked in under `core/third_party/tflite/`. No Bazel, no download scripts.
 
 ## System Architecture
 
-The system consists of five interconnected modules that work together to provide end-to-end gesture recognition:
-
 ```
-Camera Input → HandsRecognizing → GestureModel → Application Output
-                     ↓                  ↓
-                Training Data → ModelTraining
-                     ↑
-              HandGestureTypes (shared data types, all modules depend on this)
+Camera frames (BGRA8, supplied by platform code)
+       │
+       ▼
+HandsRecognizing   ─── iOS:     MediaPipeTasksVision (CocoaPod)
+                   ─── Android: com.google.mediapipe:tasks-vision (AAR via JNI)
+                   ─── macOS:   Apple Vision VNDetectHumanHandPoseRequest
+       │
+       ▼  HandShots → accumulated into HandFilms
+HandGestureRecognizing  (3-phase orchestration)
+   ├── MotionGate      — gates motion start/end
+   ├── HoldDetector    — detects steady poses within a moving sequence
+   ├── PrefixMatcher   — early high-confidence predictions
+   └── GestureModel    — TFLite inference (LiteRT C++ runtime, vendored)
+           └── FeaturePreprocessor — HandFilm → (60×126) + 256-feature vectors
+       │
+       ▼
+DetectedGesture callbacks → application layer
 ```
 
 ## Module Descriptions
 
-### 1. HandGestureTypes Module
-**Purpose**: Shared data type definitions used by all other modules.
+### HandGestureTypes (`core/src/types/`)
+POD structs shared by all modules: `Point3D`, `HandShot`, `HandFilm`, `GestureDefinition`, `GesturePrediction`, `DetectedGesture`. Also contains `GestureRegistry` — JSON-persisted list of `GestureDefinition`. Format matches `<AppSupport>/gestures.json` from the iOS Training App.
 
-**Responsibilities**:
-- Define core data structures: `Point3D`, `HandShot`, `HandFilm`, `GesturePrediction`
-- Define the dynamic gesture definition type via `GestureDefinition` struct
-- Manage the runtime gesture list via `GestureRegistry` (JSON-persisted)
-- Define training structures: `TrainingExample`, `TrainingDataset`
-- Define evaluation structures: `ModelMetrics`
-- Serve as the single source of truth for inter-module data contracts
+**Dependencies:** nlohmann/json only.
 
-**Implementation Language**: Swift (iOS); C++ equivalent planned for cross-platform
-**Platform Support**: iOS (current); Cross-platform (planned)
+### HandsRecognizing (`core/src/hands_recognizing/`)
+Converts raw BGRA8 camera frames into streams of `HandShot` structs (21 3D landmarks per hand). Platform-specific implementations selected at CMake build time:
 
-### 2. HandsRecognizing Module
-**Purpose**: Real-time hand detection and coordinate extraction from camera input.
+| Platform | Implementation | Approach |
+|---|---|---|
+| iOS | `ios/HandLandmarkerIOS.mm` | Obj-C++ shim over `MPHandLandmarker` |
+| Android | `android/HandLandmarkerAndroid.cpp` | JNI bridge to Kotlin MediaPipe wrapper |
+| macOS | `macos/` (Swift binding) | Apple Vision `VNDetectHumanHandPoseRequest` |
+| common | `common/HandsRecognizing.cpp` | Frame-rate limiting, `is_absent` computation |
 
-**Responsibilities**:
-- Capture video frames from camera
-- Detect and track hand landmarks using MediaPipe Hands
-- Extract 21-keypoint hand skeleton coordinates
-- Generate timestamped sequences of hand positions
-- Output structured `HandShot` and `HandFilm` data
+### GestureModel (`core/src/gesture_model/`)
+Loads a server-trained `.tflite` and classifies `HandFilm` sequences. Components:
 
-**Technology**: MediaPipe Hands (Google) — `MediaPipeTasksVision` on iOS
-**Implementation Language**: Swift (iOS); C++ (cross-platform, planned)
-**Platform Support**: iOS (current); Cross-platform (planned)
+- `FeaturePreprocessor` — produces a `(60, 126)` sequence array and a 256-feature summary. Bit-for-bit equivalent to `server/ml/preprocessor.py`.
+- `PoseManifest` — JSON-defined geometric features.
+- `TFLiteBackend` — wraps `tflite::Interpreter` from vendored LiteRT.
+- `GestureModel` — top-level classifier: `classify(handfilm) → GesturePrediction`.
 
-### 3. GestureModel Module
-**Purpose**: Neural network abstraction layer for gesture classification.
+**Dependencies:** vendored LiteRT (`core/third_party/tflite/`).
 
-**Responsibilities**:
-- Provide unified API for different ML backends
-- Accept `HandFilm` sequences as input
-- Output `GesturePrediction` results with confidence scores
-- Support model loading/saving operations
-- Enable model switching without code changes
+### HandGestureRecognizing (`core/src/hand_gesture_recognizing/`)
+The 3-phase orchestration layer. Drives the camera → landmark → buffer → gate → classify → callback pipeline. Contains:
 
-**Backend Options**:
-- CoreML backend (iOS, planned)
-- TensorFlow Lite backend (iOS, in progress — pod linked, inference stubbed)
-- Mock backend (iOS, working — heuristic predictions for development/testing)
-- TensorFlow/Keras backend (cross-platform, planned)
-- Scikit-learn backend (cross-platform, planned)
+- `HandGestureRecognizing` — top-level C++ class; exposed through the C ABI as `cg_recognizer_*`.
+- `MotionGate` — Phase 1: decides when a motion segment is significant.
+- `HoldDetector` — Phase 2: detects steady poses within a moving segment.
+- `PrefixMatcher` — fires early predictions on high-confidence prefixes.
 
-**Implementation Language**: Swift (iOS); C++ (cross-platform, planned)
-**Platform Support**: iOS (current); Cross-platform (planned)
+Configuration parameters are defined in `CameraGestures-server/docs/architecture/parameters.md` (canonical source).
 
-### 4. ModelTraining Module
-**Purpose**: Training pipeline for gesture recognition models.
+**Dependencies:** all three lower modules plus nlohmann/json.
 
-**Responsibilities**:
-- Collect training data using HandsRecognizing module
-- Store handfilm datasets locally
-- Train GestureModel instances on collected data
-- Provide testing and validation capabilities
-- Enable manual correction of predictions
-- Support iterative model improvement
+---
 
-**Implementation Language**: Swift (iOS SwiftUI application)
-**Platform Support**: iOS (current); macOS (planned)
+## Repository Layout
 
-### 5. HandGestureRecognizing Module
-**Purpose**: Production-ready gesture recognition for external applications.
-
-**Responsibilities**:
-- Orchestrate HandsRecognizing and GestureModel into a single lifecycle-managed pipeline
-- Process live camera input and emit `DetectedGesture` events
-- Provide simplified API for application integration (initialize → start → callbacks)
-- Expose performance statistics (latency, FPS, confidence, gesture counts)
-- Limit access to training functionality (read-only model usage)
-- Ensure consistent performance and reliability
-
-**Implementation Language**: Swift (iOS CocoaPod); C++ (cross-platform, planned)
-**Platform Support**: iOS (current); Cross-platform (planned)
+```
+CameraGestures/
+├── core/                        # C++ library
+│   ├── include/CameraGestures/  # Public C ABI headers
+│   ├── src/                     # Implementation (types/, hands_recognizing/, gesture_model/, hand_gesture_recognizing/)
+│   ├── third_party/
+│   │   ├── tflite/              # Vendored LiteRT prebuilts per platform
+│   │   └── nlohmann_json/       # Header-only JSON
+│   ├── assets/
+│   │   └── hand_landmarker.task # MediaPipe model bundle (used on iOS/Android)
+│   ├── tests/                   # gtest unit tests + replay rig CLI
+│   └── scripts/
+│       ├── build-ios.sh         # → bindings/ios/XCFramework/CameraGestures.xcframework
+│       ├── build-android.sh     # → bindings/android/ AAR
+│       └── build-macos.sh       # → bindings/macos/CameraGestures.framework
+│
+├── bindings/                    # Platform wrappers (call the C ABI only)
+│   ├── ios/                     # CameraGestures CocoaPod + Swift wrappers
+│   │   ├── CameraGestures.podspec
+│   │   ├── CameraGestures/      # HandGestureTypes.swift, HandsRecognizing.swift, …
+│   │   └── XCFramework/         # Prebuilt CameraGestures.xcframework
+│   ├── android/                 # Gradle module (AAR) + Kotlin wrappers + JNI bridge
+│   └── macos/                   # Swift wrappers + CameraGestures.framework
+│
+├── apps/                        # Apps that consume the library
+│   ├── training-ios/            # Training App v2 — sole pod dependency: CameraGestures
+│   ├── demo-ios/                # Minimal iOS demo (camera + gesture overlay)
+│   ├── demo-android/            # Minimal Android demo
+│   └── demo-macos/              # Minimal macOS demo
+│
+└── server/                      # Python FastAPI training server (unchanged)
+```
 
 ---
 
 ## Platform Implementations
 
-### iOS Implementation (`/iOS`)
+### iOS (`bindings/ios/`)
 
-The iOS implementation is a fully functional Swift realization of the architecture above, packaged as a CocoaPods workspace (`ModelTrainingApp.xcworkspace`). It serves as both the primary development environment and the reference implementation for the overall system design.
+- **Pod:** `CameraGestures` (unified, replaces the four V1 pods).
+- **Linkage:** XCFramework statically linked; `MediaPipeTasksVision` pulled by CocoaPods at consumer build time.
+- **Swift surface:** `HandGestureTypes.swift`, `HandsRecognizing.swift`, `GestureModel.swift`, `HandGestureRecognizing.swift` — same class names as the V1 pods.
+- **Training App v2:** `apps/training-ios/ModelTraining/ModelTrainingApp.xcworkspace`. Podfile lists only `pod 'CameraGestures'`. Server I/O (registration, example upload, training trigger, model download) is in Swift in `apps/training-ios/ModelTraining/Networking/`.
+- **Min deployment:** iOS 16.0.
 
-**Location**: `/iOS`
-**Language**: Swift 5
-**Minimum Deployment Target**: iOS 15.0
-**Package Manager**: CocoaPods 1.16.2
-**Linkage**: Static frameworks (`use_frameworks! :linkage => :static`)
+### Android (`bindings/android/`)
 
-#### Pod Structure and Dependency Graph
+- **Artifact:** `cameragestures-release.aar`.
+- **Hand detection:** `com.google.mediapipe:tasks-vision` Gradle dependency; Kotlin wrapper calls it and posts results back to C++ via JNI.
+- **Inference:** `libcameragestures.so` (arm64-v8a, armeabi-v7a, x86_64) with LiteRT statically linked.
+- **Min API:** 24 (Android 7.0).
+- **Demo:** `apps/demo-android/` — Jetpack Compose, camera permission, gesture overlay.
 
-```
-HandGestureTypes          (no dependencies)
-       ↑
-       ├── HandsRecognizingModule
-       │       + MediaPipeTasksVision 0.10.14
-       │         → MediaPipeTasksCommon 0.10.14
-       │
-       ├── GestureModelModule
-       │       + TensorFlowLiteSwift 2.13.0
-       │         → TensorFlowLiteC 2.13.0
-       │
-       └── HandGestureRecognizingFramework
-               (depends on all three above)
-                       ↑
-               ModelTrainingApp  ← iOS application target
-```
+### macOS (`bindings/macos/`)
 
-#### Module Implementation Status
+- **Artifact:** `CameraGestures.framework` (universal arm64 + x86_64).
+- **Hand detection:** Apple Vision `VNDetectHumanHandPoseRequest` — no MediaPipe SDK.
+- **Inference:** LiteRT statically linked.
+- **Min macOS:** 13 (Ventura).
+- **Demo:** `apps/demo-macos/DemoMac/` — SwiftUI, `AVCaptureSession`, gesture overlay.
 
-| Module | Pod Name | Status |
-|---|---|---|
-| `HandGestureTypes` | `HandGestureTypes` | Complete — all types defined |
-| `HandsRecognizing` | `HandsRecognizingModule` | Working — real MediaPipe integration |
-| `GestureModel` | `GestureModelModule` | Partial — mock backend works; CoreML/TFLite stubbed |
-| `HandGestureRecognizing` | `HandGestureRecognizingFramework` | Working — orchestration and callbacks functional |
-| `ModelTraining` | App target | Partial — UI complete; persistent storage and real training stubbed |
+---
 
-#### Key Implementation Notes
+## Python Training Server (`server/`)
 
-- **MediaPipe integration is real**: `HandsRecognizing` calls `HandLandmarker.detectAsync()` with live `AVCaptureSession` frames and converts results to `HandShot` structs.
-- **ML backends are currently stubbed**: `GestureModel` CoreML and TensorFlow Lite code paths exist but return mock data pending real model integration. The mock backend returns empty predictions (no heuristics).
-- **Training pipeline is incomplete end-to-end**: the `ModelTraining` UI allows data collection and labeling, but persistent storage and actual model training are not yet implemented.
-- **Gesture set is dynamic**: gestures are defined at runtime as `GestureDefinition` values (name + description + slug ID) managed by `GestureRegistry`. The registry persists to `<AppSupport>/gestures.json`. There is no longer a fixed compile-time enum. The ModelTrainingApp provides an "Add Gesture" sheet (accessible from the Training and Gestures tabs) to define new gestures at runtime.
-- **Server authentication**: `GestureModelAPIClient` implements per-device JWT auth. On first use it calls `POST /auth/register` with a `REGISTRATION_TOKEN` (entered in Settings → Server) and saves the returned JWT to the iOS Keychain via `TokenStorage`. All subsequent requests include `Authorization: Bearer <token>`. A `401` response clears the stored token. The Settings screen has a "Re-register Device" button that forces fresh registration.
+Receives labelled `HandFilm` examples from the iOS Training App, trains a Keras MLP (Phase 1) or LSTM (Phase 2) model, and exports a `.tflite` for download.
 
-### Python Server (`/server`)
+**Stack:** Python 3.11, FastAPI + uvicorn, SQLite via SQLAlchemy, Docker.
 
-The Python server is the training backend for the client-server architecture. The iOS app uploads labelled `HandFilm` examples to it, it trains a gesture recognition model, and serves the resulting `.tflite` file back to the device.
-
-**Location**: `/server`
-**Language**: Python 3.11
-**Framework**: FastAPI + uvicorn
-**Database**: SQLite via SQLAlchemy Core (async, `aiosqlite`)
-**Deployment**: Docker / docker-compose (data volume at `./data`)
-**Config**: `pydantic-settings` — all values overridable via `.env` (see `.env.example`)
-
-#### Server File Structure
-
-```
-server/
-├── main.py               — FastAPI app, CORS, DB init on startup
-├── config.py             — Settings (HOST, PORT, DATA_DIR, AUTO_TRAIN_THRESHOLD, TRAINER, …)
-├── auth.py               — JWT creation (create_access_token) + FastAPI dependency (get_current_device)
-├── database.py           — SQLAlchemy engine + table definitions (examples, models, devices)
-├── models.py             — Pydantic schemas mirroring HandGestureTypes Swift structs
-├── training_state.py     — In-process training state singleton (idle/training/ready/failed)
-├── routers/
-│   ├── auth.py           — POST /auth/register (device registration → JWT)
-│   ├── examples.py       — POST /examples, GET /examples/stats, DELETE /examples
-│   ├── training.py       — POST /train, GET /model/status + auto-train threshold logic
-│   └── model.py          — GET /model/download, GET /model/info, DELETE /model
-├── ml/
-│   ├── preprocessor.py   — HandFilm → (60, 126) numpy array + 256-feature summary vector
-│   ├── trainer_rf_mlp.py — Phase 1: shallow Keras MLP on stat features → .tflite (working)
-│   └── trainer_lstm.py   — Phase 2: Keras LSTM on full sequence → .tflite (stub)
-├── storage/
-│   ├── example_store.py  — SQLite CRUD for training examples
-│   └── model_store.py    — SQLite model registry; keeps last N versions on disk
-├── test_api.sh           — End-to-end smoke test script (see below)
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-└── .gitignore            — excludes data/ and .env
-```
-
-#### API Endpoints
-
-| Method | Path | Auth required | Description |
-|--------|------|---------------|-------------|
-| `GET` | `/health` | No | Liveness check (open for Docker health probe) |
-| `POST` | `/auth/register` | No | Exchange the pre-shared `REGISTRATION_TOKEN` for a per-device JWT |
-| `POST` | `/examples` | Yes | Upload one labelled `HandFilm`; triggers auto-train check |
-| `GET` | `/examples/stats` | Yes | Per-gesture example counts |
-| `DELETE` | `/examples` | Yes | Wipe all examples (add `?gesture_id=slug` to wipe one gesture) |
-| `POST` | `/train` | Yes | Trigger training immediately |
-| `GET` | `/model/status` | Yes | Poll training state + latest accuracy |
-| `GET` | `/model/download` | Yes | Download `gesture_model.tflite` |
-| `GET` | `/model/info` | Yes | Model metadata (accuracy, F1, confusion matrix, gesture list) |
-| `DELETE` | `/model` | Yes | Wipe all model versions and reset training state |
-
-All protected endpoints require an `Authorization: Bearer <token>` header. Requests without a valid JWT receive `401 Unauthorized`.
-
-Interactive docs available at `http://localhost:8000/docs` when the server is running.
-
-#### Running locally
+### Running
 
 ```bash
 cd server
 cp .env.example .env
-# Required: set JWT_SECRET and REGISTRATION_TOKEN before starting
-# e.g. JWT_SECRET=$(openssl rand -hex 32)
+# Set JWT_SECRET and REGISTRATION_TOKEN
 docker compose up --build
 ```
 
-#### Smoke tests
+### Key API Endpoints
 
-`server/test_api.sh` is a self-contained shell script that runs a full end-to-end test suite against a running server — from `/health` through uploading examples, triggering training, downloading the model, and wiping everything at the end.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Liveness check |
+| `POST` | `/auth/register` | No | Per-device JWT |
+| `POST` | `/examples` | Yes | Upload labelled HandFilm |
+| `GET` | `/examples/stats` | Yes | Per-gesture counts |
+| `POST` | `/train` | Yes | Trigger training |
+| `GET` | `/model/status` | Yes | Poll training state |
+| `GET` | `/model/download` | Yes | Download `.tflite` |
+| `GET` | `/model/info` | Yes | Accuracy, F1, confusion matrix |
 
-```bash
-cd server
-./test_api.sh                                    # localhost:8000
-./test_api.sh http://192.168.1.5:8000            # custom host
-./test_api.sh --verbose                          # show full JSON for every response
-./test_api.sh http://my-vps.com:8000 --verbose
-```
+Interactive docs: `http://localhost:8000/docs`
 
-#### Key Configuration Variables (`.env`)
+### ML Pipeline
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HOST` | `0.0.0.0` | Bind address |
-| `PORT` | `8000` | Bind port |
-| `DATA_DIR` | `data` | Root for SQLite DB, examples, and model files |
-| `AUTO_TRAIN_THRESHOLD` | `10` | Examples per gesture before auto-training fires |
-| `TRAINER` | `rf_mlp` | `rf_mlp` (MLP, working) or `lstm` (stub) |
-| `MAX_MODEL_VERSIONS` | `5` | Number of `.tflite` versions to retain on disk |
-| `JWT_SECRET` | **required** | Long random string used to sign tokens (`openssl rand -hex 32`) |
-| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
-| `JWT_EXPIRE_DAYS` | `365` | Token lifetime in days |
-| `REGISTRATION_TOKEN` | **required** | Pre-shared secret the iOS app presents to obtain a JWT |
-
-`JWT_SECRET` and `REGISTRATION_TOKEN` have no defaults — the server refuses to start if either is missing from `.env`.
+- `server/ml/preprocessor.py` — `HandFilm` → `(60, 126)` numpy array + 256-feature summary. The C++ `FeaturePreprocessor` must match this output bit-for-bit.
+- `server/ml/trainer_rf_mlp.py` — Phase 1: shallow MLP on stat features → `.tflite`.
+- `server/ml/trainer_lstm.py` — Phase 2: LSTM on full sequence → `.tflite`.
 
 ---
 
 ## Glossary
 
-### Core Concepts
-- **Handshot**: A data structure containing the 21 3D coordinates of hand landmarks captured at a specific moment in time
-- **Handfilm**: A time-ordered sequence of handshots with associated timestamps, representing a complete gesture motion
-- **Dynamic Gesture**: A hand movement pattern that unfolds over time, requiring temporal analysis for recognition
-
-### Module Names
-- **HandGestureTypes**: The shared types module defining all data structures and contracts used across modules
-- **HandsRecognizing**: The computer vision module responsible for hand detection and coordinate extraction
-- **GestureModel**: The machine learning abstraction layer that classifies gestures from handfilm data
-- **ModelTraining**: The training pipeline module for developing and refining gesture recognition models
-- **HandGestureRecognizing**: The production module that provides gesture recognition services to external applications
-
-### Technical Terms
-- **Landmark**: Individual coordinate points (x, y, z) representing specific anatomical features of the hand
-- **Keypoint**: Synonym for landmark, referring to the 21 tracked points on each hand
-- **Temporal Sequence**: Time-ordered data representing how hand positions change over the duration of a gesture
-- **Model Backend**: The underlying machine learning framework (CoreML, TensorFlow Lite, or mock on iOS; TensorFlow/Keras or Scikit-learn on cross-platform)
-- **Confidence Score**: Numerical value indicating the model's certainty about a gesture prediction
-- **Mock Backend**: A substitute for a real ML model used during development and testing; currently returns empty predictions until a real model is trained
-- **GestureDefinition**: A runtime struct holding a gesture's slug ID, display name, and description — replaces the former `GestureType` enum
-- **GestureRegistry**: An `ObservableObject` that manages the list of `GestureDefinition` values and persists them as JSON on disk
-
-### Data Structures
-- **Point3D**: (x, y, z) position data for a single hand landmark
-- **Coordinate Triplet**: Synonym for Point3D
-- **Timestamp**: Time marker associated with each handshot for temporal analysis
-- **Gesture Label**: Classification identifier assigned to recognized gesture patterns (a `GestureDefinition.id` string slug)
-- **Training Dataset**: Collection of labeled handfilms used for model development (`TrainingDataset` type)
-- **TrainingExample**: A single labeled `HandFilm` paired with a gesture ID string (`gestureId`)
-- **ModelMetrics**: Evaluation results including accuracy, precision, recall, F1-score, confusion matrix, and training time
-- **DetectedGesture**: A recognized result bundled with its handfilm, handedness, timestamp, and processing latency
+| Term | Definition |
+|------|-----------|
+| **HandShot** | 21 3D landmarks captured at one instant |
+| **HandFilm** | Time-ordered sequence of HandShots representing one gesture motion |
+| **GestureDefinition** | `{id, name, description}` struct identifying a gesture at runtime |
+| **GestureRegistry** | JSON-persisted list of GestureDefinitions (`gestures.json`) |
+| **MotionGate** | Phase 1 component: decides when motion is significant enough to start/end a candidate segment |
+| **HoldDetector** | Phase 2 component: detects steady poses inside a moving segment |
+| **PrefixMatcher** | Early-exit component: fires high-confidence predictions before a full HandFilm closes |
+| **FeaturePreprocessor** | Converts a HandFilm into numeric feature arrays for the TFLite model |
+| **LiteRT / TFLite** | TensorFlow Lite C++ runtime, vendored in `core/third_party/tflite/` |
+| **hand_landmarker.task** | MediaPipe model bundle (palm detector + landmark model) used on iOS and Android |
