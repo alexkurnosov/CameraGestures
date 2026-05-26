@@ -17,8 +17,9 @@ struct HandROI {
 HandROI palmDetectionToROI(const PalmDetection& det);
 
 // Affine-warp the BGRA source image to a 224×224 RGB float32 buffer.
-// Normalization: pixel / 127.5 - 1.0 (→ [-1, 1], standard MediaPipe convention).
-// Output: RGB interleaved, [224 × 224 × 3] floats.
+// Output: RGB interleaved, [224 × 224 × 3] floats, raw pixel values [0, 255].
+// The hand_landmarks_detector.tflite model has baked-in ÷127.5−1 normalization,
+// so callers must NOT pre-normalize — pass raw [0,255] float values.
 void warpROI(
     const uint8_t* bgra_src,  // source BGRA8 frame
     int src_w, int src_h,     // source dimensions in pixels

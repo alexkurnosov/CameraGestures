@@ -1,7 +1,6 @@
 import Foundation
 import AVFoundation
-// HandGestureRecognizing, HandsRecognizing, GestureModel, HandGestureTypes are
-// compiled directly into this target from bindings/macos/Sources/.
+import CameraGesturesMac  // macOS binding module (HandsRecognizing, GestureModel, HandGestureRecognizing)
 
 enum PipelineState {
     case loading, ready, running, error(String)

@@ -37,7 +37,13 @@ std::vector<Anchor> generatePalmAnchors() {
 // ---- Box decoding -----------------------------------------------------------
 // MediaPipe TensorsToDetectionsCalculator for palm_detection:
 //   x_scale=y_scale=h_scale=w_scale=192, sigmoid_score=true
-//   box format: [cx_enc, cy_enc, w_enc, h_enc, kp0x, kp0y, ..., kp6x, kp6y]
+//   reverse_output_order=true  ← KEY: the model emits YXHW not XYWH
+//   box format: [cy_enc, cx_enc, h_enc, w_enc, kp0_y, kp0_x, ..., kp6_y, kp6_x]
+//
+// Getting the order wrong here puts every detection at swapped coordinates
+// and rotates the ROI 90° (because kp[0]→kp[2] direction is rotated), so the
+// landmark crop is taken from a wrong region — the rest of the pipeline then
+// produces landmarks at random locations relative to the actual hand.
 
 static float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 
@@ -76,13 +82,15 @@ std::vector<PalmDetection> decodePalmDetections(
 
         PalmDetection d{};
         d.score = s;
-        d.cx = a.cx + b[0] / scale;
-        d.cy = a.cy + b[1] / scale;
-        d.w  = std::exp(b[2] / scale);
-        d.h  = std::exp(b[3] / scale);
+        // YXHW order — see comment block above.
+        d.cy = a.cy + b[0] / scale;
+        d.cx = a.cx + b[1] / scale;
+        d.h  = std::exp(b[2] / scale);
+        d.w  = std::exp(b[3] / scale);
         for (int k = 0; k < num_kp; ++k) {
-            d.kp_x[k] = a.cx + b[4 + 2 * k]     / scale;
-            d.kp_y[k] = a.cy + b[4 + 2 * k + 1] / scale;
+            // Keypoint pairs are (y, x), not (x, y).
+            d.kp_y[k] = a.cy + b[4 + 2 * k]     / scale;
+            d.kp_x[k] = a.cx + b[4 + 2 * k + 1] / scale;
         }
         dets.push_back(d);
     }

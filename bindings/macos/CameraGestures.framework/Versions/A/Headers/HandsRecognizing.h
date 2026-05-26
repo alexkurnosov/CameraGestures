@@ -43,9 +43,11 @@ void cg_hands_recognizer_reset(cg_hands_recognizer_ref);
 /* ---- macOS LiteRT HandLandmarker (macOS only) ----------------------------
  * Used by bindings/macos/Sources/HandsRecognizing.swift to run two-stage
  * TFLite inference (palm detector → landmark model) without MediaPipe SDK.
- * Only compiled when CG_BUILD_MACOS_LANDMARKER is defined (set by the macOS
- * CMake build and the macOS Xcode framework target). */
-#ifdef CG_BUILD_MACOS_LANDMARKER
+ * Note: guarded by CG_BUILD_MACOS_LANDMARKER in the C++ source; the installed
+ * macOS framework header exposes these unconditionally so Swift can import them. */
+#if !defined(__APPLE__) || defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+/* Not available on iOS/Android — only on macOS. */
+#else
 
 typedef struct cg_hand_landmarker_lrt_s* cg_hand_landmarker_lrt_ref;
 
@@ -63,7 +65,7 @@ void cg_hand_landmarker_lrt_push_frame(
     int width, int height, int stride,
     double timestamp);
 
-#endif /* CG_BUILD_MACOS_LANDMARKER */
+#endif /* macOS only */
 
 #ifdef __cplusplus
 }

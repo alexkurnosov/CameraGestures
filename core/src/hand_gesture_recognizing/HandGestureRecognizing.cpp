@@ -98,6 +98,7 @@ void HandGestureRecognizing::handleShotWithGate(const cg_handshot& shot) {
         break;
 
     case MotionGate::Event::Kind::opened:
+        fprintf(stderr, "[CG:Gate] OPENED  t=%.3f\n", shot.timestamp);
         cycle_buffer_.clear();
         gate_open_time_    = shot.timestamp;
         already_committed_ = false;
@@ -119,6 +120,8 @@ void HandGestureRecognizing::handleShotWithGate(const cg_handshot& shot) {
         break;
 
     case MotionGate::Event::Kind::cycle_ended:
+        fprintf(stderr, "[CG:Gate] CYCLE_ENDED  buf=%d\n",
+                (int)event.cycle_buffer.size());
         cancelPendingCommit();
         handleCycleEnd(std::move(event.cycle_buffer));
         break;
@@ -136,7 +139,20 @@ void HandGestureRecognizing::handleCycleEnd(std::vector<cg_handshot> buffer) {
         return;
     }
 
+    fprintf(stderr, "[CG:Cycle] handleCycleEnd  buf=%d  model=%s\n",
+            (int)buffer.size(), (model_ && model_->isLoaded()) ? "loaded" : "NOT_LOADED");
+
     if (buffer.empty() || !model_ || !model_->isLoaded()) return;
+
+    // Require at least 5 real frames; brief false-positive cycles (1–2 frames)
+    // produce feature vectors with all-zero velocity/std that map to garbage
+    // gesture predictions even above the confidence threshold.
+    static constexpr int kMinFramesForRecognition = 5;
+    if (static_cast<int>(buffer.size()) < kMinFramesForRecognition) {
+        fprintf(stderr, "[CG:Cycle] skipped — only %d frames (need %d)\n",
+                (int)buffer.size(), kMinFramesForRecognition);
+        return;
+    }
 
     cg_handfilm_ref film = makeFilm(buffer);
 
@@ -311,8 +327,12 @@ void HandGestureRecognizing::recognizeRestricted(
 
 void HandGestureRecognizing::recognizeUnrestricted(cg_handfilm_ref film) {
     if (!model_) return;
+    fprintf(stderr, "[CG:Model] recognizeUnrestricted  shots=%d\n",
+            (int)cg_handfilm_shot_count(film));
     cg_gesture_prediction pred{};
     int ok = model_->classify(film, config_.confidence_threshold, &pred);
+    fprintf(stderr, "[CG:Model] classify → ok=%d  gesture=%s  conf=%.3f\n",
+            ok, ok ? pred.gesture_name : "(none)", ok ? pred.confidence : 0.0f);
     if (ok) emitGesture(film, pred, -1);
 }
 

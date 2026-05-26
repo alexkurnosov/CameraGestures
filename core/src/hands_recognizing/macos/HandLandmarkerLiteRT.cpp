@@ -16,6 +16,9 @@
 
 #ifdef CG_ENABLE_TFLITE
 #include "c_api.h"
+#include "xnnpack_delegate.h"
+#include <cstdarg>
+#include <cstdio>
 #endif
 
 #include <cmath>
@@ -62,17 +65,91 @@ bool HandLandmarkerLiteRT::load(const std::string& task_path) {
 #endif
 }
 
+// TFLite error reporter — forwards to stderr so Xcode console shows errors.
+#ifdef CG_ENABLE_TFLITE
+static void tfliteErrorReporter(void* /*user*/, const char* fmt, va_list args) {
+    char buf[512];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    fprintf(stderr, "[TFLite] %s\n", buf);
+}
+
+// Create interpreter options with:
+//  - error reporter for diagnostics
+//  - XNNPACK delegate explicitly set to single-threaded mode
+//    (avoids re-platformed iOS-Sim XNNPACK thread-pool crash on macOS)
+static TfLiteInterpreterOptions* makeSafeOptions() {
+    TfLiteInterpreterOptions* opts = TfLiteInterpreterOptionsCreate();
+    TfLiteInterpreterOptionsSetErrorReporter(opts, tfliteErrorReporter, nullptr);
+    TfLiteInterpreterOptionsSetNumThreads(opts, 1);
+
+    // Explicitly supply an XNNPACK delegate with num_threads=0 (no thread pool).
+    // This overrides the auto-applied XNNPACK delegate whose thread-pool
+    // initialisation crashes when the re-platformed iOS-Sim binary runs on macOS.
+    TfLiteXNNPackDelegateOptions xnn = TfLiteXNNPackDelegateOptionsDefault();
+    xnn.num_threads = 0;  // single-threaded; avoids pthreads pool on macOS
+    TfLiteDelegate* xnn_del = TfLiteXNNPackDelegateCreate(&xnn);
+    if (xnn_del) {
+        TfLiteInterpreterOptionsAddDelegate(opts,
+            reinterpret_cast<TfLiteOpaqueDelegate*>(xnn_del));
+    }
+    return opts;
+}
+#endif
+
 bool HandLandmarkerLiteRT::loadDetector(const std::vector<uint8_t>& data) {
 #ifndef CG_ENABLE_TFLITE
     return false;
 #else
     det_model_ = TfLiteModelCreate(data.data(), data.size());
     if (!det_model_) return false;
-    det_options_ = TfLiteInterpreterOptionsCreate();
-    TfLiteInterpreterOptionsSetNumThreads(det_options_, 2);
+    det_options_ = makeSafeOptions();
     det_interp_ = TfLiteInterpreterCreate(det_model_, det_options_);
     if (!det_interp_) return false;
-    return TfLiteInterpreterAllocateTensors(det_interp_) == kTfLiteOk;
+    if (TfLiteInterpreterAllocateTensors(det_interp_) != kTfLiteOk) {
+        fprintf(stderr, "[TFLite] AllocateTensors failed for palm detector\n");
+        return false;
+    }
+    // Dump input tensor shape
+    {
+        const TfLiteTensor* t = TfLiteInterpreterGetInputTensor(det_interp_, 0);
+        fprintf(stderr, "[CG:Debug] palm detector input[0] name=%s dims=[",
+                t ? TfLiteTensorName(t) : "?");
+        if (t) {
+            for (int d = 0; d < TfLiteTensorNumDims(t); ++d)
+                fprintf(stderr, "%d%s", TfLiteTensorDim(t, d),
+                        d < TfLiteTensorNumDims(t)-1 ? "," : "");
+        }
+        fprintf(stderr, "]\n");
+    }
+    // Dump output tensor shapes and types
+    {
+        static const char* type_str[] = {
+            "NoType","Float32","Int32","UInt8","Int64","String","Bool",
+            "Int16","Complex64","Int8","Float16","Float64"};
+        auto tname = [&](TfLiteType t) -> const char* {
+            int v = static_cast<int>(t);
+            return (v >= 0 && v < 12) ? type_str[v] : "?";
+        };
+        int nOut = TfLiteInterpreterGetOutputTensorCount(det_interp_);
+        fprintf(stderr, "[CG:Debug] palm detector: %d output tensors:\n", nOut);
+        for (int i = 0; i < nOut; ++i) {
+            const TfLiteTensor* t = TfLiteInterpreterGetOutputTensor(det_interp_, i);
+            int sz = 1;
+            fprintf(stderr, "[CG:Debug]   out[%d] name=%-30s type=%-8s bytes=%-8zu dims=[", i,
+                    t ? TfLiteTensorName(t) : "?",
+                    t ? tname(TfLiteTensorType(t)) : "?",
+                    t ? TfLiteTensorByteSize(t) : 0);
+            if (t) {
+                for (int d = 0; d < TfLiteTensorNumDims(t); ++d) {
+                    sz *= TfLiteTensorDim(t, d);
+                    fprintf(stderr, "%d%s", TfLiteTensorDim(t, d),
+                            d < TfLiteTensorNumDims(t)-1 ? "," : "");
+                }
+            }
+            fprintf(stderr, "] total=%d\n", sz);
+        }
+    }
+    return true;
 #endif
 }
 
@@ -82,11 +159,54 @@ bool HandLandmarkerLiteRT::loadLandmarker(const std::vector<uint8_t>& data) {
 #else
     lm_model_ = TfLiteModelCreate(data.data(), data.size());
     if (!lm_model_) return false;
-    lm_options_ = TfLiteInterpreterOptionsCreate();
-    TfLiteInterpreterOptionsSetNumThreads(lm_options_, 2);
+    lm_options_ = makeSafeOptions();
     lm_interp_ = TfLiteInterpreterCreate(lm_model_, lm_options_);
     if (!lm_interp_) return false;
-    return TfLiteInterpreterAllocateTensors(lm_interp_) == kTfLiteOk;
+    if (TfLiteInterpreterAllocateTensors(lm_interp_) != kTfLiteOk) {
+        fprintf(stderr, "[TFLite] AllocateTensors failed for landmark model\n");
+        return false;
+    }
+    // Dump input tensor shape
+    {
+        const TfLiteTensor* t = TfLiteInterpreterGetInputTensor(lm_interp_, 0);
+        fprintf(stderr, "[CG:Debug] landmark model input[0] name=%s dims=[",
+                t ? TfLiteTensorName(t) : "?");
+        if (t) {
+            for (int d = 0; d < TfLiteTensorNumDims(t); ++d)
+                fprintf(stderr, "%d%s", TfLiteTensorDim(t, d),
+                        d < TfLiteTensorNumDims(t)-1 ? "," : "");
+        }
+        fprintf(stderr, "]\n");
+    }
+    // Dump output tensor shapes and types
+    {
+        static const char* type_str[] = {
+            "NoType","Float32","Int32","UInt8","Int64","String","Bool",
+            "Int16","Complex64","Int8","Float16","Float64"};
+        auto tname = [&](TfLiteType t) -> const char* {
+            int v = static_cast<int>(t);
+            return (v >= 0 && v < 12) ? type_str[v] : "?";
+        };
+        int nOut = TfLiteInterpreterGetOutputTensorCount(lm_interp_);
+        fprintf(stderr, "[CG:Debug] landmark model: %d output tensors:\n", nOut);
+        for (int i = 0; i < nOut; ++i) {
+            const TfLiteTensor* t = TfLiteInterpreterGetOutputTensor(lm_interp_, i);
+            int sz = 1;
+            fprintf(stderr, "[CG:Debug]   out[%d] name=%-30s type=%-8s bytes=%-8zu dims=[", i,
+                    t ? TfLiteTensorName(t) : "?",
+                    t ? tname(TfLiteTensorType(t)) : "?",
+                    t ? TfLiteTensorByteSize(t) : 0);
+            if (t) {
+                for (int d = 0; d < TfLiteTensorNumDims(t); ++d) {
+                    sz *= TfLiteTensorDim(t, d);
+                    fprintf(stderr, "%d%s", TfLiteTensorDim(t, d),
+                            d < TfLiteTensorNumDims(t)-1 ? "," : "");
+                }
+            }
+            fprintf(stderr, "] total=%d\n", sz);
+        }
+    }
+    return true;
 #endif
 }
 
@@ -129,6 +249,14 @@ static const TfLiteTensor* findOutputBySize1(TfLiteInterpreter* interp, int occu
 void HandLandmarkerLiteRT::pushFrame(
     const uint8_t* bgra, int width, int height, int stride, double timestamp)
 {
+    // Debug frame counter — print a heartbeat every 90 frames (~3 s at 30 fps).
+    static int dbg_frame = 0;
+    ++dbg_frame;
+    const bool dbg_log = (dbg_frame % 90 == 0);
+    if (dbg_log)
+        fprintf(stderr, "[CG:LiteRT] frame %d  %dx%d  loaded=%d  recognizer=%d\n",
+                dbg_frame, width, height, loaded_ ? 1 : 0, recognizer_ ? 1 : 0);
+
     auto emit_absent = [&]() {
         cg_handshot absent{};
         absent.is_absent  = 1;
@@ -142,7 +270,7 @@ void HandLandmarkerLiteRT::pushFrame(
 #ifndef CG_ENABLE_TFLITE
     emit_absent();
 #else
-    // ---- Step 1: Resize to 192×192 and normalize to RGB [-1,1] -----------
+    // ---- Step 1: Resize to 192×192, normalize to RGB [-1,1] ---------------
     constexpr int det_size = 192;
     float* det_inp = det_input_buf_.data();
     for (int y = 0; y < det_size; ++y) {
@@ -172,63 +300,192 @@ void HandLandmarkerLiteRT::pushFrame(
     TfLiteTensorCopyToBuffer(scores_t, scores_data.data(), scores_data.size() * sizeof(float));
     TfLiteTensorCopyToBuffer(boxes_t,  boxes_data.data(),  boxes_data.size()  * sizeof(float));
 
-    auto detections = decodePalmDetections(scores_data.data(), boxes_data.data(), anchors_);
+    // 0.6 sigmoid ≈ logit > 0.4 — enough to suppress background noise while
+    // still catching real hands.  The 5-frame gate guard is the main FP shield.
+    auto detections = decodePalmDetections(scores_data.data(), boxes_data.data(), anchors_, 0.6f);
+
+    // Log the best raw detection score every 90 frames so we can see if the detector
+    // is producing any signal at all (even below the 0.7 threshold).
+    if (dbg_log) {
+        float best_sig = 0.0f;
+        float best_raw = -999.0f;
+        for (int i = 0; i < 2016; ++i) {
+            float s = 1.0f / (1.0f + std::exp(-scores_data[i]));
+            if (s > best_sig) { best_sig = s; best_raw = scores_data[i]; }
+        }
+        // Sample first few raw score values and first few raw box values
+        fprintf(stderr, "[CG:LiteRT] palm best_score_sig=%.3f  best_raw=%.4f  detections=%d\n",
+                best_sig, best_raw, (int)detections.size());
+        fprintf(stderr, "[CG:LiteRT] scores[0..4]: %.4f %.4f %.4f %.4f %.4f\n",
+                scores_data[0], scores_data[1], scores_data[2], scores_data[3], scores_data[4]);
+        fprintf(stderr, "[CG:LiteRT] boxes[0..5]:  %.4f %.4f %.4f %.4f %.4f %.4f\n",
+                boxes_data[0], boxes_data[1], boxes_data[2], boxes_data[3],
+                boxes_data[4], boxes_data[5]);
+    }
+
     if (detections.empty()) { emit_absent(); return; }
 
-    // ---- Step 2: Affine-warp detected palm to 224×224 --------------------
-    const PalmDetection& det = detections[0];
-    HandROI roi = palmDetectionToROI(det);
-    warpROI(bgra, width, height, stride, roi, lm_input_buf_.data());
+    // Per-frame diagnostic: where does the detector think the palms are?
+    // Coords are in normalized [0,1] of the (squashed) 192×192 model input.
+    // (0.0, 0.0) = top-left, (1.0, 1.0) = bottom-right of the resized image.
+    if (dbg_log) {
+        const int nlog = std::min((int)detections.size(), 5);
+        for (int i = 0; i < nlog; ++i) {
+            const auto& d = detections[i];
+            fprintf(stderr,
+                "[CG:Det] top[%d] score=%.3f  box=(cx=%.2f cy=%.2f w=%.2f h=%.2f)"
+                "  wrist=(%.2f,%.2f) mcp2=(%.2f,%.2f)\n",
+                i, d.score, d.cx, d.cy, d.w, d.h,
+                d.kp_x[0], d.kp_y[0], d.kp_x[2], d.kp_y[2]);
+        }
+    }
 
-    // ---- Step 3: Run landmark model --------------------------------------
+    // ---- Steps 2-4: Try top-N detections; pick the one with highest presence --
+    // The palm detector fires ~25 false-positive detections per frame on typical
+    // indoor scenes.  We run the landmark model on up to kMaxTry candidates and
+    // keep the one with the highest presence score (out[2]).  When a real hand
+    // is present it should score slightly higher than the false-positive crops.
+    // Limit to kMaxTry to keep per-frame inference cost bounded.
+    constexpr int kMaxTry = 5;
+    const int n_try = std::min((int)detections.size(), kMaxTry);
+
+    // Pre-fetch landmark interpreter handles — they don't change between runs.
     TfLiteTensor* lm_in = TfLiteInterpreterGetInputTensor(lm_interp_, 0);
     if (!lm_in) { emit_absent(); return; }
-    TfLiteTensorCopyFromBuffer(lm_in, lm_input_buf_.data(),
-                               lm_input_buf_.size() * sizeof(float));
-    if (TfLiteInterpreterInvoke(lm_interp_) != kTfLiteOk) { emit_absent(); return; }
+    // Find output tensors once (same graph layout every Invoke).
+    const TfLiteTensor* lm_t       = nullptr;
+    const TfLiteTensor* presence_t = nullptr;
+    const TfLiteTensor* handed_t   = nullptr;
 
-    // Landmark output: [21*3=63 floats]; presence and handedness are scalars.
-    const TfLiteTensor* lm_t       = findOutputBySize(lm_interp_, 63);
-    const TfLiteTensor* presence_t = findOutputBySize1(lm_interp_, 0);
-    const TfLiteTensor* handed_t   = findOutputBySize1(lm_interp_, 1);
-    if (!lm_t) { emit_absent(); return; }
+    // Try all n_try candidates; keep the one with the highest presence score.
+    // out[2] (Identity_2) is our best proxy for presence — it varies ~0.60-0.69,
+    // not dramatically, but picking the MAX reliably favours the real hand crop
+    // over false-positive crops when both compete in the same frame.
+    // Accept anything above 0.5 (the score doesn't discriminate below that).
+    constexpr float kPresenceThresh = 0.5f;
 
-    float presence = 0.5f;
-    if (presence_t) TfLiteTensorCopyToBuffer(presence_t, &presence, sizeof(float));
-    // sigmoid for presence score
-    float pres_sig = 1.0f / (1.0f + std::exp(-presence));
-    if (pres_sig < 0.5f) { emit_absent(); return; }
+    bool  found_hand          = false;
+    float best_pres_sig       = 0.0f;
+    HandROI found_roi{};
+    float   found_handedness_raw = 0.0f;
+    float   found_lm_data[63]{};
+    float   candidate_lm[63]{};
+    HandROI candidate_roi{};
+    float   candidate_handed = 0.0f;
 
-    float handedness_raw = 0.0f;
-    if (handed_t) TfLiteTensorCopyToBuffer(handed_t, &handedness_raw, sizeof(float));
+    for (int di = 0; di < n_try; ++di) {
+        const PalmDetection& det = detections[di];
 
-    float lm_data[63];
-    TfLiteTensorCopyToBuffer(lm_t, lm_data, sizeof(lm_data));
+        // Step 2: affine-warp ROI to 224×224
+        HandROI roi = palmDetectionToROI(det);
+        warpROI(bgra, width, height, stride, roi, lm_input_buf_.data());
+
+        // Step 3: run landmark model
+        TfLiteTensorCopyFromBuffer(lm_in, lm_input_buf_.data(),
+                                   lm_input_buf_.size() * sizeof(float));
+        if (TfLiteInterpreterInvoke(lm_interp_) != kTfLiteOk) continue;
+
+        // Cache output tensor pointers (same graph layout every Invoke).
+        // Model outputs: out[0]=screen_lm[63], out[1]=handedness, out[2]=presence,
+        //                out[3]=world_lm[63].
+        if (!lm_t) {
+            lm_t       = findOutputBySize(lm_interp_, 63);  // out[0]: screen landmarks
+            presence_t = findOutputBySize1(lm_interp_, 1);  // out[2]: presence proxy
+            handed_t   = findOutputBySize1(lm_interp_, 0);  // out[1]: handedness
+        }
+        if (!lm_t) continue;
+
+        float scalar_h = 0.0f, scalar_p = 0.0f;
+        if (handed_t)   TfLiteTensorCopyToBuffer(handed_t,   &scalar_h, sizeof(float));
+        if (presence_t) TfLiteTensorCopyToBuffer(presence_t, &scalar_p, sizeof(float));
+        float sig_h = 1.0f / (1.0f + std::exp(-scalar_h));
+        float sig_p = 1.0f / (1.0f + std::exp(-scalar_p));
+
+        fprintf(stderr, "[CG:LiteRT] det[%d/%d] palm=%.3f  h=%.3f  pres=%.3f\n",
+                di, n_try, det.score, sig_h, sig_p);
+
+        if (sig_p < kPresenceThresh) continue;
+
+        // ---- Hand-shape validity check ------------------------------------
+        // The landmark model outputs x,y in PIXEL coords of the 224×224 input
+        // crop (range [0, 224]), so we normalize by the input size first.
+        // For non-hand crops the model still outputs landmarks that look
+        // hand-like (it always emits 21 points), so this filter only catches
+        // egregious failures — its main job is sanity, not full discrimination.
+        constexpr float kLmInputSize = 224.0f;
+        float lm_tmp[63];
+        TfLiteTensorCopyToBuffer(lm_t, lm_tmp, sizeof(lm_tmp));
+
+        // Normalize x and y to [0,1] crop space (keep z untouched — it's depth).
+        for (int i = 0; i < 21; ++i) {
+            lm_tmp[i * 3 + 0] /= kLmInputSize;
+            lm_tmp[i * 3 + 1] /= kLmInputSize;
+        }
+
+        const float wrist_y   = lm_tmp[0 * 3 + 1];
+        const float mid_tip_y = lm_tmp[12 * 3 + 1];
+        float min_x = 1.0f, max_x = 0.0f, min_y = 1.0f, max_y = 0.0f;
+        for (int i = 0; i < 21; ++i) {
+            float x = lm_tmp[i * 3 + 0];
+            float y = lm_tmp[i * 3 + 1];
+            if (x < min_x) min_x = x;
+            if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y;
+            if (y > max_y) max_y = y;
+        }
+        const float spread_x = max_x - min_x;
+        const float spread_y = max_y - min_y;
+
+        // Orientation: wrist must be below center, middle tip must be above.
+        // Spread: landmarks must cover ≥30% of the crop in at least one axis.
+        const bool orient_ok = (wrist_y > 0.50f && mid_tip_y < 0.50f);
+        const bool spread_ok = (spread_x > 0.30f || spread_y > 0.30f);
+        if (!orient_ok || !spread_ok) {
+            fprintf(stderr, "[CG:LiteRT]   reject: wrist_y=%.2f mid_y=%.2f sx=%.2f sy=%.2f\n",
+                    wrist_y, mid_tip_y, spread_x, spread_y);
+            continue;
+        }
+
+        // Keep the candidate with the highest presence score.
+        if (!found_hand || sig_p > best_pres_sig) {
+            best_pres_sig    = sig_p;
+            found_hand       = true;
+            candidate_roi    = roi;
+            candidate_handed = scalar_h;
+            std::copy(lm_tmp, lm_tmp + 63, candidate_lm);
+        }
+    }
+
+    if (!found_hand) { emit_absent(); return; }
+
+    found_roi             = candidate_roi;
+    found_handedness_raw  = candidate_handed;
+    std::copy(candidate_lm, candidate_lm + 63, found_lm_data);
 
     // ---- Step 4: Project landmarks back to original image ----------------
     cg_handshot shot{};
     shot.timestamp  = timestamp;
     shot.is_absent  = 0;
     // handedness: model outputs ~0 for left, ~1 for right (after sigmoid)
-    float h_sig = 1.0f / (1.0f + std::exp(-handedness_raw));
+    float h_sig = 1.0f / (1.0f + std::exp(-found_handedness_raw));
     shot.handedness = h_sig > 0.5f ? CG_HAND_RIGHT : CG_HAND_LEFT;
 
-    const float cos_a = std::cos(roi.angle);
-    const float sin_a = std::sin(roi.angle);
-    const float side  = roi.half_side * 2.0f;
+    const float cos_a = std::cos(found_roi.angle);
+    const float sin_a = std::sin(found_roi.angle);
+    const float side  = found_roi.half_side * 2.0f;
 
     for (int k = 0; k < 21; ++k) {
-        float lx = lm_data[k * 3 + 0]; // normalized [0,1] in crop space
-        float ly = lm_data[k * 3 + 1];
-        float lz = lm_data[k * 3 + 2]; // depth (scale TBD)
+        float lx = found_lm_data[k * 3 + 0]; // normalized [0,1] in crop space
+        float ly = found_lm_data[k * 3 + 1];
+        float lz = found_lm_data[k * 3 + 2]; // depth (scale TBD)
 
         // Map from crop [0,1] to ROI-frame relative offset
         float ds = (lx - 0.5f) * side;
         float dt = (ly - 0.5f) * side;
 
         // Rotate to image normalized coords [0,1]
-        float img_x = roi.cx + ds * cos_a - dt * sin_a;
-        float img_y = roi.cy + ds * sin_a + dt * cos_a;
+        float img_x = found_roi.cx + ds * cos_a - dt * sin_a;
+        float img_y = found_roi.cy + ds * sin_a + dt * cos_a;
 
         shot.landmarks[k] = cg_point3d{img_x, img_y, lz};
     }

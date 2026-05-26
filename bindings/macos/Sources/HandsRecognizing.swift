@@ -31,29 +31,37 @@ public enum HandsRecognizingError: Error {
 }
 
 public struct HandsRecognizingConfig {
+    public let cameraIndex:              Int
     public let targetFPS:                Int
     public let detectBothHands:          Bool
     public let minDetectionConfidence:   Float
     public let minTrackingConfidence:    Float
-    // Path to hand_landmarker.task; if nil, the bundle is looked up from the
-    // framework bundle and then the main bundle.
+    public let handfilmMaxDuration:      TimeInterval
+    // Path to hand_landmarker.task; nil = auto-resolve from app bundle.
     public let taskBundlePath:           String?
 
     public init(
-        targetFPS:              Int    = 30,
-        detectBothHands:        Bool   = false,
-        minDetectionConfidence: Float  = 0.5,
-        minTrackingConfidence:  Float  = 0.5,
-        taskBundlePath:         String? = nil
+        cameraIndex:            Int          = 0,
+        targetFPS:              Int          = 30,
+        detectBothHands:        Bool         = false,
+        minDetectionConfidence: Float        = 0.5,
+        minTrackingConfidence:  Float        = 0.5,
+        handfilmMaxDuration:    TimeInterval = 2.0,
+        taskBundlePath:         String?      = nil
     ) {
+        self.cameraIndex            = cameraIndex
         self.targetFPS              = targetFPS
         self.detectBothHands        = detectBothHands
         self.minDetectionConfidence = minDetectionConfidence
         self.minTrackingConfidence  = minTrackingConfidence
+        self.handfilmMaxDuration    = handfilmMaxDuration
         self.taskBundlePath         = taskBundlePath
     }
 
     public static let defaultConfig = HandsRecognizingConfig()
+
+    // macOS: no MediaPipe options needed — provided for API parity with iOS.
+    // The hand_landmarker.task is resolved by HandsRecognizing.initialize().
 }
 
 public typealias HandShotCallback = (HandShot) -> Void
@@ -137,6 +145,9 @@ public class HandsRecognizing: NSObject {
     public var isTracking: Bool { isRunning }
     public func getConfig() -> HandsRecognizingConfig { config }
 
+    /// The underlying AVCaptureSession — pass to CameraPreviewView for live video display.
+    public var previewSession: AVCaptureSession? { captureSession }
+
     // MARK: Camera permission
 
     public static func requestCameraPermission() async -> Bool {
@@ -201,6 +212,9 @@ public class HandsRecognizing: NSObject {
             guard let ctx, let shotPtr else { return }
             let hr = Unmanaged<HandsRecognizing>.fromOpaque(ctx).takeUnretainedValue()
             let shot = HandShot(fromCStruct: shotPtr.pointee)
+            if !shot.isAbsent {
+                print("[CG:Swift] real handshot  hand=\(shot.leftOrRight)  t=\(String(format: "%.3f", shot.timestamp))")
+            }
             hr.handshotCallback?(shot)
         }, selfPtr.toOpaque())
         selfPtr.release()

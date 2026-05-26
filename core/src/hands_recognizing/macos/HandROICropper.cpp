@@ -86,15 +86,18 @@ void warpROI(
             float px = img_x * src_w;
             float py = img_y * src_h;
 
-            // Sample BGRA → convert to RGB, normalize to [-1,1]
+            // Sample BGRA → convert to RGB.
+            // Raw float [0,255]: the hand_landmarks_detector.tflite model has
+            // its own normalization (÷127.5 − 1) baked in as initial ops, so
+            // the caller must NOT pre-normalize — just pass raw pixel values.
             float b = bilinearSample(bgra_src, src_w, src_h, src_stride, px, py, 0);
             float g = bilinearSample(bgra_src, src_w, src_h, src_stride, px, py, 1);
             float r = bilinearSample(bgra_src, src_w, src_h, src_stride, px, py, 2);
 
             int idx = (v * out_size + u) * 3;
-            out_rgb224[idx + 0] = r / 127.5f - 1.0f;
-            out_rgb224[idx + 1] = g / 127.5f - 1.0f;
-            out_rgb224[idx + 2] = b / 127.5f - 1.0f;
+            out_rgb224[idx + 0] = r;  // R  [0,255]
+            out_rgb224[idx + 1] = g;  // G  [0,255]
+            out_rgb224[idx + 2] = b;  // B  [0,255]
         }
     }
 }
