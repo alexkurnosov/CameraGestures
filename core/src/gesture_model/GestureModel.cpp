@@ -30,7 +30,10 @@ bool GestureModel::loadPoseModel(const std::string& tflite_path,
     if (expected > 0 && expected != CG_POSE_VECTOR_SIZE) return false;
 
     pose_manifest_    = std::move(m);
-    pose_cluster_ids_ = pose_manifest_->sortedClusterIds();
+    // Use class_labels (the exact ordered cluster IDs the MLP outputs) so that
+    // pose_cluster_ids_.size() == model output dim.  Falls back to sortedClusterIds()
+    // for pre-class_labels manifests via the fallback in loadFromFile.
+    pose_cluster_ids_ = pose_manifest_->class_labels;
     return true;
 }
 

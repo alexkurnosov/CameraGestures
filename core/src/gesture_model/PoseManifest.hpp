@@ -34,6 +34,11 @@ struct CgPoseManifest {
     std::unordered_map<std::string, std::vector<std::vector<int>>> gesture_templates;
     std::optional<CgPoseManifestParameters>                  parameters;
 
+    /* Ordered list of cluster IDs the MLP was trained on (= model output classes).
+     * Set from the manifest's "class_labels" field.  Falls back to sortedClusterIds()
+     * when the field is absent (pre-Stage-2 manifests). */
+    std::vector<std::string> class_labels;
+
     CgClusterKind clusterKind(int id) const;
     std::string   clusterLabel(int id) const;
 

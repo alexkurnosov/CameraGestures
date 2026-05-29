@@ -558,6 +558,9 @@ struct PoseManifestResponse: Codable {
     let idlePoses: [Int]
     let gestureTemplates: [String: [[Int]]]
     let templateFractions: [String: [Double]]?
+    /// Ordered cluster IDs the MLP was trained on — must survive the download
+    /// round-trip so the C++ core can match probs[] to cluster IDs.
+    let classLabels: [Int]?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -565,6 +568,7 @@ struct PoseManifestResponse: Codable {
         case idlePoses = "idle_poses"
         case gestureTemplates = "gesture_templates"
         case templateFractions = "template_fractions"
+        case classLabels = "class_labels"
     }
 }
 

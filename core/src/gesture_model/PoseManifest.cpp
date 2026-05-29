@@ -69,6 +69,21 @@ CgPoseManifest CgPoseManifest::loadFromFile(const std::string& path) {
         }
     }
 
+    // class_labels: ordered cluster IDs the MLP was trained on (added by trainer_pose.py).
+    // Falls back to sortedClusterIds() below when absent (pre-class_labels manifests).
+    if (j.contains("class_labels") && j["class_labels"].is_array()) {
+        for (const auto& v : j["class_labels"]) {
+            if (v.is_number_integer()) {
+                m.class_labels.push_back(std::to_string(v.get<int>()));
+            } else if (v.is_string()) {
+                m.class_labels.push_back(v.get<std::string>());
+            }
+        }
+    }
+    if (m.class_labels.empty()) {
+        m.class_labels = m.sortedClusterIds();  // backward compat
+    }
+
     if (j.contains("parameters") && !j["parameters"].is_null()) {
         const auto& p = j["parameters"];
         CgPoseManifestParameters params;
