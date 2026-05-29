@@ -42,6 +42,10 @@ struct HandGestureRecognizingConfig {
 
     // Phase 3
     float confidence_threshold = 0.7f;
+
+    // Review support: when true, rep_shot + normalized_coords are populated in
+    // the holds-telemetry callback (training app only; production apps pay no cost).
+    bool retain_landmarks_for_review = false;
 };
 
 // --------------------------------------------------------------------------
@@ -58,7 +62,9 @@ using GestureCallback      = std::function<void(const DetectedGestureInfo&)>;
 using GateUpdateCallback   = std::function<void(MotionGateState, int buffer_count)>;
 using HoldsTelemetryCallback = std::function<void(int pose_id, float confidence,
                                                    const std::vector<int>& observed_seq,
-                                                   const std::string& matched_gesture)>;
+                                                   const std::string& matched_gesture,
+                                                   const cg_handshot* rep_shot,
+                                                   const std::vector<float>& normalized_coords)>;
 
 // --------------------------------------------------------------------------
 // Pending commit state (used for T_commit / T_min_buffer timers)

@@ -21,6 +21,7 @@ cg_recognizer_config cg_recognizer_default_config(void) {
     c.gesture_buffer_size = 30;
     c.holds_enabled       = 0;
     c.confidence_threshold = 0.7f;
+    c.retain_landmarks_for_review = 0;
 
     c.motion_gate.t_open      = 1.0f;
     c.motion_gate.k_open_ms   = 33.0;
@@ -75,11 +76,16 @@ struct cg_recognizer_s {
         };
         recognizer.on_holds_telemetry = [this](int pose_id, float conf,
                                                const std::vector<int>& seq,
-                                               const std::string& matched) {
+                                               const std::string& matched,
+                                               const cg_handshot* rep_shot,
+                                               const std::vector<float>& norm_coords) {
             if (holds_cb) {
                 holds_cb(holds_ctx, pose_id, conf,
                          seq.data(), static_cast<int>(seq.size()),
-                         matched.c_str());
+                         matched.c_str(),
+                         rep_shot,
+                         norm_coords.empty() ? nullptr : norm_coords.data(),
+                         static_cast<int>(norm_coords.size()));
             }
         };
     }
@@ -108,6 +114,7 @@ static HandGestureRecognizingConfig toCppConfig(const cg_recognizer_config* c) {
         h.tau_phase3_confidence = c->holds.tau_phase3_confidence;
         cfg.holds = h;
     }
+    cfg.retain_landmarks_for_review = c->retain_landmarks_for_review != 0;
     return cfg;
 }
 

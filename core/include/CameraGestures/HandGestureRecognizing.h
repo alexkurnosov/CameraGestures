@@ -46,6 +46,8 @@ typedef struct cg_recognizer_config {
     int                  holds_enabled;       /* bool: 1 to enable Phase-2 holds mode */
     cg_holds_config      holds;
     float                confidence_threshold; /* Phase-3 threshold (unrestricted path) */
+    int                  retain_landmarks_for_review; /* bool: 1 to populate hold landmarks
+                                                         in holds-telemetry callback */
 } cg_recognizer_config;
 
 /* Returns a config struct pre-filled with the same defaults as the iOS V1 pod. */
@@ -81,13 +83,18 @@ typedef void (*cg_gesture_callback)(void* context,
 typedef void (*cg_gate_update_callback)(void* context, int gate_open, int buffer_count);
 
 /* Called when Phase-2 detects a hold (holds mode only).
- * observed_seq / n_observed: current pose ID sequence. */
+ * observed_seq / n_observed: current pose ID sequence.
+ * rep_shot / normalized_coords: non-null only when retain_landmarks_for_review=1;
+ *   both pointers are valid only for the duration of the call. */
 typedef void (*cg_holds_telemetry_callback)(void* context,
                                              int    pose_id,
                                              float  confidence,
                                              const int* observed_seq,
                                              int    n_observed,
-                                             const char* matched_gesture);
+                                             const char* matched_gesture,
+                                             const cg_handshot* rep_shot,
+                                             const float* normalized_coords,
+                                             int    normalized_coords_len);
 
 void cg_recognizer_set_gesture_callback(cg_recognizer_ref         recognizer,
                                          cg_gesture_callback       callback,

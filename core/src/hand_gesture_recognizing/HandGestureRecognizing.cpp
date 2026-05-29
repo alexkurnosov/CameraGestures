@@ -192,12 +192,20 @@ void HandGestureRecognizing::handlePhase2Hold(
     int ok = model_->predictPose(rep_shot, &pose_id, &confidence);
     if (!ok) return;
 
+    // Compute normalised pose vector for review if requested (shared by both
+    // telemetry call-sites below; empty when flag is off).
+    std::vector<float> norm_coords;
+    if (config_.retain_landmarks_for_review) {
+        norm_coords = MotionGate::normalize(rep_shot);
+    }
+
     // Reject below τ_pose_confidence.
     if (confidence < holds_cfg.tau_pose_confidence) {
         // Report telemetry but don't advance the sequence.
         if (on_holds_telemetry) {
             on_holds_telemetry(pose_id, confidence,
-                               prefix_matcher_->observedSequence(), "");
+                               prefix_matcher_->observedSequence(), "",
+                               &rep_shot, norm_coords);
         }
         return;
     }
@@ -215,7 +223,8 @@ void HandGestureRecognizing::handlePhase2Hold(
             if (!cs->empty()) matched = *cs->begin();
         }
         on_holds_telemetry(pose_id, confidence,
-                           prefix_matcher_->observedSequence(), matched);
+                           prefix_matcher_->observedSequence(), matched,
+                           &rep_shot, norm_coords);
     }
 
     double now = rep_shot.timestamp;

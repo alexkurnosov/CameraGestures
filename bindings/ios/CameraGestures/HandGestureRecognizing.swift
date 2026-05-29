@@ -82,6 +82,7 @@ public struct HandGestureRecognizingConfig {
     public let confidenceThreshold:    Float
     public let motionGateConfig:       MotionGateConfig?
     public let holdsConfig:            HoldsConfig?
+    public let retainLandmarksForReview: Bool
 
     public init(handsRecognizingConfig: HandsRecognizingConfig = .defaultConfig,
                 gestureModelConfig:     GestureModelConfig     = .defaultConfig,
@@ -89,14 +90,16 @@ public struct HandGestureRecognizingConfig {
                 gestureBufferSize:      Int   = 30,
                 confidenceThreshold:    Float = 0.7,
                 motionGateConfig:       MotionGateConfig? = nil,
-                holdsConfig:            HoldsConfig?      = nil) {
-        self.handsRecognizingConfig  = handsRecognizingConfig
-        self.gestureModelConfig      = gestureModelConfig
-        self.enableRealTimeProcessing = enableRealTimeProcessing
-        self.gestureBufferSize       = gestureBufferSize
-        self.confidenceThreshold     = confidenceThreshold
-        self.motionGateConfig        = motionGateConfig
-        self.holdsConfig             = holdsConfig
+                holdsConfig:            HoldsConfig?      = nil,
+                retainLandmarksForReview: Bool = false) {
+        self.handsRecognizingConfig    = handsRecognizingConfig
+        self.gestureModelConfig        = gestureModelConfig
+        self.enableRealTimeProcessing  = enableRealTimeProcessing
+        self.gestureBufferSize         = gestureBufferSize
+        self.confidenceThreshold       = confidenceThreshold
+        self.motionGateConfig          = motionGateConfig
+        self.holdsConfig               = holdsConfig
+        self.retainLandmarksForReview  = retainLandmarksForReview
     }
 
     public static let defaultConfig = HandGestureRecognizingConfig()
@@ -112,17 +115,18 @@ public enum MotionGateState: Equatable {
 }
 
 public enum GestureRecognizingStatus: Equatable {
-    case idle, initializing, running, paused, stopping
+    case idle, initializing, running, paused, pausedForCorrection, stopping
     case error(String)
     public var isActive: Bool { self == .running }
     public var displayName: String {
         switch self {
-        case .idle:         return "Idle"
-        case .initializing: return "Initializing"
-        case .running:      return "Running"
-        case .paused:       return "Paused"
-        case .stopping:     return "Stopping"
-        case .error:        return "Error"
+        case .idle:                return "Idle"
+        case .initializing:        return "Initializing"
+        case .running:             return "Running"
+        case .paused:              return "Paused"
+        case .pausedForCorrection: return "Paused for Correction"
+        case .stopping:            return "Stopping"
+        case .error:               return "Error"
         }
     }
 }
@@ -184,19 +188,25 @@ public struct HoldsTelemetry: Equatable {
     public let lastPoseKind:        String?
     public let observedSequence:    [Int]
     public let matchedGesture:      String?
+    public let repShot:             HandShot?
+    public let normalizedCoords:    [Float]?
 
     public init(lastPoseId:         Int?    = nil,
                 lastPoseLabel:      String? = nil,
                 lastPoseConfidence: Float?  = nil,
                 lastPoseKind:       String? = nil,
                 observedSequence:   [Int]   = [],
-                matchedGesture:     String? = nil) {
+                matchedGesture:     String? = nil,
+                repShot:            HandShot? = nil,
+                normalizedCoords:   [Float]?  = nil) {
         self.lastPoseId         = lastPoseId
         self.lastPoseLabel      = lastPoseLabel
         self.lastPoseConfidence = lastPoseConfidence
         self.lastPoseKind       = lastPoseKind
         self.observedSequence   = observedSequence
         self.matchedGesture     = matchedGesture
+        self.repShot            = repShot
+        self.normalizedCoords   = normalizedCoords
     }
 }
 
@@ -392,6 +402,24 @@ public class HandGestureRecognizing {
         currentStatus = .running
     }
 
+    public func pauseForCorrection() {
+        guard isRunning else { return }
+        handsRecognizer.stop()
+        stopTimerTick()
+        currentStatus = .pausedForCorrection
+    }
+
+    public func resumeFromCorrection() async throws {
+        guard currentStatus == .pausedForCorrection else { return }
+        try handsRecognizer.start()
+        startTimerTick()
+        pipelineQueue.async { [weak self] in
+            guard let self, let ref = self.recognizerRef else { return }
+            cg_recognizer_reset_gate(ref)
+        }
+        currentStatus = .running
+    }
+
     // MARK: Stats / state
 
     public func getStatus()     -> GestureRecognizingStatus { currentStatus }
@@ -492,6 +520,7 @@ public class HandGestureRecognizing {
             c.holds.tau_pose_confidence  = h.tauPoseConfidence
             c.holds.tau_phase3_confidence = h.tauPhase3Confidence
         }
+        c.retain_landmarks_for_review = config.retainLandmarksForReview ? 1 : 0
 
         recognizerRef = cg_recognizer_create(&c, gestureModel.modelRef)
         wireCallbacks()
@@ -521,19 +550,25 @@ public class HandGestureRecognizing {
         }, selfPtr.toOpaque())
 
         // Holds telemetry callback
-        cg_recognizer_set_holds_telemetry_callback(ref, { ctx, poseId, conf, seqPtr, seqLen, matchedPtr in
+        cg_recognizer_set_holds_telemetry_callback(ref, { ctx, poseId, conf, seqPtr, seqLen, matchedPtr, repShotPtr, normCoordsPtr, normCoordsLen in
             guard let ctx else { return }
             let hgr = Unmanaged<HandGestureRecognizing>.fromOpaque(ctx).takeUnretainedValue()
             var seq: [Int] = []
             if let p = seqPtr { seq = (0..<Int(seqLen)).map { Int(p[$0]) } }
             let matched = matchedPtr.flatMap { String(cString: $0).nilIfEmpty() }
+            let repShot: HandShot? = repShotPtr.map { HandShot(fromCStruct: $0.pointee) }
+            let normalizedCoords: [Float]? = normCoordsPtr.map { ptr in
+                (0..<Int(normCoordsLen)).map { ptr[$0] }
+            }
             let telemetry = HoldsTelemetry(
                 lastPoseId:         Int(poseId),
                 lastPoseLabel:      nil,
                 lastPoseConfidence: conf,
                 lastPoseKind:       nil,
                 observedSequence:   seq,
-                matchedGesture:     matched)
+                matchedGesture:     matched,
+                repShot:            repShot,
+                normalizedCoords:   normalizedCoords)
             DispatchQueue.main.async { hgr.holdsModeTelemetryCallback?(telemetry) }
         }, selfPtr.toOpaque())
 
