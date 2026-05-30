@@ -800,7 +800,7 @@ struct RejectCorrectionPayloadDTO: Encodable {
 
 struct RejectTrainingExampleDTO: Encodable {
     let id: String
-    let handFilm: HandFilmDTO
+    let handFilm: HandFilmPayload
     let gestureId: String?
     let sessionId: String
     let userId: String?
@@ -1568,7 +1568,7 @@ private struct TrainingExamplePayload: Encodable {
     }
 }
 
-private struct HandFilmPayload: Encodable {
+struct HandFilmPayload: Encodable {
     let frames: [HandShotPayload]
     let startTime: TimeInterval
 
@@ -1583,20 +1583,23 @@ private struct HandFilmPayload: Encodable {
     }
 }
 
-private struct HandShotPayload: Encodable {
+struct HandShotPayload: Encodable {
     let landmarks: [Point3DPayload]
     let timestamp: TimeInterval
     let leftOrRight: String
+    let isAbsent: Bool
 
     enum CodingKeys: String, CodingKey {
         case landmarks
         case timestamp
         case leftOrRight = "left_or_right"
+        case isAbsent    = "is_absent"
     }
 
     init(from shot: HandShot) {
         landmarks = shot.landmarks.map { Point3DPayload(from: $0) }
         timestamp = shot.timestamp
+        isAbsent = shot.isAbsent
         leftOrRight = {
             switch shot.leftOrRight {
             case .left: return "left"
@@ -1607,7 +1610,7 @@ private struct HandShotPayload: Encodable {
     }
 }
 
-private struct Point3DPayload: Encodable {
+struct Point3DPayload: Encodable {
     let x: Float
     let y: Float
     let z: Float

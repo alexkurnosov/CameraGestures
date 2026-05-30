@@ -19,7 +19,8 @@ struct Phase3CorrectionView: View {
     // Value is the replacement pose ID string (e.g. "pose_3") or "_none".
     @State private var holdRelabels: [Int: String] = [:]
     @State private var relabelTarget: HoldRelabelTarget? = nil
-    @State private var poseOptions: [(id: String, label: String)] = []
+    @State private var poseOptions: [(id: String, label: String)] = [("_none", "_none")]
+    @State private var poseGestureMap: [String: [String]] = [:]
     @State private var isSending = false
     @State private var errorMessage: String? = nil
 
@@ -146,6 +147,7 @@ struct Phase3CorrectionView: View {
                 holdIndex: target.index,
                 hold: capture.recentHolds[target.index],
                 poseOptions: poseOptions,
+                poseGestureMap: poseGestureMap,
                 currentLabel: holdRelabels[target.index]
             ) { replacement in
                 holdRelabels[target.index] = replacement
@@ -157,7 +159,7 @@ struct Phase3CorrectionView: View {
     // MARK: - Helpers
 
     private var gestureOptions: [String] {
-        gestureRegistry.gestures.map(\.id) + ["_none"]
+        ["_none"] + gestureRegistry.gestures.map(\.id)
     }
 
     private func gestureName(for id: String) -> String {
@@ -176,7 +178,20 @@ struct Phase3CorrectionView: View {
         let sorted = manifest.poseClusters
             .sorted { (Int($0.key) ?? 0) < (Int($1.key) ?? 0) }
             .map { (id: "pose_\($0.key)", label: $0.value.label) }
-        poseOptions = sorted + [("_none", "_none")]
+        poseOptions = [("_none", "_none")] + sorted
+        poseGestureMap = buildPoseGestureMap(from: manifest)
+    }
+
+    private func buildPoseGestureMap(from manifest: PoseManifestResponse) -> [String: [String]] {
+        var map: [String: Set<String>] = [:]
+        for (gestureId, templates) in manifest.gestureTemplates {
+            for sequence in templates {
+                for poseId in sequence {
+                    map["pose_\(poseId)", default: []].insert(gestureId)
+                }
+            }
+        }
+        return map.mapValues { $0.sorted() }
     }
 
     // MARK: - Send
@@ -200,7 +215,7 @@ struct Phase3CorrectionView: View {
 
         let phase3Example = RejectTrainingExampleDTO(
             id: UUID().uuidString,
-            handFilm: HandFilmDTO(from: gesture.handfilm),
+            handFilm: HandFilmPayload(from: gesture.handfilm),
             gestureId: isNone ? nil : replacementGesture,
             sessionId: UUID().uuidString,
             userId: "current_user",
@@ -230,17 +245,16 @@ struct Phase3CorrectionView: View {
                 candidateSetSize: nil
             )
 
-            let holdFilm: HandFilmDTO
+            let holdFilm: HandFilmPayload
             if let shot = holdCapture.repShot {
                 var film = HandFilm(startTime: shot.timestamp)
                 film.addFrame(shot)
-                holdFilm = HandFilmDTO(from: film)
+                holdFilm = HandFilmPayload(from: film)
             } else {
-                let absent = HandShot(landmarks: [], timestamp: Date().timeIntervalSince1970,
-                                      leftOrRight: .unknown, isAbsent: true)
-                var film = HandFilm(startTime: absent.timestamp)
-                film.addFrame(absent)
-                holdFilm = HandFilmDTO(from: film)
+                let ts = Date().timeIntervalSince1970
+                var film = HandFilm(startTime: ts)
+                film.addFrame(HandShot.absent(timestamp: ts))
+                holdFilm = HandFilmPayload(from: film)
             }
 
             let holdExample = RejectTrainingExampleDTO(
@@ -332,6 +346,7 @@ struct RelabelHoldSheet: View {
     let holdIndex: Int
     let hold: PendingPoseCapture
     let poseOptions: [(id: String, label: String)]
+    let poseGestureMap: [String: [String]]
     let currentLabel: String?
     let onApply: (String) -> Void
 
@@ -356,11 +371,19 @@ struct RelabelHoldSheet: View {
                     .cornerRadius(12)
                     .padding(.horizontal)
 
-                Text(String(format: "Original pose: pose_%d · %.0f%%",
-                            hold.logEntry.predictedPoseId,
-                            hold.logEntry.confidence * 100))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                let originalKey = "pose_\(hold.logEntry.predictedPoseId)"
+                VStack(spacing: 2) {
+                    Text(String(format: "Original pose: pose_%d · %.0f%%",
+                                hold.logEntry.predictedPoseId,
+                                hold.logEntry.confidence * 100))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if let gestures = poseGestureMap[originalKey], !gestures.isEmpty {
+                        Text("in: \(gestures.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -377,6 +400,11 @@ struct RelabelHoldSheet: View {
                                             Text(option.label)
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
+                                        }
+                                        if let gestures = poseGestureMap[option.id], !gestures.isEmpty {
+                                            Text("in: \(gestures.joined(separator: ", "))")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
                                         }
                                     }
                                     Spacer()

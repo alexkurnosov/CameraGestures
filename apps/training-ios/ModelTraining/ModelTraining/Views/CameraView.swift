@@ -111,7 +111,7 @@ struct CameraView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear") { viewModel.clearGestures() }
+                    Button("Clear") { viewModel.clearGestures(); clearPendingReviewState() }
                         .disabled(viewModel.recentGestures.isEmpty)
                 }
             }
@@ -658,7 +658,7 @@ struct CameraView: View {
     }
 
     private var stopButton: some View {
-        Button(action: { viewModel.stopAll() }) {
+        Button(action: { viewModel.stopAll(); clearPendingReviewState() }) {
             HStack(spacing: 6) {
                 Image(systemName: "stop.fill")
                 Text("Stop")
@@ -777,6 +777,12 @@ struct CameraView: View {
     }
 
     // MARK: - Helpers
+
+    private func clearPendingReviewState() {
+        pendingPose = nil
+        pendingPhase3Gesture = nil
+        recentHolds = []
+    }
 
     private func openAppSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {

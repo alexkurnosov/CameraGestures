@@ -12,7 +12,9 @@ struct PoseCorrectionView: View {
     @Environment(\.dismiss) private var dismiss
 
     // Pose clusters loaded from the on-device manifest.
-    @State private var poseOptions: [(id: String, label: String)] = []
+    @State private var poseOptions: [(id: String, label: String)] = [("_none", "_none")]
+    // Maps "pose_<n>" → sorted gesture IDs that include that pose in any template.
+    @State private var poseGestureMap: [String: [String]] = [:]
     @State private var selectedReplacement: String? = nil
     @State private var isSending = false
     @State private var errorMessage: String? = nil
@@ -45,6 +47,12 @@ struct PoseCorrectionView: View {
                                 capture.logEntry.modelVersion))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    let originalKey = "pose_\(capture.logEntry.predictedPoseId)"
+                    if let gestures = poseGestureMap[originalKey], !gestures.isEmpty {
+                        Text("in: \(gestures.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
 
                 Divider()
@@ -71,6 +79,11 @@ struct PoseCorrectionView: View {
                                             Text(option.label)
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
+                                        }
+                                        if let gestures = poseGestureMap[option.id], !gestures.isEmpty {
+                                            Text("in: \(gestures.joined(separator: ", "))")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
                                         }
                                     }
                                     Spacer()
@@ -148,7 +161,23 @@ struct PoseCorrectionView: View {
         let sorted = manifest.poseClusters
             .sorted { a, b in (Int(a.key) ?? 0) < (Int(b.key) ?? 0) }
             .map { (id: "pose_\($0.key)", label: $0.value.label) }
-        poseOptions = sorted + [("_none", "_none")]
+        poseOptions = [("_none", "_none")] + sorted
+        poseGestureMap = buildPoseGestureMap(from: manifest)
+    }
+
+    /// Reverse-maps each "pose_<n>" to the sorted list of gesture IDs whose templates
+    /// contain that pose ID in at least one sequence.
+    private func buildPoseGestureMap(from manifest: PoseManifestResponse) -> [String: [String]] {
+        var map: [String: Set<String>] = [:]
+        for (gestureId, templates) in manifest.gestureTemplates {
+            for sequence in templates {
+                for poseId in sequence {
+                    let key = "pose_\(poseId)"
+                    map[key, default: []].insert(gestureId)
+                }
+            }
+        }
+        return map.mapValues { $0.sorted() }
     }
 
     // MARK: - Send
@@ -171,18 +200,17 @@ struct PoseCorrectionView: View {
         )
 
         // Build a one-frame HandFilm from the repShot (§8.4: reuse hand_film_json column).
-        let handFilm: HandFilmDTO
+        let handFilm: HandFilmPayload
         if let shot = capture.repShot {
             var film = HandFilm(startTime: shot.timestamp)
             film.addFrame(shot)
-            handFilm = HandFilmDTO(from: film)
+            handFilm = HandFilmPayload(from: film)
         } else {
-            // Fallback: single absent frame so the server round-trips cleanly.
-            let absent = HandShot(landmarks: [], timestamp: Date().timeIntervalSince1970,
-                                  leftOrRight: .unknown, isAbsent: true)
-            var film = HandFilm(startTime: absent.timestamp)
-            film.addFrame(absent)
-            handFilm = HandFilmDTO(from: film)
+            // Fallback: single absent frame with 21 zero-landmarks.
+            let ts = Date().timeIntervalSince1970
+            var film = HandFilm(startTime: ts)
+            film.addFrame(HandShot.absent(timestamp: ts))
+            handFilm = HandFilmPayload(from: film)
         }
 
         let example = RejectTrainingExampleDTO(
