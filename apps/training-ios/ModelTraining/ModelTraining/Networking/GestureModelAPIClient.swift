@@ -778,6 +778,64 @@ struct ConfidenceCurvesResponse: Codable {
     }
 }
 
+// MARK: - Stage 3: Reject correction DTOs
+
+struct RejectCorrectionPayloadDTO: Encodable {
+    let id: String
+    let originalPredictedClass: String
+    let originalConfidence: Double
+    let modelVersion: String
+    let isNoneReject: Bool
+    let candidateSetSize: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case originalPredictedClass = "original_predicted_class"
+        case originalConfidence     = "original_confidence"
+        case modelVersion           = "model_version"
+        case isNoneReject           = "is_none_reject"
+        case candidateSetSize       = "candidate_set_size"
+    }
+}
+
+struct RejectTrainingExampleDTO: Encodable {
+    let id: String
+    let handFilm: HandFilmDTO
+    let gestureId: String?
+    let sessionId: String
+    let userId: String?
+    let phase: String
+    let correction: RejectCorrectionPayloadDTO
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case handFilm  = "hand_film"
+        case gestureId = "gesture_id"
+        case sessionId = "session_id"
+        case userId    = "user_id"
+        case phase
+        case correction
+    }
+}
+
+struct RejectCorrectionItemDTO: Encodable {
+    let rejectCorrection: RejectCorrectionPayloadDTO
+    let example: RejectTrainingExampleDTO
+
+    enum CodingKeys: String, CodingKey {
+        case rejectCorrection = "reject_correction"
+        case example
+    }
+}
+
+struct RejectCorrectionsRequestDTO: Encodable {
+    let items: [RejectCorrectionItemDTO]
+}
+
+struct RejectCorrectionsResponseDTO: Decodable {
+    let accepted: Int
+}
+
 // MARK: - Stage 11: Pipeline metrics (Layer #4)
 
 struct PipelinePerGestureMetric: Codable, Identifiable {
@@ -1217,6 +1275,18 @@ class GestureModelAPIClient: ObservableObject {
     func fetchConfidenceCurves() async throws -> ConfidenceCurvesResponse {
         let request = URLRequest(url: baseURL.appendingPathComponent("confidence-log/curves"))
         return try await perform(request, decoding: ConfidenceCurvesResponse.self)
+    }
+
+    // MARK: - Reject corrections (Stage 3)
+
+    /// POST /reject-corrections — submit reviewer-flagged false positives as hard negatives.
+    @discardableResult
+    func postRejectCorrections(items: [RejectCorrectionItemDTO]) async throws -> RejectCorrectionsResponseDTO {
+        var request = URLRequest(url: baseURL.appendingPathComponent("reject-corrections"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(RejectCorrectionsRequestDTO(items: items))
+        return try await perform(request, decoding: RejectCorrectionsResponseDTO.self)
     }
 
     // MARK: - Pipeline Metrics (Stage 11)

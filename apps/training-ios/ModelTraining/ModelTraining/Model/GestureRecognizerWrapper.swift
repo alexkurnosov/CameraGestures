@@ -77,7 +77,8 @@ class GestureRecognizerWrapper: ObservableObject {
             gestureBufferSize: 30,
             confidenceThreshold: appSettings.confidenceThreshold,
             motionGateConfig: .defaultConfig,
-            holdsConfig: .defaultConfig
+            holdsConfig: .defaultConfig,
+            retainLandmarksForReview: true
         )
         try await recognizer.initialize(config: config)
 

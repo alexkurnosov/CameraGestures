@@ -19,10 +19,16 @@ struct CameraView: View {
     @State private var recPulse = false
 
     // Stage 9: confidence-log state
-    /// The last detected hold's log entry, pending reviewer label before it is uploaded.
-    @State private var pendingPoseEntry: PoseConfidenceLogEntry? = nil
+    /// The last detected hold, pending reviewer label.
+    @State private var pendingPose: PendingPoseCapture? = nil
     /// The last committed gesture in handfilm mode, pending reviewer label.
     @State private var pendingPhase3Gesture: DetectedGesture? = nil
+
+    // Stage 3: correction view presentation
+    @State private var pendingPoseCorrection: PendingPoseCapture? = nil
+    @State private var pendingPhase3Correction: PendingPhase3Capture? = nil
+    /// Rolling window of recent holds for Phase 3 correction per-hold relabeling.
+    @State private var recentHolds: [PendingPoseCapture] = []
 
     var body: some View {
         NavigationView {
@@ -135,16 +141,16 @@ struct CameraView: View {
         .onDisappear {
             viewModel.seriesCoordinator.stop()
         }
-        // Stage 9: log hold-level pose entries whenever a new hold is detected.
+            // Stage 9/3: log hold-level pose entries whenever a new hold is detected.
         .onChange(of: gestureRecognizer.holdsTelemetry) { telemetry in
             guard viewModel.isRecognitionActive,
                   let poseId = telemetry.lastPoseId,
                   let conf = telemetry.lastPoseConfidence else { return }
             // Upload the previous entry (unlabelled) before replacing it.
-            if let old = pendingPoseEntry {
-                uploadPoseEntry(old)
+            if let old = pendingPose {
+                uploadPoseEntry(old.logEntry)
             }
-            pendingPoseEntry = PoseConfidenceLogEntry(
+            let entry = PoseConfidenceLogEntry(
                 modelVersion: gestureRecognizer.poseModelVersion,
                 predictedPoseId: poseId,
                 confidence: Double(conf),
@@ -152,6 +158,15 @@ struct CameraView: View {
                 timestamp: Date().timeIntervalSince1970,
                 filmId: nil
             )
+            let capture = PendingPoseCapture(
+                logEntry: entry,
+                repShot: telemetry.repShot,
+                normalizedCoords: telemetry.normalizedCoords
+            )
+            pendingPose = capture
+            // Accumulate last 8 holds so Phase 3 correction can reference per-hold data.
+            recentHolds.append(capture)
+            if recentHolds.count > 8 { recentHolds.removeFirst() }
         }
         // Stage 9: track committed Phase 3 gesture for optional reviewer label.
         .onReceive(gestureRecognizer.gestureDetected) { gesture in
@@ -160,6 +175,24 @@ struct CameraView: View {
         }
         .onChange(of: appSettings.bypassPhase2Filter) { bypass in
             gestureRecognizer.recognizer.bypassPhase2Filter = bypass
+        }
+        // Stage 3: Correction Views
+        .sheet(item: $pendingPoseCorrection) { capture in
+            PoseCorrectionView(
+                capture: capture,
+                gestureRecognizer: gestureRecognizer,
+                appSettings: appSettings,
+                apiClient: apiClient
+            )
+        }
+        .sheet(item: $pendingPhase3Correction) { capture in
+            Phase3CorrectionView(
+                capture: capture,
+                gestureRecognizer: gestureRecognizer,
+                gestureRegistry: gestureRegistry,
+                appSettings: appSettings,
+                apiClient: apiClient
+            )
         }
     }
 
@@ -367,7 +400,7 @@ struct CameraView: View {
             Spacer()
 
             // Pose reviewer
-            if pendingPoseEntry != nil {
+            if pendingPose != nil {
                 HStack(spacing: 6) {
                     Text("Pose:")
                         .font(.caption2)
@@ -751,35 +784,53 @@ struct CameraView: View {
         }
     }
 
-    // MARK: - Stage 9: Confidence-log helpers
+    // MARK: - Stage 9/3: Confidence-log and correction helpers
 
     private func labelPoseEntry(_ label: String) {
-        guard var entry = pendingPoseEntry else { return }
-        entry = PoseConfidenceLogEntry(
-            modelVersion: entry.modelVersion,
-            predictedPoseId: entry.predictedPoseId,
-            confidence: entry.confidence,
+        guard let capture = pendingPose else { return }
+        pendingPose = nil
+        let tauPose = gestureRecognizer.recognizer.getConfig().holdsConfig?.tauPoseConfidence ?? 0.6
+        let isWrong = (label == "wrong")
+        let conf = Float(capture.logEntry.confidence)
+        // Upload confidence-log entry for every tap.
+        let labeled = PoseConfidenceLogEntry(
+            modelVersion: capture.logEntry.modelVersion,
+            predictedPoseId: capture.logEntry.predictedPoseId,
+            confidence: capture.logEntry.confidence,
             reviewerLabel: label,
-            timestamp: entry.timestamp,
-            filmId: entry.filmId
+            timestamp: capture.logEntry.timestamp,
+            filmId: capture.logEntry.filmId
         )
-        uploadPoseEntry(entry)
-        pendingPoseEntry = nil
+        uploadPoseEntry(labeled)
+        // High-confidence wrong prediction → open Correction View (§4.1).
+        if isWrong && conf >= tauPose && !appSettings.bypassPhase2Filter {
+            pendingPoseCorrection = capture
+            gestureRecognizer.recognizer.pauseForCorrection()
+        }
     }
 
     private func labelPhase3Entry(_ label: String, gesture: DetectedGesture) {
         pendingPhase3Gesture = nil
         guard !appSettings.bypassPhase2Filter else { return }
+        let tauPhase3 = gestureRecognizer.recognizer.getConfig().holdsConfig?.tauPhase3Confidence ?? 0.7
+        let isWrong = (label == "wrong")
+        let conf = gesture.prediction.confidence
         let entry = Phase3ConfidenceLogEntry(
             modelVersion: gestureRecognizer.handfilmModelVersion,
             candidateSetSize: gesture.candidateSetSize ?? 0,
             predictedClass: gesture.prediction.gestureId,
-            confidence: Double(gesture.prediction.confidence),
+            confidence: Double(conf),
             reviewerLabel: label,
             timestamp: gesture.detectionTimestamp,
             filmId: nil
         )
         uploadPhase3Entry(entry)
+        // High-confidence wrong prediction → open Phase 3 Correction View (§4.1).
+        if isWrong && conf >= tauPhase3 {
+            pendingPhase3Correction = PendingPhase3Capture(gesture: gesture, recentHolds: recentHolds)
+            recentHolds = []
+            gestureRecognizer.recognizer.pauseForCorrection()
+        }
     }
 
     private func uploadPoseEntry(_ entry: PoseConfidenceLogEntry) {
@@ -793,6 +844,21 @@ struct CameraView: View {
             try? await apiClient.postConfidenceLog(entries: [.phase3(entry)])
         }
     }
+}
+
+// MARK: - Stage 3: Pending pose capture
+
+struct PendingPoseCapture: Identifiable {
+    let id = UUID()
+    let logEntry: PoseConfidenceLogEntry
+    let repShot: HandShot?
+    let normalizedCoords: [Float]?
+}
+
+struct PendingPhase3Capture: Identifiable {
+    let id = UUID()
+    let gesture: DetectedGesture
+    let recentHolds: [PendingPoseCapture]
 }
 
 // MARK: - Camera Preview View
