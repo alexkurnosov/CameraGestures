@@ -5,6 +5,7 @@ import CameraGestures
 struct GestureTypeRow: View {
     let gesture: GestureDefinition
     let exampleCount: Int
+    let rejectCount: Int
     let lastRecorded: Date?
     let action: () -> Void
 
@@ -40,6 +41,15 @@ struct GestureTypeRow: View {
                         Text("\(exampleCount) examples")
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                        if rejectCount > 0 {
+                            Text("·")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("\(rejectCount) rejects")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
 
                         if let date = lastRecorded {
                             Text("\u{2022}")

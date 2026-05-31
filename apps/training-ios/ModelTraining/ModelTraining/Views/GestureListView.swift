@@ -122,6 +122,7 @@ struct GestureListView: View {
                     GestureTypeRow(
                         gesture: gesture,
                         exampleCount: getExampleCount(for: gesture),
+                        rejectCount: trainingDataManager.serverRejectCounts[gesture.id] ?? 0,
                         lastRecorded: getLastRecorded(for: gesture)
                     ) {
                         selectedGesture = gesture

@@ -23,6 +23,9 @@ class TrainingDataManager: ObservableObject {
     /// Per-gesture example counts fetched from the server (already-uploaded examples).
     @Published var serverExampleCounts: [String: Int] = [:]
 
+    /// Per-gesture phase3 reject counts fetched from the server.
+    @Published var serverRejectCounts: [String: Int] = [:]
+
     /// Non-nil when the last attempt to fetch server counts failed.
     @Published var serverSyncError: String?
 
@@ -302,8 +305,10 @@ class TrainingDataManager: ObservableObject {
             let stats = try await client.fetchExampleStats()
             print("TrainingDataManager: server stats — total=\(stats.total), gestures=\(stats.gestures.map { "\($0.gestureId):\($0.count)" })")
             let counts = Dictionary(uniqueKeysWithValues: stats.gestures.map { ($0.gestureId, $0.count) })
+            let rejectCounts = Dictionary(uniqueKeysWithValues: stats.gestures.map { ($0.gestureId, $0.rejectCount) })
             await MainActor.run {
                 self.serverExampleCounts = counts
+                self.serverRejectCounts = rejectCounts
                 self.serverSyncError = nil
             }
         } catch {

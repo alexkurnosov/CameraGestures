@@ -18,10 +18,12 @@ struct ExampleStatsResponse: Codable {
     struct GestureStat: Codable {
         let gestureId: String
         let count: Int
+        let rejectCount: Int
 
         enum CodingKeys: String, CodingKey {
             case gestureId = "gesture_id"
             case count
+            case rejectCount = "reject_count"
         }
     }
     let gestures: [GestureStat]
@@ -69,6 +71,8 @@ struct ModelStatusResponse: Codable {
     let gestureIds: [String]
     let trainedAt: TimeInterval?
     let error: String?
+    let rejectCount: Int
+    let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -77,6 +81,8 @@ struct ModelStatusResponse: Codable {
         case gestureIds = "gesture_ids"
         case trainedAt = "trained_at"
         case error
+        case rejectCount = "reject_count"
+        case warnings
     }
 }
 
@@ -173,6 +179,9 @@ struct ModelMetricsResponse: Codable, Identifiable {
     let thresholdCurves: [ThresholdPoint]
     let auc: AucMetrics
     let confidenceCurvePhase3: [ConfidenceCurvePoint]
+    let rejectMarginSweep: RejectMarginSweep?
+    let rejectCount: Int
+    let warnings: [String]
 
     var id: String { modelId }
 
@@ -194,6 +203,9 @@ struct ModelMetricsResponse: Codable, Identifiable {
         case thresholdCurves = "threshold_curves"
         case auc
         case confidenceCurvePhase3 = "confidence_curve_phase3"
+        case rejectMarginSweep = "reject_margin_sweep"
+        case rejectCount = "reject_count"
+        case warnings
     }
 }
 
@@ -513,6 +525,34 @@ struct BootstrapStabilityResult: Codable {
     }
 }
 
+struct RejectMarginSweepEntry: Codable {
+    let m: Double
+    let rejectSuppressionRate: Double
+    let curatedAccuracyAtTau: Double
+
+    enum CodingKeys: String, CodingKey {
+        case m = "M"
+        case rejectSuppressionRate = "reject_suppression_rate"
+        case curatedAccuracyAtTau = "curated_accuracy_at_tau"
+    }
+}
+
+struct RejectMarginSweep: Codable {
+    let selectedM: Double
+    let lambdaMargin: Double
+    let nTrainRejects: Int
+    let nEvalRejects: Int
+    let sweep: [RejectMarginSweepEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedM = "selected_m"
+        case lambdaMargin = "lambda_margin"
+        case nTrainRejects = "n_train_rejects"
+        case nEvalRejects = "n_eval_rejects"
+        case sweep
+    }
+}
+
 struct PoseMetricsResponse: Codable {
     let modelId: String
     let trainedAt: TimeInterval
@@ -522,6 +562,9 @@ struct PoseMetricsResponse: Codable {
     let confidenceCurvePose: [ConfidenceCurvePoint]
     let migrationReport: MigrationReport?
     let bootstrapStability: BootstrapStabilityResult?
+    let rejectMarginSweep: RejectMarginSweep?
+    let rejectCount: Int
+    let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case modelId = "model_id"
@@ -532,6 +575,9 @@ struct PoseMetricsResponse: Codable {
         case confidenceCurvePose = "confidence_curve_pose"
         case migrationReport = "migration_report"
         case bootstrapStability = "bootstrap_stability"
+        case rejectMarginSweep = "reject_margin_sweep"
+        case rejectCount = "reject_count"
+        case warnings
     }
 }
 
@@ -1147,7 +1193,9 @@ class GestureModelAPIClient: ObservableObject {
                 trainedOn: 0,
                 gestureIds: [],
                 trainedAt: nil,
-                error: nil
+                error: nil,
+                rejectCount: 0,
+                warnings: []
             )
         }
 

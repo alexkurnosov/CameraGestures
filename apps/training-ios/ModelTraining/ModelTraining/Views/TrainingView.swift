@@ -41,9 +41,13 @@ struct TrainingView: View {
                     inViewThresholdSection
                     serverControlsSection
                     poseInspectorSection
+                    modelsSummarySection
                     dangerZoneSection
                 }
                 .padding()
+            }
+            .refreshable {
+                serverManager.refreshServerStatus()
             }
             .navigationTitle("Training Data")
             .navigationBarTitleDisplayMode(.inline)
@@ -559,6 +563,9 @@ struct TrainingView: View {
                 .disabled(serverManager.isDownloadingModel)
             }
 
+            // Last training summary + reject count
+            phase3LastTrainingRow
+
             // Training progress / status details
             if let status = serverManager.serverStatus {
                 serverStatusDetailView(status: status)
@@ -661,6 +668,8 @@ struct TrainingView: View {
                     .lineLimit(3)
             }
 
+            poseLastTrainingRow
+
             Text("Review clusters in the inspector, then train the pose model. Training is independent from server gesture training.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -683,6 +692,8 @@ struct TrainingView: View {
                 if status.status == "ready" || status.status == "failed" {
                     if status.status == "failed" {
                         poseTrainingError = status.error ?? "Training failed"
+                    } else {
+                        serverManager.refreshAllMetrics()
                     }
                     return
                 }
@@ -729,6 +740,154 @@ struct TrainingView: View {
         .padding()
         .background(Color.red.opacity(0.04))
         .cornerRadius(8)
+    }
+
+    // MARK: - Last-training summary rows
+
+    private var dateFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }
+
+    @ViewBuilder
+    private var phase3LastTrainingRow: some View {
+        if let status = serverManager.serverStatus, status.trainedAt != nil || status.rejectCount > 0 {
+            HStack(spacing: 16) {
+                if let trainedAt = status.trainedAt {
+                    Label(dateFormatter.string(from: Date(timeIntervalSince1970: trainedAt)), systemImage: "clock")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if status.trainedOn > 0 {
+                    Label("\(status.trainedOn) examples", systemImage: "doc.text")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if status.rejectCount > 0 {
+                    Label("\(status.rejectCount) rejects", systemImage: "xmark.circle")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var poseLastTrainingRow: some View {
+        if let m = serverManager.poseMetrics {
+            HStack(spacing: 16) {
+                let trainedAt = m.trainedAt > 0 ? m.trainedAt : nil
+                if let t = trainedAt {
+                    Label(dateFormatter.string(from: Date(timeIntervalSince1970: t)), systemImage: "clock")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if m.trainedOn > 0 {
+                    Label("\(m.trainedOn) holds", systemImage: "doc.text")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if m.rejectCount > 0 {
+                    Label("\(m.rejectCount) rejects", systemImage: "xmark.circle")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+        }
+    }
+
+    // MARK: - Models Summary Section
+
+    private var modelsSummarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Models Summary")
+                .font(.headline)
+
+            if serverManager.phase3Metrics == nil && serverManager.poseMetrics == nil {
+                Text("No trained models yet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                if let m = serverManager.phase3Metrics {
+                    modelSweepBlock(
+                        label: "Phase 3 (gesture)",
+                        sweep: m.rejectMarginSweep,
+                        warnings: m.warnings
+                    )
+                }
+                if let m = serverManager.poseMetrics {
+                    modelSweepBlock(
+                        label: "Phase 2 (pose)",
+                        sweep: m.rejectMarginSweep,
+                        warnings: m.warnings
+                    )
+                }
+            }
+        }
+        .padding()
+        .background(Color.teal.opacity(0.06))
+        .cornerRadius(8)
+    }
+
+    @ViewBuilder
+    private func modelSweepBlock(label: String, sweep: RejectMarginSweep?, warnings: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            if let s = sweep {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Best M")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.0f", s.selectedM))
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    if let last = s.sweep.first(where: { $0.m == s.selectedM }) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Suppression")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Text(String(format: "%.0f%%", last.rejectSuppressionRate * 100))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(last.rejectSuppressionRate > 0 ? .green : .secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Accuracy")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Text(String(format: "%.1f%%", last.curatedAccuracyAtTau * 100))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    Text("\(s.nTrainRejects)t/\(s.nEvalRejects)e rejects")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Text("No reject sweep run yet")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            ForEach(warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .lineLimit(3)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.07))
+        .cornerRadius(6)
     }
 
     @ViewBuilder

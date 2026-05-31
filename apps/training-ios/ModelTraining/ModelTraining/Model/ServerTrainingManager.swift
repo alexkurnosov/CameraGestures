@@ -14,6 +14,10 @@ class ServerTrainingManager: ObservableObject {
     @Published var isWipingModel = false
     @Published var serverActionError: String?
 
+    // Last-training metrics fetched from the server (refreshed on start, after train, after download)
+    @Published var phase3Metrics: ModelMetricsResponse?
+    @Published var poseMetrics: PoseMetricsResponse?
+
     // MARK: - Dependencies
 
     private(set) weak var apiClient: GestureModelAPIClient?
@@ -41,12 +45,26 @@ class ServerTrainingManager: ObservableObject {
         Task {
             do {
                 let status = try await apiClient.fetchModelStatus()
-                serverStatus = status
+                await MainActor.run { serverStatus = status }
                 if status.status == "training" {
                     startPollingStatus()
                 }
             } catch {
                 print("[ServerTrainingManager] fetchModelStatus failed: \(error)")
+            }
+        }
+        refreshAllMetrics()
+    }
+
+    func refreshAllMetrics() {
+        guard let apiClient else { return }
+        Task {
+            async let p3 = try? apiClient.fetchLatestMetrics()
+            async let p2 = try? apiClient.fetchPoseMetrics()
+            let (m3, m2) = await (p3, p2)
+            await MainActor.run {
+                if let m3 { phase3Metrics = m3 }
+                if let m2 { poseMetrics = m2 }
             }
         }
     }
@@ -101,6 +119,7 @@ class ServerTrainingManager: ObservableObject {
                 serverActionError = error.localizedDescription
             }
             isDownloadingModel = false
+            refreshAllMetrics()
         }
     }
 
@@ -130,13 +149,16 @@ class ServerTrainingManager: ObservableObject {
                     try await Task.sleep(nanoseconds: 3_000_000_000)
                     guard !Task.isCancelled else { break }
                     let status = try await apiClient.fetchModelStatus()
-                    serverStatus = status
-                    if status.status != "training" { break }
+                    await MainActor.run { serverStatus = status }
+                    if status.status != "training" {
+                        refreshAllMetrics()
+                        break
+                    }
                 } catch {
                     break
                 }
             }
-            isPollingStatus = false
+            await MainActor.run { isPollingStatus = false }
         }
     }
 
