@@ -882,6 +882,41 @@ struct RejectCorrectionsResponseDTO: Decodable {
     let accepted: Int
 }
 
+// MARK: - Reject correction list DTOs (read side)
+
+struct RejectCorrectionResponse: Decodable {
+    let id: String
+    let gestureId: String?
+    let sessionId: String
+    let phase: String
+    let originalPredictedClass: String
+    let originalConfidence: Double
+    let modelVersion: String
+    let isNoneReject: Bool
+    let candidateSetSize: Int?
+    let handFilm: ServerHandFilmResponse
+    let createdAt: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case gestureId              = "gesture_id"
+        case sessionId              = "session_id"
+        case phase
+        case originalPredictedClass = "original_predicted_class"
+        case originalConfidence     = "original_confidence"
+        case modelVersion           = "model_version"
+        case isNoneReject           = "is_none_reject"
+        case candidateSetSize       = "candidate_set_size"
+        case handFilm               = "hand_film"
+        case createdAt              = "created_at"
+    }
+}
+
+struct RejectCorrectionListResponse: Decodable {
+    let corrections: [RejectCorrectionResponse]
+    let total: Int
+}
+
 // MARK: - Stage 11: Pipeline metrics (Layer #4)
 
 struct PipelinePerGestureMetric: Codable, Identifiable {
@@ -1098,6 +1133,38 @@ class GestureModelAPIClient: ObservableObject {
         }
 
         var request = URLRequest(url: baseURL.appendingPathComponent("examples/\(id)"))
+        request.httpMethod = "DELETE"
+
+        struct DeleteResponse: Decodable {
+            let id: String
+            let deleted: Bool
+        }
+        let _: DeleteResponse = try await perform(request, decoding: DeleteResponse.self)
+    }
+
+    // MARK: - Reject Corrections (read + delete)
+
+    func fetchRejectCorrections(phase: String? = nil) async throws -> RejectCorrectionListResponse {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("GET", path: "/reject-corrections")
+            return RejectCorrectionListResponse(corrections: [], total: 0)
+        }
+
+        var components = URLComponents(url: baseURL.appendingPathComponent("reject-corrections"), resolvingAgainstBaseURL: false)!
+        if let phase {
+            components.queryItems = [URLQueryItem(name: "phase", value: phase)]
+        }
+        let request = URLRequest(url: components.url!)
+        return try await perform(request, decoding: RejectCorrectionListResponse.self)
+    }
+
+    func deleteRejectCorrection(exampleId: String) async throws {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("DELETE", path: "/reject-corrections/\(exampleId)")
+            return
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("reject-corrections/\(exampleId)"))
         request.httpMethod = "DELETE"
 
         struct DeleteResponse: Decodable {

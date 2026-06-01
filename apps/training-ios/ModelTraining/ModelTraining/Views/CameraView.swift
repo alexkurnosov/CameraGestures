@@ -181,6 +181,7 @@ struct CameraView: View {
             PoseCorrectionView(
                 capture: capture,
                 gestureRecognizer: gestureRecognizer,
+                gestureRegistry: gestureRegistry,
                 appSettings: appSettings,
                 apiClient: apiClient
             )

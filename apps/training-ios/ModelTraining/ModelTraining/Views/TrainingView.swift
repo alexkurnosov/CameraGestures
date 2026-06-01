@@ -61,6 +61,11 @@ struct TrainingView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 4) {
+                        NavigationLink(destination: RejectCorrectionsView()
+                            .environmentObject(gestureRegistry)
+                        ) {
+                            Image(systemName: "hand.raised.slash")
+                        }
                         NavigationLink(destination: HandFilmsView()
                             .environmentObject(trainingDataManager)
                             .environmentObject(gestureRegistry)

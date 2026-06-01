@@ -6,6 +6,7 @@ import CameraGestures
 struct PoseCorrectionView: View {
     let capture: PendingPoseCapture
     let gestureRecognizer: GestureRecognizerWrapper
+    let gestureRegistry: GestureRegistry
     let appSettings: AppSettings
     let apiClient: GestureModelAPIClient
 
@@ -54,8 +55,11 @@ struct PoseCorrectionView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     let originalKey = "pose_\(capture.logEntry.predictedPoseId)"
-                    if let gestures = poseGestureMap[originalKey], !gestures.isEmpty {
-                        Text("in: \(gestures.joined(separator: ", "))")
+                    if let gestureIds = poseGestureMap[originalKey], !gestureIds.isEmpty {
+                        let names = gestureIds.map { id in
+                            gestureRegistry.gestures.first { $0.id == id }?.name ?? id
+                        }
+                        Text("in: \(names.joined(separator: ", "))")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }

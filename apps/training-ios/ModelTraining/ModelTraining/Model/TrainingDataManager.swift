@@ -481,29 +481,8 @@ class TrainingDataManager: ObservableObject {
         return downloaded.count
     }
 
-    /// Convert server hand film response to a HandFilm domain object.
     private func convertServerHandFilm(_ serverFilm: ServerHandFilmResponse) -> HandFilm {
-        var film = HandFilm(startTime: serverFilm.startTime)
-        for serverShot in serverFilm.frames {
-            let landmarks = serverShot.landmarks.map {
-                Point3D(x: $0.x, y: $0.y, z: $0.z)
-            }
-            let side: LeftOrRight = {
-                switch serverShot.leftOrRight {
-                case "left": return .left
-                case "right": return .right
-                default: return .unknown
-                }
-            }()
-            let shot = HandShot(
-                landmarks: landmarks,
-                timestamp: serverShot.timestamp,
-                leftOrRight: side,
-                isAbsent: serverShot.isAbsent ?? false
-            )
-            film.addFrame(shot)
-        }
-        return film
+        HandFilm(server: serverFilm)
     }
 
     // MARK: - Pending & Failed Persistence
