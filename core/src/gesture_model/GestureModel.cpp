@@ -162,6 +162,39 @@ int GestureModel::predictPose(const cg_handshot& shot,
     return 1;
 }
 
+int GestureModel::predictPoseAllScores(const cg_handshot& shot,
+                                        int* pose_id_out, float* confidence_out,
+                                        float* scores_out, int scores_capacity,
+                                        int* n_scores_out) {
+    if (!pose_backend_.isLoaded() || !pose_manifest_.has_value()) return 0;
+    if (pose_cluster_ids_.empty()) return 0;
+
+    auto pv = preprocessor_.poseVector(shot);
+    std::vector<float> probs;
+    if (!pose_backend_.run(pv, probs)) return 0;
+    if (probs.size() != pose_cluster_ids_.size()) return 0;
+
+    auto it = std::max_element(probs.begin(), probs.end());
+    int  maxIdx   = static_cast<int>(std::distance(probs.begin(), it));
+    float maxProb = *it;
+
+    int clusterId = 0;
+    try { clusterId = std::stoi(pose_cluster_ids_[maxIdx]); } catch(...) { clusterId = maxIdx; }
+
+    if (pose_id_out)     *pose_id_out     = clusterId;
+    if (confidence_out)  *confidence_out  = maxProb;
+
+    if (scores_out && scores_capacity > 0) {
+        int n = static_cast<int>(std::min(probs.size(),
+                                           static_cast<size_t>(scores_capacity)));
+        std::copy(probs.begin(), probs.begin() + n, scores_out);
+        if (n_scores_out) *n_scores_out = n;
+    } else if (n_scores_out) {
+        *n_scores_out = 0;
+    }
+    return 1;
+}
+
 /* =========================================================================
  * C ABI
  * ====================================================================== */
@@ -248,6 +281,23 @@ int cg_gesture_model_predict_pose(cg_gesture_model_ref ref,
                                     float* confidence_out) {
     if (!ref || !shot) return 0;
     return ref->impl.predictPose(*shot, pose_id_out, confidence_out);
+}
+
+int cg_gesture_model_pose_class_count(cg_gesture_model_ref ref) {
+    if (!ref) return 0;
+    return ref->impl.poseClassCount();
+}
+
+int cg_gesture_model_predict_pose_all_scores(cg_gesture_model_ref ref,
+                                               const cg_handshot*   shot,
+                                               int*                 pose_id_out,
+                                               float*               confidence_out,
+                                               float*               scores_out,
+                                               int                  scores_capacity,
+                                               int*                 n_scores_out) {
+    if (!ref || !shot) return 0;
+    return ref->impl.predictPoseAllScores(*shot, pose_id_out, confidence_out,
+                                           scores_out, scores_capacity, n_scores_out);
 }
 
 void cg_gesture_model_set_geom_coef(cg_gesture_model_ref ref, float coef) {

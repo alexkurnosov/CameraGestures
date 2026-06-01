@@ -21,6 +21,10 @@ struct Phase3CorrectionView: View {
     @State private var relabelTarget: HoldRelabelTarget? = nil
     @State private var poseOptions: [(id: String, label: String)] = [("_none", "_none")]
     @State private var poseGestureMap: [String: [String]] = [:]
+    @State private var poseClusterMap: [String: PoseClusterInfo] = [:]
+    @State private var classLabels: [Int] = []
+    // Per-hold model scores keyed by hold index → ("pose_<n>" → score).
+    @State private var holdPoseScores: [Int: [String: Float]] = [:]
     @State private var isSending = false
     @State private var errorMessage: String? = nil
 
@@ -148,12 +152,17 @@ struct Phase3CorrectionView: View {
                 hold: capture.recentHolds[target.index],
                 poseOptions: poseOptions,
                 poseGestureMap: poseGestureMap,
+                poseClusterMap: poseClusterMap,
+                poseScores: holdPoseScores[target.index] ?? [:],
                 currentLabel: holdRelabels[target.index]
             ) { replacement in
                 holdRelabels[target.index] = replacement
             }
         }
-        .onAppear { loadPoseOptions() }
+        .onAppear {
+            loadPoseOptions()
+            loadAllHoldScores()
+        }
     }
 
     // MARK: - Helpers
@@ -180,6 +189,27 @@ struct Phase3CorrectionView: View {
             .map { (id: "pose_\($0.key)", label: $0.value.label) }
         poseOptions = [("_none", "_none")] + sorted
         poseGestureMap = buildPoseGestureMap(from: manifest)
+        poseClusterMap = Dictionary(uniqueKeysWithValues:
+            manifest.poseClusters.map { ("pose_\($0.key)", $0.value) })
+        classLabels = manifest.classLabels ?? []
+    }
+
+    private func loadAllHoldScores() {
+        let labels = classLabels
+        for (idx, hold) in capture.recentHolds.enumerated() {
+            guard let shot = hold.repShot else { continue }
+            Task {
+                guard let prediction = try? gestureRecognizer.recognizer
+                    .predictPoseFromShot(shot, allScores: true),
+                      let scores = prediction.allScores
+                else { return }
+                var mapped: [String: Float] = [:]
+                for (i, clusterId) in labels.enumerated() {
+                    if let score = scores[i] { mapped["pose_\(clusterId)"] = score }
+                }
+                await MainActor.run { holdPoseScores[idx] = mapped }
+            }
+        }
     }
 
     private func buildPoseGestureMap(from manifest: PoseManifestResponse) -> [String: [String]] {
@@ -347,11 +377,20 @@ struct RelabelHoldSheet: View {
     let hold: PendingPoseCapture
     let poseOptions: [(id: String, label: String)]
     let poseGestureMap: [String: [String]]
+    let poseClusterMap: [String: PoseClusterInfo]
+    let poseScores: [String: Float]
     let currentLabel: String?
     let onApply: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var selected: String?
+
+    private var sortedPoseOptions: [(id: String, label: String)] {
+        let none = poseOptions.filter { $0.id == "_none" }
+        let rest = poseOptions.filter { $0.id != "_none" }
+            .sorted { (poseScores[$0.id] ?? 0) > (poseScores[$1.id] ?? 0) }
+        return none + rest
+    }
 
     private var skeletonPoints: [Point3D] {
         guard let coords = hold.normalizedCoords, coords.count == 63 else {
@@ -387,38 +426,17 @@ struct RelabelHoldSheet: View {
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(poseOptions, id: \.id) { option in
+                        ForEach(sortedPoseOptions, id: \.id) { option in
                             Button {
                                 selected = option.id
                             } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(option.id)
-                                            .font(.subheadline.weight(.medium))
-                                            .foregroundColor(.primary)
-                                        if !option.label.isEmpty && option.label != option.id {
-                                            Text(option.label)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        if let gestures = poseGestureMap[option.id], !gestures.isEmpty {
-                                            Text("in: \(gestures.joined(separator: ", "))")
-                                                .font(.caption)
-                                                .foregroundColor(.orange)
-                                        }
-                                    }
-                                    Spacer()
-                                    if selected == option.id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundColor(.blue)
-                                            .font(.subheadline.weight(.semibold))
-                                    }
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 10)
-                                .background(selected == option.id
-                                            ? Color.blue.opacity(0.08)
-                                            : Color.clear)
+                                PoseCandidateRow(
+                                    option: option,
+                                    clusterInfo: poseClusterMap[option.id],
+                                    gestures: poseGestureMap[option.id],
+                                    score: poseScores[option.id],
+                                    isSelected: selected == option.id
+                                )
                             }
                             .buttonStyle(.plain)
                             Divider().padding(.leading)

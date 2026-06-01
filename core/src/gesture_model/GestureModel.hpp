@@ -48,6 +48,18 @@ public:
      * pose_id_out: cluster integer ID. Returns 1 on success. */
     int predictPose(const cg_handshot& shot, int* pose_id_out, float* confidence_out);
 
+    /* Like predictPose but also fills scores_out[0..n) with softmax probabilities
+     * for every pose class in class_labels order.
+     * scores_out/n_scores_out may be null (behaves like predictPose). */
+    int predictPoseAllScores(const cg_handshot& shot,
+                              int*   pose_id_out,
+                              float* confidence_out,
+                              float* scores_out,
+                              int    scores_capacity,
+                              int*   n_scores_out);
+
+    int poseClassCount() const { return static_cast<int>(pose_cluster_ids_.size()); }
+
 private:
     FeaturePreprocessor              preprocessor_;
     TFLiteBackend                    backend_;

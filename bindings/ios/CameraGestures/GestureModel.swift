@@ -59,12 +59,17 @@ public struct PosePrediction {
     public let confidence:   Float
     public let kind:         ClusterKind
     public let clusterLabel: String
+    /// Softmax probabilities for all pose classes, indexed by position in class_labels.
+    /// Populated only when predictPoseFromShot is called with allScores: true.
+    public let allScores:    [Int: Float]?
 
-    public init(poseId: Int, confidence: Float, kind: ClusterKind, clusterLabel: String) {
+    public init(poseId: Int, confidence: Float, kind: ClusterKind, clusterLabel: String,
+                allScores: [Int: Float]? = nil) {
         self.poseId       = poseId
         self.confidence   = confidence
         self.kind         = kind
         self.clusterLabel = clusterLabel
+        self.allScores    = allScores
     }
 }
 
@@ -226,15 +231,31 @@ public class GestureModel {
         throw GestureModelError.invalidInput  // use predictPoseFromShot instead
     }
 
-    public func predictPoseFromShot(_ shot: HandShot) throws -> PosePrediction? {
+    public func predictPoseFromShot(_ shot: HandShot, allScores: Bool = false) throws -> PosePrediction? {
         guard let ref = modelRef else { throw GestureModelError.modelNotLoaded }
         var cShot = shot.toCStruct()
         var poseId: Int32 = 0
         var confidence: Float = 0
-        let ok = cg_gesture_model_predict_pose(ref, &cShot, &poseId, &confidence)
-        guard ok != 0 else { return nil }
-        return PosePrediction(poseId: Int(poseId), confidence: confidence,
-                               kind: .unconfirmed, clusterLabel: "pose_\(poseId)")
+
+        if allScores {
+            let n = Int(cg_gesture_model_pose_class_count(ref))
+            guard n > 0 else { return nil }
+            var scores = [Float](repeating: 0, count: n)
+            var nWritten: Int32 = 0
+            let ok = cg_gesture_model_predict_pose_all_scores(
+                ref, &cShot, &poseId, &confidence, &scores, Int32(n), &nWritten)
+            guard ok != 0 else { return nil }
+            let scoreDict = Dictionary(uniqueKeysWithValues:
+                (0..<Int(nWritten)).map { ($0, scores[$0]) })
+            return PosePrediction(poseId: Int(poseId), confidence: confidence,
+                                   kind: .unconfirmed, clusterLabel: "pose_\(poseId)",
+                                   allScores: scoreDict)
+        } else {
+            let ok = cg_gesture_model_predict_pose(ref, &cShot, &poseId, &confidence)
+            guard ok != 0 else { return nil }
+            return PosePrediction(poseId: Int(poseId), confidence: confidence,
+                                   kind: .unconfirmed, clusterLabel: "pose_\(poseId)")
+        }
     }
 
     // MARK: Configuration

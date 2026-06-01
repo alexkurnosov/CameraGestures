@@ -753,22 +753,33 @@ struct TrainingView: View {
 
     @ViewBuilder
     private var phase3LastTrainingRow: some View {
-        if let status = serverManager.serverStatus, status.trainedAt != nil || status.rejectCount > 0 {
-            HStack(spacing: 16) {
-                if let trainedAt = status.trainedAt {
-                    Label(dateFormatter.string(from: Date(timeIntervalSince1970: trainedAt)), systemImage: "clock")
+        let serverDate = serverManager.serverStatus?.trainedAt.map { Date(timeIntervalSince1970: $0) }
+        let deviceDate = appSettings.effectiveGestureModelLoadedAt
+        if serverDate != nil || deviceDate != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let date = serverDate {
+                    HStack(spacing: 8) {
+                        Label("Server: \(dateFormatter.string(from: date))", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        let trainedOn = serverManager.serverStatus?.trainedOn ?? 0
+                        if trainedOn > 0 {
+                            Text("· \(trainedOn) examples")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        let rejectCount = serverManager.serverStatus?.rejectCount ?? 0
+                        if rejectCount > 0 {
+                            Text("· \(rejectCount) rejects")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                if let date = deviceDate {
+                    Label("On device: \(dateFormatter.string(from: date))", systemImage: "iphone")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                }
-                if status.trainedOn > 0 {
-                    Label("\(status.trainedOn) examples", systemImage: "doc.text")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                if status.rejectCount > 0 {
-                    Label("\(status.rejectCount) rejects", systemImage: "xmark.circle")
-                        .font(.caption)
-                        .foregroundColor(.orange)
                 }
             }
         }
@@ -776,23 +787,32 @@ struct TrainingView: View {
 
     @ViewBuilder
     private var poseLastTrainingRow: some View {
-        if let m = serverManager.poseMetrics {
-            HStack(spacing: 16) {
-                let trainedAt = m.trainedAt > 0 ? m.trainedAt : nil
-                if let t = trainedAt {
-                    Label(dateFormatter.string(from: Date(timeIntervalSince1970: t)), systemImage: "clock")
+        let m = serverManager.poseMetrics
+        let serverDate: Date? = m.flatMap { $0.trainedAt > 0 ? Date(timeIntervalSince1970: $0.trainedAt) : nil }
+        let deviceDate = appSettings.effectivePoseModelLoadedAt
+        if serverDate != nil || deviceDate != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let date = serverDate, let m {
+                    HStack(spacing: 8) {
+                        Label("Server: \(dateFormatter.string(from: date))", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if m.trainedOn > 0 {
+                            Text("· \(m.trainedOn) holds")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if m.rejectCount > 0 {
+                            Text("· \(m.rejectCount) rejects")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                if let date = deviceDate {
+                    Label("On device: \(dateFormatter.string(from: date))", systemImage: "iphone")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                }
-                if m.trainedOn > 0 {
-                    Label("\(m.trainedOn) holds", systemImage: "doc.text")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                if m.rejectCount > 0 {
-                    Label("\(m.rejectCount) rejects", systemImage: "xmark.circle")
-                        .font(.caption)
-                        .foregroundColor(.orange)
                 }
             }
         }

@@ -444,6 +444,12 @@ public class HandGestureRecognizing {
         pipelineQueue.async { [weak self] in self?.rebuildRecognizerOnQueue() }
     }
 
+    /// Run pose inference on a single shot. Pass allScores: true to get softmax
+    /// probabilities for every class (indexed by position in class_labels).
+    public func predictPoseFromShot(_ shot: HandShot, allScores: Bool = false) throws -> PosePrediction? {
+        try gestureModel.predictPoseFromShot(shot, allScores: allScores)
+    }
+
     public func resetHandfilm() { handsRecognizer.resetHandfilm() }
     public func harvestHandfilm() -> HandFilm { handsRecognizer.harvestHandfilm() }
 

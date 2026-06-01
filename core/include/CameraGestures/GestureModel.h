@@ -80,6 +80,23 @@ int cg_gesture_model_predict_pose(cg_gesture_model_ref model,
                                    int*                 pose_id_out,
                                    float*               confidence_out);
 
+/* Returns the number of pose classes the loaded pose MLP knows (0 if not loaded). */
+int cg_gesture_model_pose_class_count(cg_gesture_model_ref model);
+
+/* Like cg_gesture_model_predict_pose but also fills scores_out with softmax
+ * probabilities for ALL pose classes in class_labels order (same ordering used
+ * by the manifest's class_labels array).
+ * scores_capacity must be >= cg_gesture_model_pose_class_count().
+ * scores_out and n_scores_out may be NULL.
+ * Returns 1 on success, 0 otherwise. */
+int cg_gesture_model_predict_pose_all_scores(cg_gesture_model_ref model,
+                                              const cg_handshot*   shot,
+                                              int*                 pose_id_out,
+                                              float*               confidence_out,
+                                              float*               scores_out,
+                                              int                  scores_capacity,
+                                              int*                 n_scores_out);
+
 /* -------------------------------------------------------------------------
  * Configuration
  * ---------------------------------------------------------------------- */

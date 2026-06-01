@@ -52,16 +52,22 @@ class ServerTrainingManager: ObservableObject {
             } catch {
                 print("[ServerTrainingManager] fetchModelStatus failed: \(error)")
             }
+            // Run sequentially so auth is already established by fetchModelStatus above.
+            refreshAllMetrics()
         }
-        refreshAllMetrics()
     }
 
     func refreshAllMetrics() {
         guard let apiClient else { return }
         Task {
-            async let p3 = try? apiClient.fetchLatestMetrics()
-            async let p2 = try? apiClient.fetchPoseMetrics()
-            let (m3, m2) = await (p3, p2)
+            // Start both concurrently; handle each error independently so one
+            // 404 (e.g. no pose model yet) doesn't suppress the other result.
+            async let p3Fetch = apiClient.fetchLatestMetrics()
+            async let p2Fetch = apiClient.fetchPoseMetrics()
+            var m3: ModelMetricsResponse? = nil
+            var m2: PoseMetricsResponse? = nil
+            do { m3 = try await p3Fetch } catch { print("[ServerTrainingManager] fetchLatestMetrics: \(error)") }
+            do { m2 = try await p2Fetch } catch { print("[ServerTrainingManager] fetchPoseMetrics: \(error)") }
             await MainActor.run {
                 if let m3 { phase3Metrics = m3 }
                 if let m2 { poseMetrics = m2 }
@@ -107,11 +113,13 @@ class ServerTrainingManager: ObservableObject {
                 let gestureIds = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: sidecarURL))) ?? []
                 // loadModel validates tensor input shape against summaryFeaturesCount — throws if mismatched.
                 try gestureRecognizer.recognizer.loadModel(from: mURL.path, gestureIds: gestureIds)
+                await MainActor.run { appSettings.gestureModelLoadedAt = Date() }
 
                 // Pose model — report failure but don't abort the main model update.
                 do {
                     try await apiClient.downloadPoseModel()
                     gestureRecognizer.loadPoseModelIfAvailable(appSettings: appSettings)
+                    await MainActor.run { appSettings.poseModelLoadedAt = Date() }
                 } catch {
                     serverActionError = "Pose model: \(error.localizedDescription)"
                 }

@@ -88,6 +88,33 @@ class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(geomCoef, forKey: Self.geomCoefKey) }
     }
 
+    // MARK: - Device model timestamps
+
+    private static let gestureModelLoadedAtKey = "gestureModelLoadedAt"
+    private static let poseModelLoadedAtKey = "poseModelLoadedAt"
+
+    /// When the Phase 3 gesture model was last downloaded and loaded onto this device.
+    @Published var gestureModelLoadedAt: Date? {
+        didSet {
+            if let date = gestureModelLoadedAt {
+                UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.gestureModelLoadedAtKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.gestureModelLoadedAtKey)
+            }
+        }
+    }
+
+    /// When the Phase 2 pose model was last downloaded and loaded onto this device.
+    @Published var poseModelLoadedAt: Date? {
+        didSet {
+            if let date = poseModelLoadedAt {
+                UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.poseModelLoadedAtKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.poseModelLoadedAtKey)
+            }
+        }
+    }
+
     init() {
         let stored = UserDefaults.standard.double(forKey: Self.minInViewDurationKey)
         minInViewDuration = stored > 0 ? stored : 1.2
@@ -98,6 +125,10 @@ class AppSettings: ObservableObject {
         geomCoef = storedCoef > 0 ? storedCoef : 1.0
         enhancedPredictionMode = UserDefaults.standard.bool(forKey: Self.enhancedPredictionModeKey)
         bypassPhase2Filter = UserDefaults.standard.bool(forKey: Self.bypassPhase2FilterKey)
+        let gestureTS = UserDefaults.standard.double(forKey: Self.gestureModelLoadedAtKey)
+        gestureModelLoadedAt = gestureTS > 0 ? Date(timeIntervalSince1970: gestureTS) : nil
+        let poseTS = UserDefaults.standard.double(forKey: Self.poseModelLoadedAtKey)
+        poseModelLoadedAt = poseTS > 0 ? Date(timeIntervalSince1970: poseTS) : nil
     }
 
     /// Call after the first training job fires to permanently lock the threshold.
@@ -114,6 +145,22 @@ class AppSettings: ObservableObject {
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         )
+    }
+
+    // MARK: - Effective device model dates
+
+    /// Explicit stamp when set; falls back to the .tflite file's modification date.
+    var effectiveGestureModelLoadedAt: Date? {
+        if let d = gestureModelLoadedAt { return d }
+        let url = defaultTFLiteModelURL()
+        return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// Explicit stamp when set; falls back to the pose .tflite file's modification date.
+    var effectivePoseModelLoadedAt: Date? {
+        if let d = poseModelLoadedAt { return d }
+        let url = defaultPoseModelURL()
+        return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     func updateModelConfig() {
