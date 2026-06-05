@@ -21,6 +21,9 @@ class FilmPlaybackManager: ObservableObject {
     @Published var filterGestureId: String? = nil
     @Published var phaseFilter: PhaseFilter = .all
     @Published var errorsOnly: Bool = false
+    @Published var outliersOnly: Bool = false
+    /// Slider-controlled threshold (0...1). Higher = stricter (fewer, more extreme outliers).
+    @Published var outlierThreshold: Double = 0.5
 
     // MARK: - Dependencies (set via configure)
 
@@ -60,6 +63,11 @@ class FilmPlaybackManager: ObservableObject {
                 // Prediction error filter
                 if errorsOnly {
                     guard trainingDataManager.predictionByExample[ex.id]?.isError == true else { return false }
+                }
+                // Outlier filter
+                if outliersOnly {
+                    guard let score = trainingDataManager.predictionByExample[ex.id]?.outlierScore,
+                          score >= outlierThreshold else { return false }
                 }
                 return true
             }
@@ -151,6 +159,22 @@ class FilmPlaybackManager: ObservableObject {
         stopPlayback()
         errorsOnly = value
         currentIndex = 0
+        currentFrameIndex = 0
+    }
+
+    func setOutliersOnly(_ value: Bool) {
+        stopPlayback()
+        outliersOnly = value
+        currentIndex = 0
+        currentFrameIndex = 0
+    }
+
+    func setOutlierThreshold(_ value: Double) {
+        outlierThreshold = value
+        // Keep selection valid as the filtered set shrinks/grows under the new threshold.
+        if currentIndex >= filteredExamples.count {
+            currentIndex = max(0, filteredExamples.count - 1)
+        }
         currentFrameIndex = 0
     }
 

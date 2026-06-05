@@ -39,6 +39,9 @@ struct HandFilmsView: View {
         if playbackManager.errorsOnly {
             parts.append("Errors")
         }
+        if playbackManager.outliersOnly {
+            parts.append("Outliers")
+        }
         return parts.isEmpty ? "All" : parts.joined(separator: " · ")
     }
 
@@ -47,6 +50,10 @@ struct HandFilmsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
+                if playbackManager.outliersOnly {
+                    outlierThresholdBar
+                }
+
                 if playbackManager.filteredExamples.isEmpty {
                     emptyState
                 } else {
@@ -338,10 +345,16 @@ struct HandFilmsView: View {
                 }
                 .padding(.horizontal)
 
-                // Prediction error badge
-                if let pred = trainingDataManager.predictionByExample[example.id], pred.isError {
-                    predictionErrorBadge(pred)
-                        .padding(.horizontal)
+                // Prediction error + outlier badges
+                if let pred = trainingDataManager.predictionByExample[example.id] {
+                    if pred.isError {
+                        predictionErrorBadge(pred)
+                            .padding(.horizontal)
+                    }
+                    if pred.outlierScore >= playbackManager.outlierThreshold {
+                        outlierBadge(pred)
+                            .padding(.horizontal)
+                    }
                 }
             }
         }
@@ -375,6 +388,50 @@ struct HandFilmsView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    /// Describes why an example is flagged as an outlier, picking the dominant
+    /// contributing signal (mirrors the server's outlier_score = max(components)).
+    private func outlierBadge(_ pred: PredictionEntry) -> some View {
+        // Recompute the normalized component scores to choose the phrasing.
+        let scoreA = pred.centroidRatio.map { min(max($0 / 1.0, 0), 1) }        // A: pose ratio
+        let scoreB = pred.margin.map { min(max(1.0 - $0, 0), 1) }              // B: gesture margin
+        let scoreD = pred.anomalyZ.map { min(max($0 / 4.0, 0), 1) }           // D: anomaly
+
+        let text: String
+        let candidates: [(Double, String)] = [
+            (scoreA ?? -1, "A"), (scoreB ?? -1, "B"), (scoreD ?? -1, "D"),
+        ]
+        let dominant = candidates.max(by: { $0.0 < $1.0 })?.1 ?? "D"
+
+        switch dominant {
+        case "A":
+            let other = pred.nearestOtherGesture.flatMap { id in
+                gestureRegistry.gestures.first { $0.id == id }?.name ?? id
+            } ?? "another gesture"
+            text = String(format: "Outlier: leaning toward %@ (R=%.2f)", other, pred.centroidRatio ?? 0)
+        case "B":
+            text = String(format: "Outlier: low confidence margin (%.2f)", pred.margin ?? 0)
+        default:
+            text = String(format: "Outlier: unusual for its class (z=%.1f)", pred.anomalyZ ?? 0)
+        }
+
+        return HStack(spacing: 6) {
+            Image(systemName: "scope")
+                .foregroundColor(.orange)
+                .font(.caption)
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.orange)
+            Spacer()
+            Text(String(format: "%.2f", pred.outlierScore))
+                .font(.caption2.monospacedDigit())
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.08))
         .cornerRadius(8)
     }
 
@@ -487,6 +544,45 @@ struct HandFilmsView: View {
         }
     }
 
+    // MARK: - Outlier Threshold Bar
+
+    private var outlierThresholdBar: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text("Outlier sensitivity")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                if trainingDataManager.isLoadingPredictions {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Text(String(format: "≥ %.2f · %d shown",
+                                playbackManager.outlierThreshold,
+                                playbackManager.filteredExamples.count))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
+            }
+            Slider(
+                value: Binding(
+                    get: { playbackManager.outlierThreshold },
+                    set: { playbackManager.setOutlierThreshold($0) }
+                ),
+                in: 0...1,
+                step: 0.05
+            )
+            HStack {
+                Text("More (lenient)")
+                Spacer()
+                Text("Fewer (strict)")
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.06))
+    }
+
     // MARK: - Filter Menu
 
     private var filterMenu: some View {
@@ -545,6 +641,22 @@ struct HandFilmsView: View {
                         Text("With Prediction Errors")
                         if playbackManager.errorsOnly { Image(systemName: "checkmark") }
                     }
+                }
+            }
+            .disabled(trainingDataManager.isLoadingPredictions)
+
+            // --- Outlier filter ---
+            Button {
+                let turningOn = !playbackManager.outliersOnly
+                playbackManager.setOutliersOnly(turningOn)
+                if turningOn && trainingDataManager.predictionByExample.isEmpty
+                    && !trainingDataManager.isLoadingPredictions {
+                    Task { await trainingDataManager.fetchAndStorePredictions() }
+                }
+            } label: {
+                HStack {
+                    Text("Outliers")
+                    if playbackManager.outliersOnly { Image(systemName: "checkmark") }
                 }
             }
             .disabled(trainingDataManager.isLoadingPredictions)

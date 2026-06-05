@@ -267,13 +267,27 @@ struct PredictionEntry: Codable {
     let predictedClusterId: Int?    // pose phase only
     let isError: Bool
 
+    // Outlier signals (Option 3)
+    let confidence: Double?          // B: top-1 softmax (phase3)
+    let margin: Double?              // B: top1 - top2 softmax (phase3)
+    let centroidRatio: Double?       // A: d_own / d_nearest_other (pose)
+    let nearestOtherGesture: String? // A: gesture of nearest other-gesture cluster (pose)
+    let anomalyZ: Double?            // D: standardized distance to own-class mean
+    let outlierScore: Double         // combined 0..1 score the slider thresholds
+
     enum CodingKeys: String, CodingKey {
-        case exampleId          = "example_id"
+        case exampleId           = "example_id"
         case phase
-        case trueGesture        = "true_gesture"
-        case predictedGesture   = "predicted_gesture"
-        case predictedClusterId = "predicted_cluster_id"
-        case isError            = "is_error"
+        case trueGesture         = "true_gesture"
+        case predictedGesture    = "predicted_gesture"
+        case predictedClusterId  = "predicted_cluster_id"
+        case isError             = "is_error"
+        case confidence
+        case margin
+        case centroidRatio       = "centroid_ratio"
+        case nearestOtherGesture = "nearest_other_gesture"
+        case anomalyZ            = "anomaly_z"
+        case outlierScore        = "outlier_score"
     }
 }
 
