@@ -242,6 +242,7 @@ struct ServerExampleResponse: Codable {
     let gestureId: String
     let sessionId: String
     let userId: String?
+    let phase: String       // "phase3" (full handfilm) | "pose" (single-frame repShot)
     let handFilm: ServerHandFilmResponse
     let createdAt: Double
 
@@ -250,8 +251,41 @@ struct ServerExampleResponse: Codable {
         case gestureId = "gesture_id"
         case sessionId = "session_id"
         case userId = "user_id"
+        case phase
         case handFilm = "hand_film"
         case createdAt = "created_at"
+    }
+}
+
+// MARK: - Per-example predictions (GET /model/predictions)
+
+struct PredictionEntry: Codable {
+    let exampleId: String
+    let phase: String               // "phase3" | "pose"
+    let trueGesture: String
+    let predictedGesture: String    // gesture id (phase3) or cluster's dominant gesture id (pose)
+    let predictedClusterId: Int?    // pose phase only
+    let isError: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case exampleId          = "example_id"
+        case phase
+        case trueGesture        = "true_gesture"
+        case predictedGesture   = "predicted_gesture"
+        case predictedClusterId = "predicted_cluster_id"
+        case isError            = "is_error"
+    }
+}
+
+struct PredictionsResponse: Codable {
+    let predictions: [PredictionEntry]
+    let modelId: String?
+    let poseModelPresent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case predictions
+        case modelId            = "model_id"
+        case poseModelPresent   = "pose_model_present"
     }
 }
 
@@ -1105,6 +1139,17 @@ class GestureModelAPIClient: ObservableObject {
         components.queryItems = [URLQueryItem(name: "gesture_id", value: gestureId)]
         let request = URLRequest(url: components.url!)
         return try await perform(request, decoding: ExampleListResponse.self)
+    }
+
+    // MARK: - Per-example predictions
+
+    func fetchPredictions() async throws -> PredictionsResponse {
+        if Self.IS_MOCKING_SERVER {
+            simulateLog("GET", path: "/model/predictions")
+            return PredictionsResponse(predictions: [], modelId: nil, poseModelPresent: false)
+        }
+        let request = URLRequest(url: baseURL.appendingPathComponent("model/predictions"))
+        return try await perform(request, decoding: PredictionsResponse.self)
     }
 
     // MARK: - Update Example (Relabel)

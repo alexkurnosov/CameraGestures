@@ -2,6 +2,14 @@ import Foundation
 import Combine
 import CameraGestures
 
+enum PhaseFilter: String, CaseIterable, Identifiable {
+    case all         = "All"
+    case gesturesOnly = "Gestures"
+    case posesOnly   = "Poses"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 class FilmPlaybackManager: ObservableObject {
 
@@ -11,6 +19,8 @@ class FilmPlaybackManager: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentIndex: Int = 0
     @Published var filterGestureId: String? = nil
+    @Published var phaseFilter: PhaseFilter = .all
+    @Published var errorsOnly: Bool = false
 
     // MARK: - Dependencies (set via configure)
 
@@ -33,7 +43,26 @@ class FilmPlaybackManager: ObservableObject {
     var filteredExamples: [TrainingExample] {
         guard let trainingDataManager else { return [] }
         return trainingDataManager.trainingExamples
-            .filter { filterGestureId == nil || $0.gestureId == filterGestureId }
+            .filter { ex in
+                // Gesture filter
+                if let gid = filterGestureId, ex.gestureId != gid { return false }
+                // Phase filter
+                switch phaseFilter {
+                case .posesOnly:
+                    let p = trainingDataManager.phaseByExample[ex.id] ?? "phase3"
+                    if p != "pose" { return false }
+                case .gesturesOnly:
+                    let p = trainingDataManager.phaseByExample[ex.id] ?? "phase3"
+                    if p != "phase3" { return false }
+                case .all:
+                    break
+                }
+                // Prediction error filter
+                if errorsOnly {
+                    guard trainingDataManager.predictionByExample[ex.id]?.isError == true else { return false }
+                }
+                return true
+            }
             .sorted { $0.handfilm.startTime > $1.handfilm.startTime }
     }
 
@@ -107,6 +136,20 @@ class FilmPlaybackManager: ObservableObject {
     func setFilter(_ gestureId: String?) {
         stopPlayback()
         filterGestureId = gestureId
+        currentIndex = 0
+        currentFrameIndex = 0
+    }
+
+    func setPhaseFilter(_ filter: PhaseFilter) {
+        stopPlayback()
+        phaseFilter = filter
+        currentIndex = 0
+        currentFrameIndex = 0
+    }
+
+    func setErrorsOnly(_ value: Bool) {
+        stopPlayback()
+        errorsOnly = value
         currentIndex = 0
         currentFrameIndex = 0
     }

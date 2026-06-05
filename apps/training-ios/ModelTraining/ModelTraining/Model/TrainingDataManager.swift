@@ -38,6 +38,20 @@ class TrainingDataManager: ObservableObject {
     /// Films that failed the quality threshold. Stored locally only; never uploaded.
     @Published var failedExamples: [FailedHandFilm] = []
 
+    /// Phase for each downloaded example: "phase3" (full handfilm) or "pose" (single repShot).
+    /// Keyed by example UUID; populated when examples are downloaded from the server.
+    @Published var phaseByExample: [UUID: String] = [:]
+
+    /// Per-example predictions fetched from /model/predictions.
+    /// Keyed by example UUID; populated on demand when the viewer's error filter is used.
+    @Published var predictionByExample: [UUID: PredictionEntry] = [:]
+
+    /// True while a /model/predictions request is in flight.
+    @Published var isLoadingPredictions = false
+
+    /// Non-nil if the last /model/predictions fetch failed.
+    @Published var predictionsError: String?
+
     // MARK: - Collection Progress
 
     @Published var currentSamples = 0
@@ -361,6 +375,8 @@ class TrainingDataManager: ObservableObject {
         trainingExamples.removeAll { $0.id == id }
         pendingExamples.removeAll { $0.id == id }
         currentDataset?.removeExample(id: id)
+        phaseByExample.removeValue(forKey: id)
+        predictionByExample.removeValue(forKey: id)
         savePendingExamples()
 
         // If this was a server-downloaded example, schedule deletion on next sync
@@ -435,10 +451,12 @@ class TrainingDataManager: ObservableObject {
 
         let response = try await client.downloadExamples(gestureId: gestureId)
 
-        let downloaded: [TrainingExample] = response.examples.compactMap { serverExample in
-            guard let uuid = UUID(uuidString: serverExample.id) else { return nil }
+        // Build (TrainingExample, phase) pairs together so we can update phaseByExample atomically
+        var downloadedWithPhase: [(TrainingExample, String)] = []
+        for serverExample in response.examples {
+            guard let uuid = UUID(uuidString: serverExample.id) else { continue }
             let handFilm = self.convertServerHandFilm(serverExample.handFilm)
-            return TrainingExample(
+            let example = TrainingExample(
                 id: uuid,
                 handfilm: handFilm,
                 gestureId: serverExample.gestureId,
@@ -446,12 +464,20 @@ class TrainingDataManager: ObservableObject {
                 sessionId: serverExample.sessionId,
                 timestamp: serverExample.createdAt
             )
+            downloadedWithPhase.append((example, serverExample.phase))
         }
+        let downloaded = downloadedWithPhase.map { $0.0 }
 
         await MainActor.run {
             // Remove existing local examples for this gesture (both pending and synced)
+            let removedIds = trainingExamples.filter { $0.gestureId == gestureId }.map { $0.id }
             trainingExamples.removeAll { $0.gestureId == gestureId }
             pendingExamples.removeAll { $0.gestureId == gestureId }
+            // Prune phase + prediction maps for removed examples
+            for id in removedIds {
+                phaseByExample.removeValue(forKey: id)
+                predictionByExample.removeValue(forKey: id)
+            }
             // Clear any pending operations for this gesture's examples
             pendingDeletions.removeAll { id in
                 !trainingExamples.contains { $0.id == id }
@@ -462,8 +488,12 @@ class TrainingDataManager: ObservableObject {
                 }
             }
 
-            // Add downloaded examples
+            // Add downloaded examples and their phase metadata
             trainingExamples.append(contentsOf: downloaded)
+            for (example, phase) in downloadedWithPhase {
+                phaseByExample[example.id] = phase
+            }
+
             if currentDataset != nil {
                 currentDataset?.examples.removeAll { $0.gestureId == gestureId }
                 for example in downloaded {
@@ -483,6 +513,35 @@ class TrainingDataManager: ObservableObject {
 
     private func convertServerHandFilm(_ serverFilm: ServerHandFilmResponse) -> HandFilm {
         HandFilm(server: serverFilm)
+    }
+
+    // MARK: - Prediction Errors
+
+    /// Fetch per-example predictions from the server and store them in predictionByExample.
+    /// Safe to call multiple times — subsequent calls refresh the data.
+    func fetchAndStorePredictions() async {
+        guard let client = apiClient else { return }
+        await MainActor.run {
+            isLoadingPredictions = true
+            predictionsError = nil
+        }
+        do {
+            let response = try await client.fetchPredictions()
+            await MainActor.run {
+                predictionByExample = Dictionary(
+                    uniqueKeysWithValues: response.predictions.compactMap { entry in
+                        guard let uuid = UUID(uuidString: entry.exampleId) else { return nil }
+                        return (uuid, entry)
+                    }
+                )
+                isLoadingPredictions = false
+            }
+        } catch {
+            await MainActor.run {
+                predictionsError = error.localizedDescription
+                isLoadingPredictions = false
+            }
+        }
     }
 
     // MARK: - Pending & Failed Persistence

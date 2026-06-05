@@ -18,6 +18,8 @@ struct HandFilmsView: View {
     @State private var failedFilmToDelete: FailedHandFilm? = nil
     @State private var showingFailedDeleteAlert = false
     @State private var showingClearAllFailedAlert = false
+    @State private var isDownloadingAll = false
+    @State private var downloadProgress: (n: Int, total: Int) = (0, 0)
 
     // MARK: - Display helpers
 
@@ -27,8 +29,17 @@ struct HandFilmsView: View {
     }
 
     private var filterLabel: String {
-        guard let id = playbackManager.filterGestureId else { return "All" }
-        return gestureRegistry.gestures.first { $0.id == id }?.name ?? id
+        var parts: [String] = []
+        if let id = playbackManager.filterGestureId {
+            parts.append(gestureRegistry.gestures.first { $0.id == id }?.name ?? id)
+        }
+        if playbackManager.phaseFilter != .all {
+            parts.append(playbackManager.phaseFilter.rawValue)
+        }
+        if playbackManager.errorsOnly {
+            parts.append("Errors")
+        }
+        return parts.isEmpty ? "All" : parts.joined(separator: " · ")
     }
 
     // MARK: - Body
@@ -52,7 +63,24 @@ struct HandFilmsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                filterMenu
+                HStack(spacing: 4) {
+                    if isDownloadingAll {
+                        HStack(spacing: 4) {
+                            ProgressView().scaleEffect(0.7)
+                            Text("\(downloadProgress.n)/\(downloadProgress.total)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        Button {
+                            Task { await downloadAll() }
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                        }
+                        .disabled(gestureRegistry.gestures.isEmpty)
+                    }
+                    filterMenu
+                }
             }
         }
         .onAppear {
@@ -309,9 +337,45 @@ struct HandFilmsView: View {
                     metaChip(label: "Captured", value: relativeTime(example.timestamp))
                 }
                 .padding(.horizontal)
+
+                // Prediction error badge
+                if let pred = trainingDataManager.predictionByExample[example.id], pred.isError {
+                    predictionErrorBadge(pred)
+                        .padding(.horizontal)
+                }
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func predictionErrorBadge(_ pred: PredictionEntry) -> some View {
+        let predictedName: String
+        if pred.phase == "pose", let clusterId = pred.predictedClusterId {
+            let gestureName = gestureRegistry.gestures.first { $0.id == pred.predictedGesture }?.name
+                ?? pred.predictedGesture
+            predictedName = "Cluster_\(clusterId) (\(gestureName))"
+        } else {
+            predictedName = gestureRegistry.gestures.first { $0.id == pred.predictedGesture }?.name
+                ?? pred.predictedGesture
+        }
+
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                    .font(.caption)
+                Text("Prediction error: \(predictedName)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.red)
+            }
+            Text("Measured on all stored examples — errors may be lower than validation-fold numbers in Model Metrics.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.08))
+        .cornerRadius(8)
     }
 
     private func metaChip(label: String, value: String) -> some View {
@@ -427,16 +491,15 @@ struct HandFilmsView: View {
 
     private var filterMenu: some View {
         Menu {
+            // --- Gesture filter ---
             Button {
                 playbackManager.setFilter(nil)
             } label: {
                 HStack {
-                    Text("All")
+                    Text("All Gestures")
                     if playbackManager.filterGestureId == nil { Image(systemName: "checkmark") }
                 }
             }
-
-            Divider()
 
             ForEach(gestureRegistry.gestures) { gesture in
                 Button {
@@ -448,6 +511,59 @@ struct HandFilmsView: View {
                     }
                 }
             }
+
+            Divider()
+
+            // --- Phase filter ---
+            ForEach(PhaseFilter.allCases) { pf in
+                Button {
+                    playbackManager.setPhaseFilter(pf)
+                } label: {
+                    HStack {
+                        Text(pf.rawValue)
+                        if playbackManager.phaseFilter == pf { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+
+            Divider()
+
+            // --- Prediction error filter ---
+            Button {
+                let turningOn = !playbackManager.errorsOnly
+                playbackManager.setErrorsOnly(turningOn)
+                if turningOn && trainingDataManager.predictionByExample.isEmpty
+                    && !trainingDataManager.isLoadingPredictions {
+                    Task { await trainingDataManager.fetchAndStorePredictions() }
+                }
+            } label: {
+                HStack {
+                    if trainingDataManager.isLoadingPredictions {
+                        ProgressView().scaleEffect(0.7)
+                        Text("Loading predictions…")
+                    } else {
+                        Text("With Prediction Errors")
+                        if playbackManager.errorsOnly { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+            .disabled(trainingDataManager.isLoadingPredictions)
+
+            if !trainingDataManager.predictionByExample.isEmpty {
+                Button {
+                    Task { await trainingDataManager.fetchAndStorePredictions() }
+                } label: {
+                    Label("Refresh Predictions", systemImage: "arrow.clockwise")
+                }
+                .disabled(trainingDataManager.isLoadingPredictions)
+            }
+
+            if let err = trainingDataManager.predictionsError {
+                Text("⚠ \(err)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
@@ -536,6 +652,22 @@ struct HandFilmsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Download All
+
+    private func downloadAll() async {
+        guard !isDownloadingAll else { return }
+        let gestures = gestureRegistry.gestures
+        guard !gestures.isEmpty else { return }
+        isDownloadingAll = true
+        downloadProgress = (0, gestures.count)
+        for (i, gesture) in gestures.enumerated() {
+            downloadProgress = (i, gestures.count)
+            try? await trainingDataManager.downloadExamplesFromServer(gestureId: gesture.id)
+        }
+        downloadProgress = (gestures.count, gestures.count)
+        isDownloadingAll = false
     }
 
     // MARK: - Helpers
