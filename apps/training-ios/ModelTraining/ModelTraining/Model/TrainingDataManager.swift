@@ -224,22 +224,30 @@ class TrainingDataManager: ObservableObject {
         saveFailedExamples()
     }
 
-    /// Upload all pending examples, push relabels, and push deletions to the server.
+    /// Fire-and-forget wrapper around `syncPendingToServer()` for UI buttons.
     func sendPendingToServer() {
-        let hasWork = !pendingExamples.isEmpty || !pendingDeletions.isEmpty || !pendingRelabels.isEmpty
-        guard hasWork, !isSendingToServer, let client = apiClient else { return }
-        isSendingToServer = true
-        uploadState = .uploading
+        Task { await syncPendingToServer() }
+    }
 
-        let batch = pendingExamples
-        let deletions = pendingDeletions
-        let relabels = pendingRelabels
-        pendingExamples = []
-        pendingDeletions = []
-        pendingRelabels = [:]
-        savePendingExamples()
-        savePendingDeletions()
-        savePendingRelabels()
+    /// Upload pending examples, push relabels, and push deletions to the server.
+    /// Awaitable, and only removes items from the pending queues once the server
+    /// has confirmed them — so a network failure keeps the work queued instead of
+    /// silently dropping it. Returns true if everything synced.
+    @discardableResult
+    func syncPendingToServer() async -> Bool {
+        guard let client = apiClient else { return false }
+
+        // Snapshot the queues (don't clear them yet — clear per-item on success).
+        let (batch, relabels, deletions, alreadyRunning) = await MainActor.run {
+            (pendingExamples, pendingRelabels, pendingDeletions, isSendingToServer)
+        }
+        guard !alreadyRunning else { return false }
+        guard !(batch.isEmpty && relabels.isEmpty && deletions.isEmpty) else { return true }
+
+        await MainActor.run {
+            isSendingToServer = true
+            uploadState = .uploading
+        }
 
         let parts = [
             batch.isEmpty ? nil : "\(batch.count) upload(s)",
@@ -248,62 +256,73 @@ class TrainingDataManager: ObservableObject {
         ].compactMap { $0 }.joined(separator: ", ")
         print("TrainingDataManager: syncing \(parts) to \(client.baseURL)")
 
-        Task.detached { [weak self, weak client] in
-            guard let client else { return }
-            var lastTotal = 0
+        var uploadedIds: [UUID] = []
+        var relabeledIds: [UUID] = []
+        var deletedIds: [UUID] = []
+        var failure: String? = nil
+        var lastTotal = 0
 
-            // 1. Upload new examples
-            for example in batch {
-                do {
-                    let response = try await client.uploadExample(example)
-                    lastTotal = response.totalForGesture
-                    print("TrainingDataManager: uploaded example id=\(response.id) gesture=\(example.gestureId) → server total for gesture: \(response.totalForGesture)")
-                } catch {
-                    print("TrainingDataManager: upload failed — \(error)")
-                    await MainActor.run {
-                        self?.uploadState = .failed(error.localizedDescription)
-                        self?.isSendingToServer = false
-                    }
-                    return
-                }
+        // 1. Upload new examples
+        for example in batch {
+            do {
+                let response = try await client.uploadExample(example)
+                lastTotal = response.totalForGesture
+                uploadedIds.append(example.id)
+            } catch {
+                failure = error.localizedDescription
+                print("TrainingDataManager: upload failed — \(error)")
+                break
             }
+        }
 
-            // 2. Push relabels
+        // 2. Push relabels
+        if failure == nil {
             for (id, newGestureId) in relabels {
                 do {
                     try await client.updateExample(id: id.uuidString, gestureId: newGestureId)
-                    print("TrainingDataManager: relabeled example \(id) → \(newGestureId)")
+                    relabeledIds.append(id)
                 } catch {
+                    failure = error.localizedDescription
                     print("TrainingDataManager: relabel failed for \(id) — \(error)")
-                    await MainActor.run {
-                        self?.uploadState = .failed(error.localizedDescription)
-                        self?.isSendingToServer = false
-                    }
-                    return
+                    break
                 }
             }
+        }
 
-            // 3. Push deletions
+        // 3. Push deletions
+        if failure == nil {
             for id in deletions {
                 do {
                     try await client.deleteExample(id: id.uuidString)
-                    print("TrainingDataManager: deleted example \(id) on server")
+                    deletedIds.append(id)
                 } catch {
+                    failure = error.localizedDescription
                     print("TrainingDataManager: delete failed for \(id) — \(error)")
-                    await MainActor.run {
-                        self?.uploadState = .failed(error.localizedDescription)
-                        self?.isSendingToServer = false
-                    }
-                    return
+                    break
                 }
             }
-
-            await MainActor.run {
-                self?.uploadState = .uploaded(total: lastTotal)
-                self?.isSendingToServer = false
-            }
-            await self?.fetchServerExampleCounts()
         }
+
+        await MainActor.run {
+            // Remove ONLY the items the server confirmed; the rest stay queued.
+            let uploadedSet = Set(uploadedIds)
+            pendingExamples.removeAll { uploadedSet.contains($0.id) }
+            for id in relabeledIds { pendingRelabels.removeValue(forKey: id) }
+            let deletedSet = Set(deletedIds)
+            pendingDeletions.removeAll { deletedSet.contains($0) }
+            savePendingExamples()
+            savePendingRelabels()
+            savePendingDeletions()
+
+            if let failure {
+                uploadState = .failed(failure)
+            } else {
+                uploadState = .uploaded(total: lastTotal)
+            }
+            isSendingToServer = false
+        }
+        await fetchServerExampleCounts()
+        return failure == nil
     }
 
     // MARK: - Server Sync
@@ -478,20 +497,38 @@ class TrainingDataManager: ObservableObject {
                 phaseByExample.removeValue(forKey: id)
                 predictionByExample.removeValue(forKey: id)
             }
-            // Clear any pending operations for this gesture's examples
-            pendingDeletions.removeAll { id in
-                !trainingExamples.contains { $0.id == id }
-            }
-            for key in pendingRelabels.keys {
-                if !trainingExamples.contains(where: { $0.id == key }) {
-                    pendingRelabels.removeValue(forKey: key)
-                }
-            }
+            // NOTE: do NOT prune pendingDeletions/pendingRelabels here. Those
+            // queues hold edits the server hasn't confirmed yet; dropping them
+            // is exactly what made deleted examples reappear after a download.
+            // Callers sync first (see downloadAll), so the queues are normally
+            // empty here; if a prior sync failed, we honor them below instead.
 
             // Add downloaded examples and their phase metadata
             trainingExamples.append(contentsOf: downloaded)
             for (example, phase) in downloadedWithPhase {
                 phaseByExample[example.id] = phase
+            }
+
+            // Reconcile still-queued local edits so the view reflects intent even
+            // if a prior sync failed (offline): drop queued deletions, apply
+            // queued relabels onto the freshly-pulled rows.
+            if !pendingDeletions.isEmpty {
+                let delSet = Set(pendingDeletions)
+                trainingExamples.removeAll { delSet.contains($0.id) }
+            }
+            if !pendingRelabels.isEmpty {
+                for i in trainingExamples.indices {
+                    guard let newGestureId = pendingRelabels[trainingExamples[i].id] else { continue }
+                    let old = trainingExamples[i]
+                    trainingExamples[i] = TrainingExample(
+                        id: old.id,
+                        handfilm: old.handfilm,
+                        gestureId: newGestureId,
+                        userId: old.userId,
+                        sessionId: old.sessionId,
+                        timestamp: old.timestamp
+                    )
+                }
             }
 
             if currentDataset != nil {

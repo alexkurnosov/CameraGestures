@@ -111,13 +111,21 @@ struct HandFilmsView: View {
                 onSelect: { newId in
                     if let example = playbackManager.currentExample {
                         trainingDataManager.relabelExample(id: example.id, newGestureId: newId)
+                        // Push the relabel to the server right away so it sticks
+                        // across the next download.
+                        Task { await trainingDataManager.syncPendingToServer() }
                     }
                 }
             )
             .environmentObject(gestureRegistry)
         }
         .alert("Delete Film?", isPresented: $showingDeleteAlert) {
-            Button("Delete", role: .destructive) { playbackManager.deleteCurrentExample() }
+            Button("Delete", role: .destructive) {
+                playbackManager.deleteCurrentExample()
+                // Push the deletion to the server right away so it doesn't come
+                // back on the next download.
+                Task { await trainingDataManager.syncPendingToServer() }
+            }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This HandFilm will be permanently removed from the local collection.")
@@ -773,6 +781,9 @@ struct HandFilmsView: View {
         let gestures = gestureRegistry.gestures
         guard !gestures.isEmpty else { return }
         isDownloadingAll = true
+        // Flush any queued local edits (relabels/deletions/uploads) FIRST, so the
+        // re-pull below reflects them instead of resurrecting deleted examples.
+        await trainingDataManager.syncPendingToServer()
         downloadProgress = (0, gestures.count)
         for (i, gesture) in gestures.enumerated() {
             downloadProgress = (i, gestures.count)

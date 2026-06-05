@@ -213,6 +213,8 @@ struct ServerExamplesView: View {
         downloadError = nil
         Task {
             do {
+                // Flush queued local edits before re-pulling so they aren't lost.
+                await trainingDataManager.syncPendingToServer()
                 let count = try await trainingDataManager.downloadExamplesFromServer(gestureId: gesture.id)
                 await MainActor.run {
                     isDownloading = false
