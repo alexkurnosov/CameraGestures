@@ -1,8 +1,0 @@
-# Example Caddyfile — generated automatically by setup_caddy.sh.
-# Uses Cloudflare DNS-01 challenge: ports 80 and 443 do not need to be free.
-gestures.example.com {
-    tls {
-        dns cloudflare {env.CF_API_TOKEN}
-    }
-    reverse_proxy server:8000
-}

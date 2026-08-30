@@ -4,9 +4,9 @@
 # Format: MAJOR.MINOR.BUILD. BUILD = git rev-list --count HEAD + 1
 # (the count after this commit lands).
 #
-# Also mirrors the root VERSION into server/VERSION so the Docker build
-# context (server/) contains it. The iOS app reads root VERSION directly
-# via an Xcode build phase.
+# The iOS app reads VERSION directly via an Xcode build phase. The training
+# server lives in the sibling repo CameraGestures-server and carries its own
+# VERSION file.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 
@@ -16,7 +16,6 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 version_file="VERSION"
-server_version_file="server/VERSION"
 
 if [ ! -f "$version_file" ]; then
     echo "pre-commit: $version_file missing" >&2
@@ -33,6 +32,5 @@ next_build=$(($(git rev-list --count HEAD) + 1))
 new_version="${prefix}.${next_build}"
 
 printf '%s\n' "$new_version" > "$version_file"
-printf '%s\n' "$new_version" > "$server_version_file"
 
-git add "$version_file" "$server_version_file"
+git add "$version_file"

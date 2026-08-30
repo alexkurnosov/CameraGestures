@@ -53,7 +53,7 @@ Converts raw BGRA8 camera frames into streams of `HandShot` structs (21 3D landm
 ### GestureModel (`core/src/gesture_model/`)
 Loads a server-trained `.tflite` and classifies `HandFilm` sequences. Components:
 
-- `FeaturePreprocessor` — produces a `(60, 126)` sequence array and a 256-feature summary. Bit-for-bit equivalent to `server/ml/preprocessor.py`.
+- `FeaturePreprocessor` — produces a `(60, 126)` sequence array and a 256-feature summary. Bit-for-bit equivalent to `CameraGestures-server/server/ml/preprocessor.py`.
 - `PoseManifest` — JSON-defined geometric features.
 - `TFLiteBackend` — wraps `tflite::Interpreter` from vendored LiteRT.
 - `GestureModel` — top-level classifier: `classify(handfilm) → GesturePrediction`.
@@ -100,13 +100,11 @@ CameraGestures/
 │   ├── android/                 # Gradle module (AAR) + Kotlin wrappers + JNI bridge
 │   └── macos/                   # Swift wrappers + CameraGestures.framework
 │
-├── apps/                        # Apps that consume the library
-│   ├── training-ios/            # Training App v2 — sole pod dependency: CameraGestures
-│   ├── demo-ios/                # Minimal iOS demo (camera + gesture overlay)
-│   ├── demo-android/            # Minimal Android demo
-│   └── demo-macos/              # Minimal macOS demo
-│
-└── server/                      # Python FastAPI training server (unchanged)
+└── apps/                        # Apps that consume the library
+    ├── training-ios/            # Training App v2 — sole pod dependency: CameraGestures
+    ├── demo-ios/                # Minimal iOS demo (camera + gesture overlay)
+    ├── demo-android/            # Minimal Android demo
+    └── demo-macos/              # Minimal macOS demo
 ```
 
 ---
@@ -139,41 +137,15 @@ CameraGestures/
 
 ---
 
-## Python Training Server (`server/`)
+## Python Training Server
 
-Receives labelled `HandFilm` examples from the iOS Training App, trains a Keras MLP (Phase 1) or LSTM (Phase 2) model, and exports a `.tflite` for download.
+The training server lives in the sibling repo **`CameraGestures-server`**. It receives labelled `HandFilm` examples from the iOS Training App, trains a Keras MLP (Phase 1) or LSTM (Phase 2) model, and exports a `.tflite` for download. See that repo for setup, API docs, and deployment instructions.
 
-**Stack:** Python 3.11, FastAPI + uvicorn, SQLite via SQLAlchemy, Docker.
+### ML Pipeline (key files in `CameraGestures-server/server/`)
 
-### Running
-
-```bash
-cd server
-cp .env.example .env
-# Set JWT_SECRET and REGISTRATION_TOKEN
-docker compose up --build
-```
-
-### Key API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/health` | No | Liveness check |
-| `POST` | `/auth/register` | No | Per-device JWT |
-| `POST` | `/examples` | Yes | Upload labelled HandFilm |
-| `GET` | `/examples/stats` | Yes | Per-gesture counts |
-| `POST` | `/train` | Yes | Trigger training |
-| `GET` | `/model/status` | Yes | Poll training state |
-| `GET` | `/model/download` | Yes | Download `.tflite` |
-| `GET` | `/model/info` | Yes | Accuracy, F1, confusion matrix |
-
-Interactive docs: `http://localhost:8000/docs`
-
-### ML Pipeline
-
-- `server/ml/preprocessor.py` — `HandFilm` → `(60, 126)` numpy array + 256-feature summary. The C++ `FeaturePreprocessor` must match this output bit-for-bit.
-- `server/ml/trainer_rf_mlp.py` — Phase 1: shallow MLP on stat features → `.tflite`.
-- `server/ml/trainer_lstm.py` — Phase 2: LSTM on full sequence → `.tflite`.
+- `ml/preprocessor.py` — `HandFilm` → `(60, 126)` numpy array + 256-feature summary. The C++ `FeaturePreprocessor` must match this output bit-for-bit.
+- `ml/trainer_rf_mlp.py` — Phase 1: shallow MLP on stat features → `.tflite`.
+- `ml/trainer_lstm.py` — Phase 2: LSTM on full sequence → `.tflite`.
 
 ---
 

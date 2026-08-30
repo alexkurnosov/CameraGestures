@@ -33,13 +33,11 @@ CameraGestures/
 │   ├── android/             # Gradle module + Kotlin wrappers + JNI bridge
 │   └── macos/               # Swift wrappers (uses Apple Vision for hand detection)
 │
-├── apps/                    # Apps that consume the library
-│   ├── training-ios/        # Training App v2 — iOS SwiftUI app (sole dependency: CameraGestures pod)
-│   ├── demo-ios/            # Minimal iOS demo: camera + gesture overlay
-│   ├── demo-android/        # Minimal Android demo
-│   └── demo-macos/          # Minimal macOS demo
-│
-└── server/                  # Python FastAPI training server (unchanged)
+└── apps/                    # Apps that consume the library
+    ├── training-ios/        # Training App v2 — iOS SwiftUI app (sole dependency: CameraGestures pod)
+    ├── demo-ios/            # Minimal iOS demo: camera + gesture overlay
+    ├── demo-android/        # Minimal Android demo
+    └── demo-macos/          # Minimal macOS demo
 ```
 
 ## Building
@@ -95,35 +93,11 @@ Each demo bundles a server-trained `gesture_model.tflite` and `gestures.json` an
 
 ## Training Server
 
-The Python FastAPI server trains `.tflite` models from uploaded hand gesture examples.
-
-```bash
-cd server
-cp .env.example .env
-# Set JWT_SECRET and REGISTRATION_TOKEN in .env
-docker compose up --build
-```
-
-Interactive docs: `http://localhost:8000/docs`
-
-### API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/health` | No | Liveness check |
-| `POST` | `/auth/register` | No | Register device, receive JWT |
-| `POST` | `/examples` | Yes | Upload labelled HandFilm |
-| `GET` | `/examples/stats` | Yes | Per-gesture example counts |
-| `DELETE` | `/examples` | Yes | Wipe examples |
-| `POST` | `/train` | Yes | Trigger training |
-| `GET` | `/model/status` | Yes | Poll training state |
-| `GET` | `/model/download` | Yes | Download `gesture_model.tflite` |
-| `GET` | `/model/info` | Yes | Model metadata |
-| `DELETE` | `/model` | Yes | Wipe all model versions |
+The Python FastAPI training server lives in the sibling repo **`CameraGestures-server`**. It trains `.tflite` models from uploaded hand gesture examples. See that repo for setup, deployment, and API documentation.
 
 ## Versioning
 
-The repo-root `VERSION` file (`MAJOR.MINOR.BUILD`) is the single source of truth for the library version. A pre-commit hook bumps `BUILD` on each commit and mirrors it to `server/VERSION`. Enable once per clone:
+The repo-root `VERSION` file (`MAJOR.MINOR.BUILD`) is the single source of truth for the library version. A pre-commit hook bumps `BUILD` on each commit. The training server repo carries its own independent `VERSION`. Enable once per clone:
 
 ```bash
 git config core.hooksPath .githooks
