@@ -539,7 +539,11 @@ public class HandGestureRecognizing {
         }, selfPtr.toOpaque())
 
         // Holds telemetry callback
-        cg_recognizer_set_holds_telemetry_callback(ref, { ctx, poseId, conf, seqPtr, seqLen, matchedPtr in
+        // The C callback also passes rep_shot, normalized_coords and their length
+        // (landmark review data, non-null only with retain_landmarks_for_review).
+        // macOS HoldsTelemetry has no fields for them yet, so they are ignored
+        // here; the iOS binding surfaces them as repShot / normalizedCoords.
+        cg_recognizer_set_holds_telemetry_callback(ref, { ctx, poseId, conf, seqPtr, seqLen, matchedPtr, _, _, _ in
             guard let ctx else { return }
             let hgr = Unmanaged<HandGestureRecognizing>.fromOpaque(ctx).takeUnretainedValue()
             var seq: [Int] = []
