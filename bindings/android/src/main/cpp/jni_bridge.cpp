@@ -14,6 +14,7 @@
 #include "CameraGestures/HandsRecognizing.h"
 #include "CameraGestures/GestureModel.h"
 #include "CameraGestures/HandGestureRecognizing.h"
+#include <vector>
 
 #define TAG "CameraGestures"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -185,6 +186,42 @@ Java_com_cameragestures_GestureModelNative_load(
     env->ReleaseStringUTFChars(jtflite,   tflite);
     env->ReleaseStringUTFChars(jregistry, registry);
     if (!ref) LOGE("GestureModel: cg_gesture_model_load failed (TFLite alloc or dim mismatch)");
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(ref));
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_cameragestures_GestureModelNative_loadWithIds(
+    JNIEnv* env, jobject, jstring jtflite, jobjectArray jids)
+{
+    const char* tflite = env->GetStringUTFChars(jtflite, nullptr);
+    const jsize count  = jids ? env->GetArrayLength(jids) : 0;
+    LOGI("GestureModel: loading tflite=%s with %d server-supplied class ids", tflite, (int)count);
+
+    // Hold the UTF chars alive across the call; the core copies them.
+    std::vector<jstring>     jstrs(static_cast<size_t>(count));
+    std::vector<const char*> ids(static_cast<size_t>(count));
+    for (jsize i = 0; i < count; ++i) {
+        jstrs[i] = (jstring)env->GetObjectArrayElement(jids, i);
+        ids[i]   = jstrs[i] ? env->GetStringUTFChars(jstrs[i], nullptr) : nullptr;
+    }
+
+    cg_gesture_model_ref ref = nullptr;
+    if (count > 0) {
+        ref = cg_gesture_model_load_with_ids(tflite, ids.data(), (int)count);
+    } else {
+        LOGE("GestureModel: loadWithIds called with an empty class list");
+    }
+
+    for (jsize i = 0; i < count; ++i) {
+        if (jstrs[i]) {
+            if (ids[i]) env->ReleaseStringUTFChars(jstrs[i], ids[i]);
+            env->DeleteLocalRef(jstrs[i]);
+        }
+    }
+    env->ReleaseStringUTFChars(jtflite, tflite);
+
+    if (!ref) LOGE("GestureModel: cg_gesture_model_load_with_ids failed "
+                   "(TFLite alloc, or class count != model output width)");
     return static_cast<jlong>(reinterpret_cast<uintptr_t>(ref));
 }
 

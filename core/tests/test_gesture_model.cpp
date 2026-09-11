@@ -422,3 +422,44 @@ TEST(Parity, FeatureMatrixRow0MatchesPython) {
     }
     EXPECT_EQ(mismatches, 0) << mismatches << " / " << CG_FEATURES_PER_FRAME << " values exceeded epsilon";
 }
+
+// ---------------------------------------------------------------------------
+// Class list: who decides how model outputs map to gestures
+// ---------------------------------------------------------------------------
+// The legacy loader reconstructs the server's class list from the on-device
+// registry.  That reconstruction is a guess about how the server trained, and
+// on 2026-09-09 it was wrong: the server dropped the synthetic "_none" class,
+// the widths stopped matching, and runPhase3 refused every model — silently,
+// since it only returns false.  Every client stopped predicting gestures.
+//
+// These tests pin the guess so a change to it is deliberate.  They cannot catch
+// the server changing its own class set; nothing on-device can.  That is the
+// argument for cg_gesture_model_load_with_ids, which takes the server's list
+// verbatim and needs no guess at all.
+
+#include "GestureModel.hpp"
+
+TEST(GestureClassList, LegacyLoaderAppendsNoneAndSorts) {
+    auto ids = GestureModel::legacyRegistryClassList(
+        {"stop", "ok", "thumbs_up", "pan_right", "point_left"});
+
+    // "_" (0x5F) precedes lowercase letters, so the synthetic class sorts first
+    // and shifts every real gesture's index by one.
+    const std::vector<std::string> expected{
+        "_none", "ok", "pan_right", "point_left", "stop", "thumbs_up"};
+    EXPECT_EQ(ids, expected);
+}
+
+TEST(GestureClassList, LegacyLoaderWidthIsRegistryPlusOne) {
+    // The width contract: a model with exactly n_registry outputs — which is
+    // what the server produces without "_none" — can never load through the
+    // legacy path.
+    auto ids = GestureModel::legacyRegistryClassList({"ok", "stop"});
+    EXPECT_EQ(ids.size(), 3u);
+}
+
+TEST(GestureClassList, LegacyLoaderIsIdempotentOnARegistryThatAlreadyHasNone) {
+    auto ids = GestureModel::legacyRegistryClassList({"ok", "_none"});
+    const std::vector<std::string> expected{"_none", "ok"};
+    EXPECT_EQ(ids, expected);
+}

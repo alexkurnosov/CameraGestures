@@ -38,6 +38,19 @@ bool GestureModel::loadPoseModel(const std::string& tflite_path,
 }
 
 /* -------------------------------------------------------------------------
+ * legacyRegistryClassList — the guess the registry loader makes
+ * ---------------------------------------------------------------------- */
+
+std::vector<std::string> GestureModel::legacyRegistryClassList(
+    std::vector<std::string> registry_ids) {
+    registry_ids.emplace_back(NONE_GESTURE_ID);
+    std::sort(registry_ids.begin(), registry_ids.end());
+    registry_ids.erase(std::unique(registry_ids.begin(), registry_ids.end()),
+                       registry_ids.end());
+    return registry_ids;
+}
+
+/* -------------------------------------------------------------------------
  * runPhase3 — shared inference helper
  * ---------------------------------------------------------------------- */
 
@@ -205,28 +218,49 @@ struct cg_gesture_model_s {
 
 extern "C" {
 
+cg_gesture_model_ref cg_gesture_model_load_with_ids(const char* tflite_path,
+                                                      const char* const* gesture_ids,
+                                                      int count) {
+    if (!tflite_path || !gesture_ids || count <= 0) return nullptr;
+
+    // Verbatim: the order is the model's output order, which only the server
+    // knows.  Sorting or appending here would recreate the bug this function
+    // exists to remove.
+    std::vector<std::string> ids;
+    ids.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        if (!gesture_ids[i]) return nullptr;
+        ids.emplace_back(gesture_ids[i]);
+    }
+
+    auto* ref = new cg_gesture_model_s{};
+    if (!ref->impl.load(tflite_path, std::move(ids))) {
+        delete ref;
+        return nullptr;
+    }
+    return ref;
+}
+
 cg_gesture_model_ref cg_gesture_model_load(const char* tflite_path,
                                              const char* registry_path) {
     if (!tflite_path || !registry_path) return nullptr;
 
-    // Build gesture_ids from the registry: load all IDs, add _none, sort alphabetically.
     cg_registry_ref reg = cg_registry_create(registry_path);
     if (!reg) return nullptr;
 
-    std::vector<std::string> ids;
+    std::vector<std::string> registry_ids;
     size_t count = cg_registry_count(reg);
-    ids.reserve(count + 1);
+    registry_ids.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         cg_gesture_definition def{};
         if (cg_registry_get(reg, i, &def)) {
-            ids.emplace_back(def.id);
+            registry_ids.emplace_back(def.id);
         }
     }
     cg_registry_destroy(reg);
 
-    ids.emplace_back("_none");
-    std::sort(ids.begin(), ids.end());
-    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    std::vector<std::string> ids =
+        GestureModel::legacyRegistryClassList(std::move(registry_ids));
 
     auto* ref = new cg_gesture_model_s{};
     if (!ref->impl.load(tflite_path, std::move(ids))) {

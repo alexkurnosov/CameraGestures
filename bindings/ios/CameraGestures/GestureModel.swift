@@ -113,22 +113,48 @@ public class GestureModel {
     // MARK: Model loading
 
     /// Load the gesture (.tflite) model.
-    /// registryPath: path to the gestures.json whose IDs define the output class ordering.
-    public func loadModel(from modelPath: String, registryPath: String? = nil) throws {
-        let regPath = registryPath ?? self.registryPath ?? defaultRegistryPath()
+    ///
+    /// - Parameters:
+    ///   - gestureIds: the class list the server shipped with this model, from
+    ///     the `gesture_ids.json` sidecar, in the model's output order. **Always
+    ///     pass this when you have it.** Only the server knows how its model was
+    ///     trained; deriving the list locally is a guess that broke every client
+    ///     on 2026-09-09, when the server stopped emitting the `_none` class and
+    ///     the width check in `runPhase3` silently rejected every model.
+    ///   - registryPath: legacy fallback used only when `gestureIds` is empty —
+    ///     IDs are read from gestures.json, `_none` appended, and sorted.
+    public func loadModel(from modelPath: String,
+                          registryPath: String? = nil,
+                          gestureIds: [String] = []) throws {
         guard FileManager.default.fileExists(atPath: modelPath) else {
             throw GestureModelError.invalidModelPath
         }
-        guard FileManager.default.fileExists(atPath: regPath) else {
-            throw GestureModelError.invalidModelPath
+
+        let ref: cg_gesture_model_ref?
+        if !gestureIds.isEmpty {
+            let cStrings: [UnsafeMutablePointer<CChar>?] = gestureIds.map { strdup($0) }
+            defer { cStrings.forEach { free($0) } }
+            ref = cStrings.withUnsafeBufferPointer { buf -> cg_gesture_model_ref? in
+                guard let base = buf.baseAddress else { return nil }
+                return base.withMemoryRebound(to: UnsafePointer<CChar>?.self,
+                                              capacity: buf.count) { p in
+                    cg_gesture_model_load_with_ids(modelPath, p, Int32(buf.count))
+                }
+            }
+        } else {
+            let regPath = registryPath ?? self.registryPath ?? defaultRegistryPath()
+            guard FileManager.default.fileExists(atPath: regPath) else {
+                throw GestureModelError.invalidModelPath
+            }
+            ref = cg_gesture_model_load(modelPath, regPath)
+            self.registryPath = regPath
         }
 
-        if let old = modelRef { cg_gesture_model_destroy(old); modelRef = nil }
-
-        let ref = cg_gesture_model_load(modelPath, regPath)
+        // Only drop the old model once the new one is known good, so a failed
+        // load leaves the previously working model in place.
         guard let ref else { throw GestureModelError.predictionFailed }
+        if let old = modelRef { cg_gesture_model_destroy(old) }
         modelRef = ref
-        self.registryPath = regPath
 
         // Read geom_coef from preprocessor.js (the server bakes the training value into it).
         // This keeps Stage 5 inference consistent with the JS-based V1 client.
@@ -260,9 +286,15 @@ public class GestureModel {
 
     // MARK: Configuration
 
+    /// No-op, kept for V1 API compatibility.
+    ///
+    /// This never set the model's class list and cannot: the list is fixed at
+    /// load time because it decides how output indices map to gestures. Pass
+    /// `gestureIds:` to `loadModel(from:registryPath:gestureIds:)` instead —
+    /// calling this and expecting the server's list to take effect is what let
+    /// the 2026-09-09 class-list mismatch reach the field.
+    @available(*, deprecated, message: "Pass gestureIds: to loadModel(from:registryPath:gestureIds:)")
     public func setSupportedGestures(_ ids: [String]) {
-        // In the new C++ model, gesture IDs come from the registry at load time.
-        // This method exists for API compatibility with V1; it is a no-op here.
         _ = ids
     }
 

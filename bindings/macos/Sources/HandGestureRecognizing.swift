@@ -430,8 +430,8 @@ public class HandGestureRecognizing {
     public func loadModel(from path: String,
                           registryPath: String? = nil,
                           gestureIds: [String] = []) throws {
-        try gestureModel.loadModel(from: path, registryPath: registryPath)
-        if !gestureIds.isEmpty { gestureModel.setSupportedGestures(gestureIds) }
+        try gestureModel.loadModel(from: path, registryPath: registryPath,
+                                   gestureIds: gestureIds)
         pipelineQueue.async { [weak self] in
             guard let self, let ref = self.recognizerRef else { return }
             cg_recognizer_set_gesture_model(ref, self.gestureModel.modelRef)

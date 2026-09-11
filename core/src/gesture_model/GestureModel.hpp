@@ -60,6 +60,14 @@ public:
 
     int poseClassCount() const { return static_cast<int>(pose_cluster_ids_.size()); }
 
+    /* The class list the legacy registry loader derives: registry IDs plus
+     * "_none", de-duplicated and sorted.  Exposed so the guess this makes about
+     * the server's training can be pinned by a test — it is a reconstruction of
+     * a contract the server owns, and it has already been wrong once in the
+     * field.  Prefer cg_gesture_model_load_with_ids, which needs no guess. */
+    static std::vector<std::string> legacyRegistryClassList(
+        std::vector<std::string> registry_ids);
+
 private:
     FeaturePreprocessor              preprocessor_;
     TFLiteBackend                    backend_;

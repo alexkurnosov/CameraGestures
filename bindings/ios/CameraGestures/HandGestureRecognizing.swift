@@ -451,9 +451,12 @@ public class HandGestureRecognizing {
 
     // MARK: Model management
 
+    /// - Parameter gestureIds: the server's class list for this model (from the
+    ///   `gesture_ids.json` sidecar), in the model's output order. Passed
+    ///   straight through to the loader — it defines how output indices map to
+    ///   gestures, so it must not be sorted or added to on the way.
     public func loadModel(from path: String, gestureIds: [String] = []) throws {
-        try gestureModel.loadModel(from: path)
-        if !gestureIds.isEmpty { gestureModel.setSupportedGestures(gestureIds) }
+        try gestureModel.loadModel(from: path, gestureIds: gestureIds)
         pipelineQueue.async { [weak self] in
             guard let self, let ref = self.recognizerRef else { return }
             cg_recognizer_set_gesture_model(ref, self.gestureModel.modelRef)
