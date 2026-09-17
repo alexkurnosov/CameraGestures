@@ -205,28 +205,6 @@ TEST(FeaturePreprocessor, PoseExtrasFiniteAndInRange) {
 }
 
 // ---------------------------------------------------------------------------
-// geomCoef: doubling it should double the extra block
-// ---------------------------------------------------------------------------
-
-TEST(FeaturePreprocessor, GeomCoefScalesExtras) {
-    cg_handshot s = makeShot(0.0);
-
-    FeaturePreprocessor pp1;
-    pp1.setGeomCoef(1.0f);
-    auto pv1 = pp1.poseVector(s);
-
-    FeaturePreprocessor pp2;
-    pp2.setGeomCoef(2.0f);
-    auto pv2 = pp2.poseVector(s);
-
-    // Coords (0..62) unchanged, extras (63..82) doubled
-    for (int i = 0; i < 63; ++i)
-        EXPECT_FLOAT_EQ(pv1[i], pv2[i]) << "coord " << i << " changed with geomCoef";
-    for (int i = 63; i < 83; ++i)
-        EXPECT_NEAR(pv2[i], 2.0f * pv1[i], 1e-5f) << "extra " << i-63 << " not doubled";
-}
-
-// ---------------------------------------------------------------------------
 // Constants cross-check
 // ---------------------------------------------------------------------------
 

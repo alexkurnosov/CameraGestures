@@ -174,11 +174,6 @@ FeaturePreprocessor::poseExtras(const Landmark& rel) const {
         out[idx++] = std::sqrt(dx*dx + dy*dy + dz*dz);
     }
 
-    // Apply geom_coef if not 1.0
-    if (geom_coef_ != 1.0f) {
-        for (auto& v : out) v *= geom_coef_;
-    }
-
     return out;
 }
 

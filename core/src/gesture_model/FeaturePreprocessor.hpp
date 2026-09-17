@@ -14,15 +14,11 @@ inline constexpr int CG_SUMMARY_FEATURES   = 296;
 
 /*
  * Pure C++ port of preprocessor.js.
- * All methods are const and stateless except for geom_coef_.
- * Thread-safe after construction provided geom_coef_ is set before concurrent use.
+ * All methods are const and stateless, so instances are thread-safe.
  */
 class FeaturePreprocessor {
 public:
     FeaturePreprocessor() = default;
-
-    void  setGeomCoef(float c) { geom_coef_ = c; }
-    float geomCoef()     const { return geom_coef_; }
 
     /* Flat array of TARGET_FRAMES * FEATURES_PER_FRAME = 8760 floats.
      * Matches featureMatrix() in preprocessor.js. */
@@ -35,8 +31,6 @@ public:
     std::vector<float> poseVector(const cg_handshot& shot) const;
 
 private:
-    float geom_coef_ = 1.0f;
-
     using Vec3     = std::array<float, 3>;
     using Landmark = std::array<Vec3, CG_LANDMARKS>;
 

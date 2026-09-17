@@ -59,7 +59,6 @@ class AppSettings: ObservableObject {
     private static let minInViewDurationKey = "minInViewDuration"
     private static let isThresholdLockedKey = "isThresholdLocked"
     private static let balanceStrategyKey = "balanceStrategy"
-    private static let geomCoefKey = "geomCoef"
 
     /// Minimum seconds the hand must be visible within a capture window for the
     /// resulting HandFilm to be accepted as a training example.
@@ -78,14 +77,6 @@ class AppSettings: ObservableObject {
     /// Sent with every `POST /train`.
     @Published var balanceStrategy: BalanceStrategy {
         didSet { UserDefaults.standard.set(balanceStrategy.rawValue, forKey: Self.balanceStrategyKey) }
-    }
-
-    /// Multiplier applied to the 20 geometric extras (distances + angles) in the
-    /// preprocessor before the model sees them. Sent with `POST /train` and
-    /// `POST /train/pose`. The server bakes the value into the served preprocessor.js,
-    /// so iOS inference picks it up automatically on next model download.
-    @Published var geomCoef: Double {
-        didSet { UserDefaults.standard.set(geomCoef, forKey: Self.geomCoefKey) }
     }
 
     // MARK: - Device model timestamps
@@ -121,8 +112,6 @@ class AppSettings: ObservableObject {
         isThresholdLocked = UserDefaults.standard.bool(forKey: Self.isThresholdLockedKey)
         let storedStrategy = UserDefaults.standard.string(forKey: Self.balanceStrategyKey) ?? ""
         balanceStrategy = BalanceStrategy(rawValue: storedStrategy) ?? .classWeight
-        let storedCoef = UserDefaults.standard.double(forKey: Self.geomCoefKey)
-        geomCoef = storedCoef > 0 ? storedCoef : 1.0
         enhancedPredictionMode = UserDefaults.standard.bool(forKey: Self.enhancedPredictionModeKey)
         bypassPhase2Filter = UserDefaults.standard.bool(forKey: Self.bypassPhase2FilterKey)
         let gestureTS = UserDefaults.standard.double(forKey: Self.gestureModelLoadedAtKey)

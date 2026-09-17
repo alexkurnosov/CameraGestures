@@ -155,21 +155,6 @@ public class GestureModel {
         guard let ref else { throw GestureModelError.predictionFailed }
         if let old = modelRef { cg_gesture_model_destroy(old) }
         modelRef = ref
-
-        // Read geom_coef from preprocessor.js (the server bakes the training value into it).
-        // This keeps Stage 5 inference consistent with the JS-based V1 client.
-        let jsPath = URL(fileURLWithPath: modelPath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("preprocessor.js").path
-        if let js = try? String(contentsOfFile: jsPath, encoding: .utf8),
-           let range = js.range(of: #"var GEOM_COEF = ([\d.]+);"#,
-                                options: .regularExpression),
-           let numRange = js.range(of: #"[\d.]+"#, options: .regularExpression,
-                                   range: range),
-           let coef = Double(js[numRange]) {
-            cg_gesture_model_set_geom_coef(ref, Float(coef))
-            print("[GestureModel] geom_coef=\(Float(coef)) applied from preprocessor.js")
-        }
     }
 
     /// Load Phase-2 pose MLP alongside its manifest JSON.
@@ -295,6 +280,8 @@ public class GestureModel {
     /// the 2026-09-09 class-list mismatch reach the field.
     @available(*, deprecated, message: "Pass gestureIds: to loadModel(from:registryPath:gestureIds:)")
     public func setSupportedGestures(_ ids: [String]) {
+        // In the new C++ model, gesture IDs come from the registry at load time.
+        // This method exists for API compatibility with V1; it is a no-op here.
         _ = ids
     }
 

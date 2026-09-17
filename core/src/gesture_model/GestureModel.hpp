@@ -24,7 +24,6 @@ public:
     bool isLoaded()     const { return backend_.isLoaded(); }
     bool isPoseLoaded() const { return pose_backend_.isLoaded() && pose_manifest_.has_value(); }
 
-    void setGeomCoef(float c) { preprocessor_.setGeomCoef(c); }
 
     const std::vector<std::string>& gestureIds() const { return gesture_ids_; }
     const CgPoseManifest*           poseManifest() const {

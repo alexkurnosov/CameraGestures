@@ -334,10 +334,6 @@ int cg_gesture_model_predict_pose_all_scores(cg_gesture_model_ref ref,
                                            scores_out, scores_capacity, n_scores_out);
 }
 
-void cg_gesture_model_set_geom_coef(cg_gesture_model_ref ref, float coef) {
-    if (ref) ref->impl.setGeomCoef(coef);
-}
-
 int cg_gesture_model_gesture_count(cg_gesture_model_ref ref) {
     if (!ref) return 0;
     return static_cast<int>(ref->impl.gestureIds().size());

@@ -120,14 +120,6 @@ int cg_gesture_model_predict_pose_all_scores(cg_gesture_model_ref model,
                                               int                  scores_capacity,
                                               int*                 n_scores_out);
 
-/* -------------------------------------------------------------------------
- * Configuration
- * ---------------------------------------------------------------------- */
-
-/* Set GEOM_COEF (default 1.0). Must match the value used during training.
- * Read from the .meta.json file alongside the .tflite (key "geom_coef"). */
-void cg_gesture_model_set_geom_coef(cg_gesture_model_ref model, float coef);
-
 /* Number of supported gesture IDs (including "_none"). */
 int cg_gesture_model_gesture_count(cg_gesture_model_ref model);
 
