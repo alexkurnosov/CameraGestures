@@ -1,8 +1,6 @@
 import Foundation
 import Combine
 import CameraGestures
-import CameraGestures
-import CameraGestures
 
 @MainActor
 class CameraViewModel: ObservableObject {
@@ -60,12 +58,6 @@ class CameraViewModel: ObservableObject {
     var previewIsActive: Bool { isRecognitionActive || seriesCoordinator.isRunning }
 
     var isModelTrained: Bool {
-#if DEBUG
-        //Test:
-        return true
-#else
-#error ("test")
-#endif
         guard let path = appSettings?.modelConfig.modelPath else { return false }
         return FileManager.default.fileExists(atPath: path)
     }
