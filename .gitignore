@@ -131,3 +131,7 @@ CLAUDE.md
 .tmp/
 temp/
 Metrics/
+
+# Android build outputs
+.gradle/
+.cxx/
