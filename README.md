@@ -123,3 +123,7 @@ HandGestureRecognizing (3-phase orchestrator)
        ▼
 DetectedGesture callbacks → application layer
 ```
+
+---
+
+Copyright © 2026 Aleksei Kurnosov. All rights reserved pending licence selection. See [PROVENANCE.md](PROVENANCE.md) for authorship, components and development conditions.
