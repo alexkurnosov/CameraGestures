@@ -12,6 +12,9 @@ class CameraViewModel: ObservableObject {
     @Published var recentGestures: [DetectedGesture] = []
     @Published var recognitionHandPoints: [Point3D] = []
     @Published var stats = GestureRecognizingStats()
+    /// Landmark-path cadence, polled once a second while recognition runs.
+    /// Surfaced only behind the debug switch; see `CameraView.frameCadencePanel`.
+    @Published var frameRateStats = FrameRateStats()
     // MARK: - Permissions & banners
 
     @Published var cameraPermissionGranted = false
@@ -162,6 +165,13 @@ class CameraViewModel: ObservableObject {
         isRecognitionActive = false
     }
 
+    /// Restarts the cadence measurement window without restarting the camera —
+    /// used to discard the warm-up frames at the start of a baseline run.
+    func resetFrameRateStats() {
+        gestureRecognizer?.recognizer.resetFrameRateStats()
+        frameRateStats = FrameRateStats()
+    }
+
     func clearGestures() {
         recentGestures.removeAll()
         currentGesture = nil
@@ -212,6 +222,7 @@ class CameraViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard let self, self.isRecognitionActive, let recognizer = self.gestureRecognizer else { continue }
                 self.stats = recognizer.recognizer.getStatistics()
+                self.frameRateStats = recognizer.recognizer.getFrameRateStats()
             }
         }
     }

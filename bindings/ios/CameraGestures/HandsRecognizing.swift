@@ -110,6 +110,9 @@ public class HandsRecognizing: NSObject {
     // MediaPipe
     private var landmarker: HandLandmarker?
 
+    // Frame-cadence instrumentation (always on; cheap, read only on demand)
+    private let frameRateMonitor = FrameRateMonitor()
+
     // Camera
     private var captureSession:  AVCaptureSession?
     private var videoOutput:     AVCaptureVideoDataOutput?
@@ -167,6 +170,7 @@ public class HandsRecognizing: NSObject {
         }
 
         cg_hands_recognizer_reset(recognizerRef)
+        frameRateMonitor.reset()
         try startCameraCapture()
     }
 
@@ -178,6 +182,17 @@ public class HandsRecognizing: NSObject {
 
     public var isTracking: Bool { isRunning }
     public func getConfig() -> HandsRecognizingConfig { config }
+
+    // MARK: Frame-cadence instrumentation
+
+    /// Cadence of the landmark path since the last `start()`.
+    ///
+    /// Safe to call from any thread; intended for a debug readout or a
+    /// before/after comparison across builds.
+    public func getFrameRateStats() -> FrameRateStats { frameRateMonitor.snapshot() }
+
+    /// Restarts the measurement window without restarting the camera.
+    public func resetFrameRateStats() { frameRateMonitor.reset() }
 
     // MARK: Camera utilities
 
@@ -282,12 +297,14 @@ public class HandsRecognizing: NSObject {
         // cg_hands_recognizer silently drops absent shots with no prior real frame
         let cShot = absent.toCStruct()
         cg_hands_recognizer_push_handshot(recognizerRef, [cShot])
+        frameRateMonitor.noteShot(timestamp: timestamp, isAbsent: true)
         handshotCallback?(absent)
     }
 
     private func pushHandshot(_ shot: HandShot) {
         var cShot = shot.toCStruct()
         cg_hands_recognizer_push_handshot(recognizerRef, &cShot)
+        frameRateMonitor.noteShot(timestamp: shot.timestamp, isAbsent: false)
         handshotCallback?(shot)
     }
 }
@@ -334,6 +351,7 @@ extension HandsRecognizing: HandLandmarkerLiveStreamDelegate {
             return
         }
         if let result {
+            frameRateMonitor.noteLandmarkerResult()
             let ts = TimeInterval(timestampInMilliseconds) / 1000.0
             convertMediaPipeResults(result, timestamp: ts)
         }
@@ -351,6 +369,7 @@ extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard isRunning,
               let landmarker,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        frameRateMonitor.noteCameraFrame()
         do {
             let mpImage   = try MPImage(pixelBuffer: pixelBuffer)
             let timestamp = Int(Date().timeIntervalSince1970 * 1000)
@@ -358,6 +377,14 @@ extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
         } catch {
             print("Frame processing error: \(error)")
         }
+    }
+
+    public func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection)
+    {
+        frameRateMonitor.noteCameraDrop()
     }
 }
 

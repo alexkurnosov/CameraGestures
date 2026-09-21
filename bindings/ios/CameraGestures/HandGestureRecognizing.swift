@@ -443,6 +443,16 @@ public class HandGestureRecognizing {
             fps:                     fps)
     }
 
+    /// Cadence of the landmark path since recognition last started.
+    ///
+    /// The gate's motion energy is a per-frame delta with no `dt`
+    /// normalisation, so a drop in this rate makes the gate more
+    /// trigger-happy. Use it to compare a build against a known baseline.
+    public func getFrameRateStats() -> FrameRateStats { handsRecognizer.getFrameRateStats() }
+
+    /// Restarts the cadence measurement window without restarting the camera.
+    public func resetFrameRateStats() { handsRecognizer.resetFrameRateStats() }
+
     public func getRecentGestures(limit: Int = 10) -> [DetectedGesture] {
         Array(detectedGestures.suffix(limit))
     }

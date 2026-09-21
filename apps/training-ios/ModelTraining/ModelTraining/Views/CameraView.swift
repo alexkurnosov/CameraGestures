@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import UIKit
 import CameraGestures
 import CameraGestures
 import CameraGestures
@@ -17,6 +18,7 @@ struct CameraView: View {
     // Pure UI state
     @State private var showingPermissionAlert = false
     @State private var recPulse = false
+    @State private var cadenceCopied = false
 
     // Stage 9: confidence-log state
     /// The last detected hold, pending reviewer label.
@@ -93,6 +95,11 @@ struct CameraView: View {
 
                         // Controls row
                         controlsSection
+
+                        // Frame-cadence readout (Settings → Show Debug Info)
+                        if appSettings.showDebugInfo {
+                            frameCadencePanel
+                        }
 
                         // Recent gestures list (prediction mode)
                         if !viewModel.recentGestures.isEmpty && !viewModel.seriesCoordinator.isRunning {
@@ -681,6 +688,124 @@ struct CameraView: View {
         case .pause:     Text("Pausing").font(.caption).foregroundColor(.secondary)
         case .idle:      EmptyView()
         }
+    }
+
+    // MARK: - Frame Cadence Debug Panel
+
+    /// Effective handshot rate and inter-frame interval distribution, read
+    /// straight off the library's own counters.
+    ///
+    /// The motion gate scores energy as a per-frame delta with no `dt`
+    /// normalisation, so a slower or lumpier frame stream opens the gate more
+    /// eagerly. This is the instrument the capture-free baseline is recorded
+    /// with, and the same one a capture-on run is compared against.
+    private var frameCadencePanel: some View {
+        let fr = viewModel.frameRateStats
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "speedometer")
+                    .foregroundColor(.secondary)
+                Text("Frame cadence")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(String(format: "%.0f s", fr.elapsed))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
+
+            if !viewModel.isRecognitionActive && fr.frames == 0 {
+                Text("Start prediction to measure.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                    cadenceRow("frames/s",    String(format: "%.2f", fr.frameRate),
+                               "handshots/s", String(format: "%.2f", fr.handshotRate))
+                    cadenceRow("camera fps",  String(format: "%.2f", fr.cameraRate),
+                               "frames",      "\(fr.frames)")
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    cadenceRow("p50",         String(format: "%.1f ms", fr.p50IntervalMs),
+                               "p90",         String(format: "%.1f ms", fr.p90IntervalMs))
+                    cadenceRow("p99",         String(format: "%.1f ms", fr.p99IntervalMs),
+                               "max",         String(format: "%.1f ms", fr.maxIntervalMs))
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    cadenceRow("mediapipe drops", "\(fr.landmarkerDrops)",
+                               "camera drops",    "\(fr.cameraDrops)")
+                    cadenceRow("dropped",     String(format: "%.2f %%", fr.dropFraction * 100),
+                               "absent shots", "\(fr.absentShots)")
+                }
+                .font(.caption.monospacedDigit())
+
+                HStack(spacing: 10) {
+                    Button {
+                        copyCadenceSummary(fr)
+                    } label: {
+                        Label(cadenceCopied ? "Copied" : "Copy",
+                              systemImage: cadenceCopied ? "checkmark" : "doc.on.doc")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(fr.frames == 0)
+
+                    Button {
+                        viewModel.resetFrameRateStats()
+                    } label: {
+                        Label("Reset window", systemImage: "arrow.counterclockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!viewModel.isRecognitionActive)
+
+                    Spacer()
+                }
+            }
+        }
+        .padding()
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    private func cadenceRow(_ leftLabel: String, _ leftValue: String,
+                            _ rightLabel: String, _ rightValue: String) -> some View {
+        GridRow {
+            Text(leftLabel).foregroundColor(.secondary)
+            Text(leftValue)
+            Text(rightLabel).foregroundColor(.secondary)
+            Text(rightValue)
+        }
+    }
+
+    /// Puts the summary on the pasteboard and also prints it to the console, so
+    /// a run launched from Xcode can be copied straight out of the debug area
+    /// without relying on Universal Clipboard.
+    private func copyCadenceSummary(_ fr: FrameRateStats) {
+        let summary = cadenceSummary(fr)
+        UIPasteboard.general.string = summary
+        print("[CG:Cadence] ---- begin ----\n\(summary)\n[CG:Cadence] ---- end ----")
+        cadenceCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { cadenceCopied = false }
+    }
+
+    /// Plain-text dump for pasting into a metrics file.
+    private func cadenceSummary(_ fr: FrameRateStats) -> String {
+        """
+        elapsed_s=\(String(format: "%.1f", fr.elapsed))
+        frame_rate_hz=\(String(format: "%.3f", fr.frameRate))
+        handshot_rate_hz=\(String(format: "%.3f", fr.handshotRate))
+        camera_rate_hz=\(String(format: "%.3f", fr.cameraRate))
+        interval_ms_p50=\(String(format: "%.2f", fr.p50IntervalMs))
+        interval_ms_p90=\(String(format: "%.2f", fr.p90IntervalMs))
+        interval_ms_p99=\(String(format: "%.2f", fr.p99IntervalMs))
+        interval_ms_max=\(String(format: "%.2f", fr.maxIntervalMs))
+        interval_samples=\(fr.intervalCount)
+        frames=\(fr.frames)
+        handshots=\(fr.handshots)
+        absent_shots=\(fr.absentShots)
+        camera_frames=\(fr.cameraFrames)
+        camera_drops=\(fr.cameraDrops)
+        mediapipe_drops=\(fr.landmarkerDrops)
+        drop_fraction=\(String(format: "%.4f", fr.dropFraction))
+        """
     }
 
     // MARK: - Recent Gestures
