@@ -7,7 +7,8 @@
 //
 // Usage:
 //   replay_rig --model   <path/to/gesture_model.tflite>
-//              --registry <path/to/gestures.json>
+//              (--gesture-ids <path/to/gesture_ids.json>   # server sidecar, preferred
+//               | --registry  <path/to/gestures.json>)     # legacy class list
 //              [--pose-model   <path/to/pose_model.tflite>]
 //              [--pose-manifest <path/to/pose_manifest.json>]
 //              [--holds]           # enable Phase-2 holds mode
@@ -21,7 +22,7 @@
 // If no gesture is detected for a film, a JSON object with gesture_id="" is emitted.
 //
 // Compare two runs with:
-//   diff <(replay_rig --model m.tflite --registry g.json films/*.json) \
+//   diff <(replay_rig --model m.tflite --gesture-ids ids.json films/*.json) \
 //        <expected_output.jsonl>
 
 #include "CameraGestures/CameraGestures.h"
@@ -84,6 +85,7 @@ static cg_handfilm_ref film_from_file(const std::string& path) {
 struct Args {
     std::string              model_path;
     std::string              registry_path;
+    std::string              gesture_ids_path;
     std::string              pose_model_path;
     std::string              pose_manifest_path;
     bool                     holds          = false;
@@ -97,6 +99,7 @@ static Args parse_args(int argc, char** argv) {
         std::string arg = argv[i];
         if (arg == "--model"        && i+1 < argc) { a.model_path        = argv[++i]; }
         else if (arg == "--registry"  && i+1 < argc) { a.registry_path     = argv[++i]; }
+        else if (arg == "--gesture-ids" && i+1 < argc) { a.gesture_ids_path = argv[++i]; }
         else if (arg == "--pose-model"   && i+1 < argc) { a.pose_model_path   = argv[++i]; }
         else if (arg == "--pose-manifest" && i+1 < argc) { a.pose_manifest_path = argv[++i]; }
         else if (arg == "--holds")        { a.holds         = true; }
@@ -112,17 +115,39 @@ static Args parse_args(int argc, char** argv) {
 int main(int argc, char** argv) {
     Args args = parse_args(argc, argv);
 
-    if (args.model_path.empty() || args.registry_path.empty() || args.film_paths.empty()) {
+    // Exactly one class-list source.
+    if (args.model_path.empty() || args.film_paths.empty()
+            || args.registry_path.empty() == args.gesture_ids_path.empty()) {
         std::cerr <<
-            "Usage: replay_rig --model <tflite> --registry <json> [--pose-model <tflite>]\n"
-            "                  [--pose-manifest <json>] [--holds] [--bypass-phase2]\n"
-            "                  <film.json>...\n";
+            "Usage: replay_rig --model <tflite> (--gesture-ids <json> | --registry <json>)\n"
+            "                  [--pose-model <tflite>] [--pose-manifest <json>]\n"
+            "                  [--holds] [--bypass-phase2] <film.json>...\n";
         return 1;
     }
 
-    // Load gesture model.
-    cg_gesture_model_ref model = cg_gesture_model_load(
-        args.model_path.c_str(), args.registry_path.c_str());
+    // Load gesture model. --gesture-ids is the server's sidecar, a JSON array in
+    // the model's output order, passed through verbatim; --registry derives the
+    // list locally (legacy, see cg_gesture_model_load).
+    cg_gesture_model_ref model = nullptr;
+    if (!args.gesture_ids_path.empty()) {
+        std::vector<std::string> ids;
+        try {
+            std::ifstream f(args.gesture_ids_path);
+            if (!f.is_open()) throw std::runtime_error("cannot open");
+            ids = json::parse(f).get<std::vector<std::string>>();
+        } catch (const std::exception& e) {
+            std::cerr << "Bad --gesture-ids file " << args.gesture_ids_path
+                      << " (expected a JSON array of strings): " << e.what() << "\n";
+            return 2;
+        }
+        std::vector<const char*> id_ptrs;
+        for (const auto& id : ids) id_ptrs.push_back(id.c_str());
+        model = cg_gesture_model_load_with_ids(
+            args.model_path.c_str(), id_ptrs.data(), static_cast<int>(id_ptrs.size()));
+    } else {
+        model = cg_gesture_model_load(
+            args.model_path.c_str(), args.registry_path.c_str());
+    }
     if (!model) {
         std::cerr << "Failed to load gesture model from: " << args.model_path << "\n";
         return 2;
