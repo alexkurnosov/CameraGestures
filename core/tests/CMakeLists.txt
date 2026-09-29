@@ -15,6 +15,8 @@ add_executable(cg_tests
     test_gesture_registry.cpp
     # Stage 4: GestureModel unit tests (preprocessor parity + PoseManifest JSON)
     test_gesture_model.cpp
+    # Session capture Stage 1: frame telemetry + decision events
+    test_telemetry.cpp
 )
 
 target_link_libraries(cg_tests PRIVATE
@@ -26,6 +28,7 @@ target_include_directories(cg_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann_json
     ${CMAKE_SOURCE_DIR}/src/gesture_model
+    ${CMAKE_SOURCE_DIR}/src/hand_gesture_recognizing
 )
 
 include(GoogleTest)

@@ -57,6 +57,12 @@ struct cg_recognizer_s {
     cg_holds_telemetry_callback holds_cb     = nullptr;
     void*                       holds_ctx    = nullptr;
 
+    cg_frame_telemetry_callback frame_cb     = nullptr;
+    void*                       frame_ctx    = nullptr;
+
+    cg_decision_event_callback  event_cb     = nullptr;
+    void*                       event_ctx    = nullptr;
+
     explicit cg_recognizer_s(const HandGestureRecognizingConfig& cfg)
         : recognizer(cfg) {
         wireCppCallbacks();
@@ -87,6 +93,26 @@ struct cg_recognizer_s {
                          norm_coords.empty() ? nullptr : norm_coords.data(),
                          static_cast<int>(norm_coords.size()));
             }
+        };
+    }
+
+    // The telemetry hooks are installed only while a C callback is set, so the
+    // recognizer skips building rows and events nobody reads.
+    void setFrameCallback(cg_frame_telemetry_callback cb, void* ctx) {
+        frame_cb  = cb;
+        frame_ctx = ctx;
+        if (!cb) { recognizer.on_frame_telemetry = nullptr; return; }
+        recognizer.on_frame_telemetry = [this](const cg_frame_telemetry& row) {
+            frame_cb(frame_ctx, &row);
+        };
+    }
+
+    void setEventCallback(cg_decision_event_callback cb, void* ctx) {
+        event_cb  = cb;
+        event_ctx = ctx;
+        if (!cb) { recognizer.on_decision_event = nullptr; return; }
+        recognizer.on_decision_event = [this](const cg_decision_event& ev) {
+            event_cb(event_ctx, &ev);
         };
     }
 };
@@ -165,6 +191,82 @@ void cg_recognizer_set_holds_telemetry_callback(cg_recognizer_ref recognizer,
     if (!recognizer) return;
     recognizer->holds_cb  = callback;
     recognizer->holds_ctx = context;
+}
+
+void cg_recognizer_set_frame_telemetry_callback(cg_recognizer_ref recognizer,
+                                                 cg_frame_telemetry_callback callback,
+                                                 void* context) {
+    if (!recognizer) return;
+    recognizer->setFrameCallback(callback, context);
+}
+
+void cg_recognizer_set_decision_event_callback(cg_recognizer_ref recognizer,
+                                                cg_decision_event_callback callback,
+                                                void* context) {
+    if (!recognizer) return;
+    recognizer->setEventCallback(callback, context);
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry names
+// ---------------------------------------------------------------------------
+
+const char* cg_decision_event_kind_name(int kind) {
+    switch (kind) {
+    case CG_EVENT_GATE_OPENED:       return "gate_opened";
+    case CG_EVENT_CYCLE_ENDED:       return "cycle_ended";
+    case CG_EVENT_CYCLE_SKIPPED:     return "cycle_skipped";
+    case CG_EVENT_HOLD_COMPLETED:    return "hold_completed";
+    case CG_EVENT_PHASE3_PREDICTION: return "phase3_prediction";
+    case CG_EVENT_COMMIT_FIRED:      return "commit_fired";
+    }
+    return "unknown";
+}
+
+const char* cg_decision_event_reason_name(int kind, int reason) {
+    switch (kind) {
+    case CG_EVENT_CYCLE_ENDED:
+        switch (reason) {
+        case CG_CYCLE_END_ABSENT_FRAME:   return "absent_frame";
+        case CG_CYCLE_END_LOW_ENERGY:     return "low_energy";
+        case CG_CYCLE_END_BUFFER_CAP:     return "buffer_cap";
+        case CG_CYCLE_END_PHASE2_DISCARD: return "phase2_discard";
+        case CG_CYCLE_END_COMMITTED:      return "committed";
+        case CG_CYCLE_END_EXTERNAL_RESET: return "external_reset";
+        }
+        break;
+    case CG_EVENT_CYCLE_SKIPPED:
+        switch (reason) {
+        case CG_CYCLE_SKIP_ALREADY_COMMITTED: return "already_committed";
+        case CG_CYCLE_SKIP_EMPTY_BUFFER:      return "empty_buffer";
+        case CG_CYCLE_SKIP_NO_MODEL:          return "no_model";
+        case CG_CYCLE_SKIP_TOO_FEW_FRAMES:    return "too_few_frames";
+        }
+        break;
+    case CG_EVENT_HOLD_COMPLETED:
+        switch (reason) {
+        case CG_PREFIX_NOT_OBSERVED:       return "not_observed";
+        case CG_PREFIX_NO_PREFIX:          return "no_prefix";
+        case CG_PREFIX_LIVE_PREFIX:        return "live_prefix";
+        case CG_PREFIX_COMMIT_NOW:         return "commit_now";
+        case CG_PREFIX_START_COMMIT_TIMER: return "start_commit_timer";
+        case CG_PREFIX_IDLE_RESET:         return "idle_reset";
+        case CG_PREFIX_IDLE_DISCARD:       return "idle_discard";
+        case CG_PREFIX_IDLE_COMMIT:        return "idle_commit";
+        }
+        break;
+    case CG_EVENT_COMMIT_FIRED:
+        switch (reason) {
+        case CG_COMMIT_IMMEDIATE:    return "immediate";
+        case CG_COMMIT_T_COMMIT:     return "t_commit";
+        case CG_COMMIT_T_MIN_BUFFER: return "t_min_buffer";
+        }
+        break;
+    case CG_EVENT_GATE_OPENED:
+    case CG_EVENT_PHASE3_PREDICTION:
+        return "";
+    }
+    return "unknown";
 }
 
 // ---------------------------------------------------------------------------

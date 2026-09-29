@@ -26,7 +26,9 @@ MotionGate::Event MotionGate::process(const cg_handshot& shot) {
         above_threshold_since_.reset();
         below_threshold_since_.reset();
         if (was_open) {
-            return {Event::Kind::cycle_ended, 0, std::move(captured)};
+            Event ev{Event::Kind::cycle_ended, 0, std::move(captured)};
+            ev.end_reason = Event::EndReason::absent_frame;
+            return ev;
         }
         return {Event::Kind::still_closed};
     }
@@ -34,10 +36,18 @@ MotionGate::Event MotionGate::process(const cg_handshot& shot) {
     // Compute energy vs previous frame.
     auto curr_coords = normalize(shot);
     float e = 0.0f;
-    if (!prev_coords_.empty() && !curr_coords.empty()) {
+    const bool e_valid = !prev_coords_.empty() && !curr_coords.empty();
+    if (e_valid) {
         e = energy(curr_coords, prev_coords_);
     }
     prev_coords_ = curr_coords;
+
+    // Every non-absent return carries the energy the decision was made on.
+    auto withEnergy = [e, e_valid](Event ev) {
+        ev.energy       = e;
+        ev.energy_valid = e_valid;
+        return ev;
+    };
 
     if (state_ == MotionGateState::closed) {
         if (e > config_.t_open) {
@@ -48,12 +58,12 @@ MotionGate::Event MotionGate::process(const cg_handshot& shot) {
                 above_threshold_since_.reset();
                 below_threshold_since_.reset();
                 gate_buffer_.clear();
-                return {Event::Kind::opened};
+                return withEnergy({Event::Kind::opened});
             }
         } else {
             above_threshold_since_.reset();
         }
-        return {Event::Kind::still_closed};
+        return withEnergy({Event::Kind::still_closed});
     }
 
     // state == open
@@ -62,14 +72,21 @@ MotionGate::Event MotionGate::process(const cg_handshot& shot) {
     }
 
     bool should_close = false;
+    auto end_reason = Event::EndReason::none;
     if (e < config_.t_close) {
         if (!below_threshold_since_) below_threshold_since_ = now;
         double duration_ms = (now - *below_threshold_since_) * 1000.0;
-        if (duration_ms >= config_.k_close_ms) should_close = true;
+        if (duration_ms >= config_.k_close_ms) {
+            should_close = true;
+            end_reason   = Event::EndReason::low_energy;
+        }
     } else {
         below_threshold_since_.reset();
     }
-    if (static_cast<int>(gate_buffer_.size()) >= buffer_cap_) should_close = true;
+    if (static_cast<int>(gate_buffer_.size()) >= buffer_cap_) {
+        should_close = true;
+        if (end_reason == Event::EndReason::none) end_reason = Event::EndReason::buffer_cap;
+    }
 
     if (should_close) {
         std::vector<cg_handshot> captured;
@@ -77,9 +94,11 @@ MotionGate::Event MotionGate::process(const cg_handshot& shot) {
         state_ = MotionGateState::closed;
         above_threshold_since_.reset();
         below_threshold_since_.reset();
-        return {Event::Kind::cycle_ended, 0, std::move(captured)};
+        Event ev{Event::Kind::cycle_ended, 0, std::move(captured)};
+        ev.end_reason = end_reason;
+        return withEnergy(std::move(ev));
     }
-    return {Event::Kind::still_open, static_cast<int>(gate_buffer_.size())};
+    return withEnergy({Event::Kind::still_open, static_cast<int>(gate_buffer_.size())});
 }
 
 std::vector<float> MotionGate::normalize(const cg_handshot& shot) {

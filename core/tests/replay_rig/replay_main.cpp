@@ -13,6 +13,7 @@
 //              [--pose-manifest <path/to/pose_manifest.json>]
 //              [--holds]           # enable Phase-2 holds mode
 //              [--bypass-phase2]   # run Phase-3 unrestricted
+//              [--telemetry <path>] # write the per-shot decision record (see below)
 //              <handfilm.json> [<handfilm.json> ...]
 //
 // Output format (JSON Lines):
@@ -20,6 +21,13 @@
 //    "confidence":0.92, "candidate_set_size":3}
 //
 // If no gesture is detected for a film, a JSON object with gesture_id="" is emitted.
+//
+// --telemetry writes a second JSON Lines file, in emission order: one
+//   {"film_path":..., "type":"frame", "t":..., "gate_open":..., "raw_energy":..., ...}
+// row per processed shot, preceded by that shot's decision events
+//   {"film_path":..., "type":"event", "event":"cycle_ended", "reason":"low_energy", "t":..., ...}
+// Events fired by timer ticks appear between the shots they fall after. The
+// gesture output on stdout is unchanged by the flag.
 //
 // Compare two runs with:
 //   diff <(replay_rig --model m.tflite --gesture-ids ids.json films/*.json) \
@@ -90,8 +98,89 @@ struct Args {
     std::string              pose_manifest_path;
     bool                     holds          = false;
     bool                     bypass_phase2  = false;
+    std::string              telemetry_path;
     std::vector<std::string> film_paths;
 };
+
+// ---------------------------------------------------------------------------
+// --telemetry output
+// ---------------------------------------------------------------------------
+
+struct TelemetrySink {
+    std::ofstream out;
+    std::string   film_path;
+};
+
+static void on_frame_telemetry(void* ctx, const cg_frame_telemetry* r) {
+    auto* sink = static_cast<TelemetrySink*>(ctx);
+    json j;
+    j["film_path"]        = sink->film_path;
+    j["type"]             = "frame";
+    j["t"]                = r->timestamp;
+    j["handedness"]       = r->handedness;
+    j["is_absent"]        = r->is_absent != 0;
+    j["track_index"]      = r->track_index;
+    j["gate_enabled"]     = r->gate_enabled != 0;
+    j["gate_open"]        = r->gate_open != 0;
+    j["buffer_count"]     = r->buffer_count;
+    j["raw_energy"]       = r->raw_energy_valid ? json(r->raw_energy) : json(nullptr);
+    if (r->smoothed_energy_valid) {
+        j["smoothed_energy"] = r->smoothed_energy;
+        j["hold_run_frames"] = r->hold_run_frames;
+        j["hold_run_ms"]     = r->hold_run_ms;
+    } else {
+        j["smoothed_energy"] = nullptr;
+    }
+    j["commit_deadline"]     = r->commit_deadline;
+    j["min_buffer_deadline"] = r->min_buffer_deadline;
+    sink->out << j.dump() << "\n";
+}
+
+static json candidate_list(const cg_decision_event* e) {
+    json ids = json::array();
+    for (int i = 0; i < e->n_candidates; ++i) ids.push_back(e->candidate_ids[i]);
+    return ids;
+}
+
+static void on_decision_event(void* ctx, const cg_decision_event* e) {
+    auto* sink = static_cast<TelemetrySink*>(ctx);
+    json j;
+    j["film_path"] = sink->film_path;
+    j["type"]      = "event";
+    j["event"]     = cg_decision_event_kind_name(e->kind);
+    j["reason"]    = cg_decision_event_reason_name(e->kind, e->reason);
+    j["t"]         = e->timestamp;
+    switch (e->kind) {
+    case CG_EVENT_CYCLE_ENDED:
+    case CG_EVENT_CYCLE_SKIPPED:
+        j["buffer_count"] = e->buffer_count;
+        break;
+    case CG_EVENT_HOLD_COMPLETED:
+        j["pose_id"]         = e->pose_id;
+        j["confidence"]      = e->confidence;
+        j["accepted"]        = e->accepted != 0;
+        j["hold_start_time"] = e->hold_start_time;
+        j["rep_shot_time"]   = e->rep_shot_time;
+        j["observed_seq"]    = std::vector<int>(e->observed_seq, e->observed_seq + e->n_observed);
+        break;
+    case CG_EVENT_PHASE3_PREDICTION:
+        j["buffer_count"] = e->buffer_count;
+        j["restricted"]   = e->restricted != 0;
+        j["accepted"]     = e->accepted != 0;
+        j["gesture_id"]   = e->gesture_id ? e->gesture_id : "";
+        j["confidence"]   = e->confidence;
+        if (e->restricted) j["candidates"] = candidate_list(e);
+        break;
+    case CG_EVENT_COMMIT_FIRED:
+        j["candidates"]          = candidate_list(e);
+        j["commit_deadline"]     = e->commit_deadline;
+        j["min_buffer_deadline"] = e->min_buffer_deadline;
+        break;
+    default:
+        break;
+    }
+    sink->out << j.dump() << "\n";
+}
 
 static Args parse_args(int argc, char** argv) {
     Args a;
@@ -104,6 +193,7 @@ static Args parse_args(int argc, char** argv) {
         else if (arg == "--pose-manifest" && i+1 < argc) { a.pose_manifest_path = argv[++i]; }
         else if (arg == "--holds")        { a.holds         = true; }
         else if (arg == "--bypass-phase2") { a.bypass_phase2 = true; }
+        else if (arg == "--telemetry" && i+1 < argc) { a.telemetry_path = argv[++i]; }
         else if (arg[0] != '-')           { a.film_paths.push_back(arg); }
         else {
             std::cerr << "Unknown argument: " << arg << "\n";
@@ -121,7 +211,8 @@ int main(int argc, char** argv) {
         std::cerr <<
             "Usage: replay_rig --model <tflite> (--gesture-ids <json> | --registry <json>)\n"
             "                  [--pose-model <tflite>] [--pose-manifest <json>]\n"
-            "                  [--holds] [--bypass-phase2] <film.json>...\n";
+            "                  [--holds] [--bypass-phase2] [--telemetry <path>]\n"
+            "                  <film.json>...\n";
         return 1;
     }
 
@@ -176,6 +267,19 @@ int main(int argc, char** argv) {
 
     if (args.bypass_phase2) cg_recognizer_set_bypass_phase2(rec, 1);
 
+    TelemetrySink sink;
+    if (!args.telemetry_path.empty()) {
+        sink.out.open(args.telemetry_path);
+        if (!sink.out.is_open()) {
+            std::cerr << "Cannot open --telemetry file: " << args.telemetry_path << "\n";
+            cg_recognizer_destroy(rec);
+            cg_gesture_model_destroy(model);
+            return 4;
+        }
+        cg_recognizer_set_frame_telemetry_callback(rec, on_frame_telemetry, &sink);
+        cg_recognizer_set_decision_event_callback(rec, on_decision_event, &sink);
+    }
+
     // Per-film replay: push shots one at a time, then check for a result.
     // Because the replay rig is offline (no timer-based T_commit), we tick
     // timers with synthetic timestamps after each shot.
@@ -207,9 +311,11 @@ int main(int argc, char** argv) {
         };
         cg_recognizer_set_gesture_callback(rec, gesture_cb, &results);
 
-        // Reset gate state between films.
+        // Reset gate state between films. A cycle still open from the previous
+        // film ends here, so its event is attributed to that film.
         cg_recognizer_reset_gate(rec);
         cg_recognizer_set_gate_enabled(rec, 1);
+        sink.film_path = film_path;
 
         const size_t n = cg_handfilm_shot_count(film);
         double last_ts = 0.0;

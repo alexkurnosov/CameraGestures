@@ -21,9 +21,18 @@ class MotionGate {
 public:
     struct Event {
         enum class Kind { still_closed, opened, still_open, cycle_ended };
+        // Why a cycle ended (only meaningful for cycle_ended). When the energy
+        // and the buffer cap both close the gate on the same frame, low_energy wins.
+        enum class EndReason { none, absent_frame, low_energy, buffer_cap };
         Kind                   kind;
         int                    buffer_count = 0;
         std::vector<cg_handshot> cycle_buffer; // only set for cycle_ended
+        EndReason              end_reason   = EndReason::none;
+        // The energy this frame was compared against the thresholds. energy_valid
+        // is false when there was no previous frame to diff against (energy 0 was
+        // used) or the frame was absent.
+        float                  energy       = 0.0f;
+        bool                   energy_valid = false;
     };
 
     explicit MotionGate(const MotionGateConfig& cfg, int buffer_cap = 30);

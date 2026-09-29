@@ -23,6 +23,13 @@ public:
         cg_handshot rep_shot    = {};
         double    start_time    = 0.0;
         double    end_time      = 0.0;
+
+        // Per-frame state after this shot, for telemetry. energy_valid is false
+        // only for absent frames, which reset the detector.
+        bool      energy_valid    = false;
+        float     smoothed_energy = 0.0f;
+        int       hold_run_frames = 0;    // frames in the current below-T_hold run; 0 = none
+        double    hold_run_ms     = 0.0;  // duration of that run, as compared to k_hold_ms
     };
 
     explicit HoldDetector(const HoldDetectorConfig& cfg = {});
@@ -49,5 +56,7 @@ private:
     bool   hold_emitted_     = false;
 
     float smoothedEnergy(int index) const;
+    // The hold state machine for the frame just appended at cur_idx.
+    Event decide(const cg_handshot& shot, int cur_idx, float smoothed);
     std::optional<Event> finishCurrentHold();
 };

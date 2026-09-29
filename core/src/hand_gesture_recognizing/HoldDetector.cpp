@@ -48,6 +48,17 @@ HoldDetector::Event HoldDetector::process(const cg_handshot& shot) {
     int cur_idx = static_cast<int>(history_.size()) - 1;
     float smoothed = smoothedEnergy(cur_idx);
 
+    Event ev = decide(shot, cur_idx, smoothed);
+    ev.energy_valid    = true;
+    ev.smoothed_energy = smoothed;
+    if (in_hold_) {
+        ev.hold_run_frames = cur_idx - hold_start_idx_ + 1;
+        ev.hold_run_ms     = (shot.timestamp - history_[hold_start_idx_].shot.timestamp) * 1000.0;
+    }
+    return ev;
+}
+
+HoldDetector::Event HoldDetector::decide(const cg_handshot& shot, int cur_idx, float smoothed) {
     if (smoothed < config_.t_hold) {
         if (!in_hold_) {
             in_hold_         = true;

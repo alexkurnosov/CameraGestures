@@ -4,6 +4,7 @@
 #include "PrefixMatcher.hpp"
 #include "GestureModel.hpp"
 #include "CameraGestures/Types.h"
+#include "CameraGestures/HandGestureRecognizing.h"
 #include <functional>
 #include <optional>
 #include <memory>
@@ -65,6 +66,15 @@ using HoldsTelemetryCallback = std::function<void(int pose_id, float confidence,
                                                    const std::string& matched_gesture,
                                                    const cg_handshot* rep_shot,
                                                    const std::vector<float>& normalized_coords)>;
+using FrameTelemetryCallback = std::function<void(const cg_frame_telemetry&)>;
+using DecisionEventCallback  = std::function<void(const cg_decision_event&)>;
+
+// Test seam: stands in for a TFLite pose model so Phase 2 can be driven
+// deterministically. Never set in production code.
+struct PoseOverrideForTesting {
+    CgPoseManifest manifest;
+    std::function<bool(const cg_handshot&, int* pose_id, float* confidence)> predict;
+};
 
 // --------------------------------------------------------------------------
 // Pending commit state (used for T_commit / T_min_buffer timers)
@@ -85,6 +95,8 @@ public:
     GestureCallback         on_gesture;
     GateUpdateCallback      on_gate_update;
     HoldsTelemetryCallback  on_holds_telemetry;
+    FrameTelemetryCallback  on_frame_telemetry;
+    DecisionEventCallback   on_decision_event;
 
     // bypassPhase2Filter: always run Phase 3 unrestricted even in holds mode.
     bool bypass_phase2 = false;
@@ -116,6 +128,9 @@ public:
 
     const HandGestureRecognizingConfig& config() const { return config_; }
 
+    // Replace the pose model with a fake (see PoseOverrideForTesting).
+    void setPoseOverrideForTesting(PoseOverrideForTesting override_);
+
 private:
     HandGestureRecognizingConfig config_;
     GestureModel*                model_      = nullptr;
@@ -135,15 +150,43 @@ private:
     // Current film handle (rebuilt each cycle from the gate buffer)
     cg_handfilm_ref current_film_ = nullptr;
 
+    std::optional<PoseOverrideForTesting> pose_override_;
+
+    // Telemetry for the shot being processed; reset at the start of processShot.
+    struct FrameScratch {
+        float  raw_energy       = 0.0f;
+        bool   raw_energy_valid = false;
+        float  smoothed_energy  = 0.0f;
+        bool   smoothed_valid   = false;
+        int    hold_run_frames  = 0;
+        double hold_run_ms      = 0.0;
+    };
+    FrameScratch frame_;
+    double       last_shot_time_ = 0.0;
+
     void handleShotWithGate(const cg_handshot& shot);
-    void handleCycleEnd(std::vector<cg_handshot> buffer);
+    void handleCycleEnd(std::vector<cg_handshot> buffer, double now);
     void handlePhase2Hold(const cg_handshot& rep_shot, double start_t, double end_t);
     void scheduleCommitOrDefer(std::set<std::string> candidate_set, double now);
-    void triggerPhase3Commit(const std::set<std::string>& candidate_set);
-    void recognizeRestricted(cg_handfilm_ref film, const std::set<std::string>& candidates);
-    void recognizeUnrestricted(cg_handfilm_ref film);
+    // `now` timestamps the events; the deadlines are those pending when it fired.
+    void triggerPhase3Commit(const std::set<std::string>& candidate_set,
+                             cg_commit_gate gate, double now,
+                             double commit_deadline = 0.0, double min_buffer_deadline = 0.0);
+    void recognizeRestricted(cg_handfilm_ref film, const std::set<std::string>& candidates,
+                             double now);
+    void recognizeUnrestricted(cg_handfilm_ref film, double now);
     void emitGesture(cg_handfilm_ref film, const cg_gesture_prediction& pred, int candidate_set_size);
     void reportGateUpdate();
     cg_handfilm_ref makeFilm(const std::vector<cg_handshot>& shots);
     void cancelPendingCommit();
+
+    // Pose model access, routed through the test override when one is set.
+    bool                  poseAvailable() const;
+    bool                  predictPose(const cg_handshot& shot, int* pose_id, float* confidence);
+    const CgPoseManifest* poseManifest() const;
+
+    // Telemetry emission; no-ops when the corresponding callback is unset.
+    void reportFrameTelemetry(const cg_handshot& shot);
+    void reportEvent(const cg_decision_event& ev);
+    void reportCycleEnded(cg_cycle_end_reason reason, int buffer_count, double now);
 };
