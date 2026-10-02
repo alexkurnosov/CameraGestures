@@ -46,6 +46,7 @@ cg_recognizer_config cg_recognizer_default_config(void) {
 struct cg_recognizer_s {
     HandGestureRecognizing   recognizer;
     GestureModel*            model_ptr = nullptr; // non-owning
+    cg_recognizer_config     c_config{};          // as passed to create, for cg_recognizer_get_config
 
     // Callback state
     cg_gesture_callback      gesture_cb      = nullptr;
@@ -153,6 +154,7 @@ cg_recognizer_ref cg_recognizer_create(const cg_recognizer_config* config,
     if (!config) return nullptr;
     auto* obj = new(std::nothrow) cg_recognizer_s(toCppConfig(config));
     if (!obj) return nullptr;
+    obj->c_config = *config;
 
     if (gesture_model) {
         obj->model_ptr = reinterpret_cast<GestureModel*>(gesture_model);
@@ -305,6 +307,18 @@ void cg_recognizer_set_gesture_model(cg_recognizer_ref recognizer,
     auto* m = reinterpret_cast<GestureModel*>(model);
     recognizer->model_ptr = m;
     recognizer->recognizer.setGestureModel(m);
+}
+
+int cg_recognizer_get_config(cg_recognizer_ref recognizer, cg_recognizer_config* out) {
+    if (!recognizer || !out) return 0;
+    *out = recognizer->c_config;
+    out->gate_enabled = recognizer->recognizer.config().gate_enabled ? 1 : 0;
+    return 1;
+}
+
+int cg_recognizer_get_bypass_phase2(cg_recognizer_ref recognizer) {
+    if (!recognizer) return 0;
+    return recognizer->recognizer.bypass_phase2 ? 1 : 0;
 }
 
 } // extern "C"

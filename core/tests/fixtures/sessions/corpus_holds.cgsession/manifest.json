@@ -1,0 +1,92 @@
+{
+  "chunk_records": 64,
+  "config": {
+    "bypass_phase2": false,
+    "confidence_threshold": 0.699999988079071,
+    "gate_enabled": true,
+    "gesture_buffer_size": 30,
+    "holds": {
+      "k_hold_ms": 100.0,
+      "smooth_k_ms": 100.0,
+      "t_commit_ms": 300.0,
+      "t_hold": 2.0999999046325684,
+      "t_min_buffer_ms": 200.0,
+      "tau_phase3_confidence": 0.699999988079071,
+      "tau_pose_confidence": 0.6000000238418579
+    },
+    "holds_enabled": true,
+    "motion_gate": {
+      "cooldown_ms": 1000.0,
+      "k_close_ms": 200.0,
+      "k_open_ms": 33.0,
+      "t_close": 0.5,
+      "t_open": 1.0
+    },
+    "retain_landmarks_for_review": false
+  },
+  "counts": {
+    "events": 120,
+    "shots": {
+      "-1": 167,
+      "0": 438
+    },
+    "telemetry": 605
+  },
+  "created_at": 1790790762.930364,
+  "files": {
+    "events": "events.jsonl",
+    "labels": "labels.jsonl",
+    "shots_dir": "shots",
+    "telemetry": "telemetry.bin"
+  },
+  "format": "cgsession",
+  "format_version": 1,
+  "library_version": "0.1.0",
+  "model_files": {
+    "gesture_ids": {
+      "name": "gesture_ids.json",
+      "sha256": "4c25869f1328052a07f8c36071405c732cae93a97ff6ce6a8f0ec793fa715a8a",
+      "size": 66
+    },
+    "gesture_model": {
+      "name": "gesture_model.tflite",
+      "sha256": "ba6040bdf1c86cc0da823c1b65ea918dd4c824d875be54772109e4dfaaee3e5e",
+      "size": 52760
+    },
+    "pose_manifest": {
+      "name": "pose_manifest.json",
+      "sha256": "8e4df1b123469dab863a778b5c50ffa512cf82260f6fdc65c685eb78ae1c3744",
+      "size": 131632
+    },
+    "pose_model": {
+      "name": "pose_model.tflite",
+      "sha256": "82c43d147a8d55855e4358b14a002ea6f5e13ce2d903a5e57fe02f176b5bb9a3",
+      "size": 26448
+    },
+    "preprocessor": null
+  },
+  "provenance": {
+    "app_version": "replay_rig",
+    "camera": {
+      "fps": 0.0,
+      "height": 0,
+      "position": "unknown",
+      "preset": null,
+      "width": 0
+    },
+    "device_model": null,
+    "extra": {
+      "film_count": "20",
+      "films": "01B4D8AC-D4F4-4BB6-9F18-DC39BE00F2E3.json,038a4fdb-ade2-4142-bde4-112c8ae35933.json,047873ed-74e5-44e4-ab6a-adaeab3dc4d2.json,0b571dd4-3130-472b-8016-f71f33c97c17.json,06E87C32-96AC-46FC-A271-D80AC905E661.json,0C94693F-F9A0-4F11-891C-346ED72760A6.json,0D78C10A-1F50-4BF5-BC31-B3FB1D78C519.json,15F5D0DD-290E-42EB-82D1-BB58E93F2050.json,061DAFA0-31B9-448F-947A-148FAA1AA9FA.json,0E74E4D0-5601-4164-AF4E-8CEAEA78B636.json,29A5A5B2-A975-4112-98B7-E51AB8E8E399.json,2C9D5C16-1309-4AFE-A9C1-AF085319570A.json,02893EB2-3260-486E-AD29-28B366DE9068.json,0310C17D-36B9-40CD-842E-3E965C464B29.json,032656C8-4711-41B1-BE7D-E92498140E9B.json,06E64E4F-EBAB-4FC9-92A5-23E69953984F.json,0354FB01-081D-40C7-898B-068ECB3942C2.json,08037874-4CC9-4FD1-8EA5-88AC389E76D4.json,0981a0f6-30cb-4882-9697-4b86d10731b7.json,0A797685-8C8F-4673-AFE1-87AC7E013FDE.json",
+      "generator": "replay_rig",
+      "mode": "holds"
+    },
+    "os_version": null
+  },
+  "status": "complete",
+  "stopped_at": 1790790762.95016,
+  "time_range": [
+    1776580812.971,
+    1776580872.045
+  ]
+}

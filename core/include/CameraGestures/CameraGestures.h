@@ -5,6 +5,7 @@
 #include "HandsRecognizing.h"
 #include "GestureModel.h"
 #include "HandGestureRecognizing.h"
+#include "SessionCapture.h"
 
 #ifdef __cplusplus
 extern "C" {

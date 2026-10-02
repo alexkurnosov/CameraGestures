@@ -17,6 +17,8 @@ add_executable(cg_tests
     test_gesture_model.cpp
     # Session capture Stage 1: frame telemetry + decision events
     test_telemetry.cpp
+    # Session capture Stage 2: recorder, manifest, reader
+    test_session.cpp
 )
 
 target_link_libraries(cg_tests PRIVATE

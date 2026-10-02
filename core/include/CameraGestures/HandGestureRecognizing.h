@@ -264,6 +264,14 @@ void cg_recognizer_set_bypass_phase2(cg_recognizer_ref recognizer, int bypass);
 void cg_recognizer_set_gesture_model(cg_recognizer_ref    recognizer,
                                       cg_gesture_model_ref model);
 
+/* The config in effect: the one passed to cg_recognizer_create, with
+ * gate_enabled as last set by cg_recognizer_set_gate_enabled.
+ * Returns 1 on success. */
+int cg_recognizer_get_config(cg_recognizer_ref recognizer, cg_recognizer_config* out);
+
+/* Returns 1 while Phase-2 bypass is on. */
+int cg_recognizer_get_bypass_phase2(cg_recognizer_ref recognizer);
+
 #ifdef __cplusplus
 }
 #endif

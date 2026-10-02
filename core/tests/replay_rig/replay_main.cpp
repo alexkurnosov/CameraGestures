@@ -14,6 +14,8 @@
 //              [--holds]           # enable Phase-2 holds mode
 //              [--bypass-phase2]   # run Phase-3 unrestricted
 //              [--telemetry <path>] # write the per-shot decision record (see below)
+//              [--session-out <bundle.cgsession>]  # also record a session (see below)
+//              [--pair-tracks]     # with --session-out: two films at a time as hands 0 and 1
 //              <handfilm.json> [<handfilm.json> ...]
 //
 // Output format (JSON Lines):
@@ -29,6 +31,24 @@
 // Events fired by timer ticks appear between the shots they fall after. The
 // gesture output on stdout is unchanged by the flag.
 //
+// --session-out records the whole run as one .cgsession bundle through the
+//   library's session recorder, then reads it back and checks every shot,
+//   telemetry row and event count bit-for-bit (exit 5 on a mismatch). Films are
+//   laid end to end on one timeline: each is shifted by a whole number of
+//   seconds so it starts ~1.5 s after the previous one ended. A whole-second
+//   shift is exact in double precision, so every frame interval, and with it
+//   every decision, is unchanged. The flush tick after each film is at +1 s
+//   rather than +10 s, well past any T_commit / T_min_buffer deadline, so it
+//   stays before the next film. Non-absent shots go to track 0.
+//
+// --pair-tracks takes the films two at a time and plays both at once through
+//   the one recognizer, as hands 0 and 1 of a two-hand session: both are
+//   shifted to the same start and merged by time. The stdout line for a pair
+//   names both films, "a.json + b.json". An odd last film plays alone.
+//   Absent frames from either film are recorded as absent frames — an
+//   approximation of the device, which reports absence only when no hand is
+//   in view.
+//
 // Compare two runs with:
 //   diff <(replay_rig --model m.tflite --gesture-ids ids.json films/*.json) \
 //        <expected_output.jsonl>
@@ -41,6 +61,9 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <stdexcept>
 
 using json = nlohmann::json;
@@ -99,20 +122,37 @@ struct Args {
     bool                     holds          = false;
     bool                     bypass_phase2  = false;
     std::string              telemetry_path;
+    std::string              session_path;
+    bool                     pair_tracks    = false;
     std::vector<std::string> film_paths;
 };
 
 // ---------------------------------------------------------------------------
-// --telemetry output
+// --telemetry output, and forwarding to the --session-out recorder
 // ---------------------------------------------------------------------------
 
 struct TelemetrySink {
     std::ofstream out;
     std::string   film_path;
+
+    // --session-out: the recorder, and what the rig handed it, kept for the
+    // read-back check.
+    cg_session_recorder_ref         recorder = nullptr;
+    int                             track    = CG_SESSION_ABSENT_TRACK; // last recorded shot's
+    std::vector<cg_session_shot>    shots;
+    std::vector<cg_frame_telemetry> rows;
+    size_t                          events   = 0;
 };
 
 static void on_frame_telemetry(void* ctx, const cg_frame_telemetry* r) {
     auto* sink = static_cast<TelemetrySink*>(ctx);
+    if (sink->recorder) {
+        cg_frame_telemetry row = *r;
+        row.track_index = sink->track; // the stamp the recorder applies
+        sink->rows.push_back(row);
+        cg_session_recorder_append_telemetry(sink->recorder, r);
+    }
+    if (!sink->out.is_open()) return;
     json j;
     j["film_path"]        = sink->film_path;
     j["type"]             = "frame";
@@ -144,6 +184,11 @@ static json candidate_list(const cg_decision_event* e) {
 
 static void on_decision_event(void* ctx, const cg_decision_event* e) {
     auto* sink = static_cast<TelemetrySink*>(ctx);
+    if (sink->recorder) {
+        cg_session_recorder_append_decision_event(sink->recorder, e);
+        ++sink->events;
+    }
+    if (!sink->out.is_open()) return;
     json j;
     j["film_path"] = sink->film_path;
     j["type"]      = "event";
@@ -182,6 +227,147 @@ static void on_decision_event(void* ctx, const cg_decision_event* e) {
     sink->out << j.dump() << "\n";
 }
 
+// ---------------------------------------------------------------------------
+// --session-out
+// ---------------------------------------------------------------------------
+
+static std::string base_name(const std::string& path) {
+    const size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// Creates and starts the recorder; the manifest carries the rig's model files,
+// the recognizer config, and the film list.
+static cg_session_recorder_ref start_session(const Args& a, cg_recognizer_ref rec) {
+    cg_session_recorder_ref r = cg_session_recorder_create(a.session_path.c_str());
+    if (!r) {
+        std::cerr << "Cannot create session recorder for " << a.session_path << "\n";
+        return nullptr;
+    }
+    std::string films;
+    for (const auto& p : a.film_paths) films += (films.empty() ? "" : ",") + base_name(p);
+    const std::string film_count = std::to_string(a.film_paths.size());
+    const std::string mode = std::string(a.holds ? "holds" : "plain")
+                           + (a.bypass_phase2 ? "+bypass_phase2" : "")
+                           + (a.pair_tracks ? "+pair_tracks" : "");
+    cg_session_kv extra[] = {
+        {"generator",  "replay_rig"},
+        {"mode",       mode.c_str()},
+        {"film_count", film_count.c_str()},
+        {"films",      films.c_str()},
+    };
+    cg_session_provenance prov{};
+    prov.app_version = "replay_rig";
+    prov.extra       = extra;
+    prov.n_extra     = 4;
+
+    auto opt = [](const std::string& s) { return s.empty() ? nullptr : s.c_str(); };
+    cg_session_model_files files{};
+    files.gesture_model = opt(a.model_path);
+    files.gesture_ids   = opt(a.gesture_ids_path);
+    files.pose_model    = opt(a.pose_model_path);
+    files.pose_manifest = opt(a.pose_manifest_path);
+
+    if (!cg_session_recorder_start(r, rec, &prov, &files)) {
+        std::cerr << "Cannot start session: " << cg_session_recorder_last_error(r) << "\n";
+        cg_session_recorder_destroy(r);
+        return nullptr;
+    }
+    return r;
+}
+
+template <typename T>
+static bool same_bits(const T& a, const T& b) { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+
+static bool same_shot(const cg_session_shot& a, const cg_session_shot& b) {
+    if (!same_bits(a.shot.timestamp, b.shot.timestamp) || !same_bits(a.pts, b.pts)
+            || a.shot.handedness != b.shot.handedness || a.shot.is_absent != b.shot.is_absent
+            || a.track_index != b.track_index || a.has_pts != b.has_pts) {
+        return false;
+    }
+    for (int i = 0; i < 21; ++i) {
+        if (!same_bits(a.shot.landmarks[i].x, b.shot.landmarks[i].x)
+                || !same_bits(a.shot.landmarks[i].y, b.shot.landmarks[i].y)
+                || !same_bits(a.shot.landmarks[i].z, b.shot.landmarks[i].z)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool same_row(const cg_frame_telemetry& a, const cg_frame_telemetry& b) {
+    return same_bits(a.timestamp, b.timestamp) && same_bits(a.commit_deadline, b.commit_deadline)
+        && same_bits(a.min_buffer_deadline, b.min_buffer_deadline)
+        && same_bits(a.raw_energy, b.raw_energy) && same_bits(a.smoothed_energy, b.smoothed_energy)
+        && same_bits(a.hold_run_ms, b.hold_run_ms) && a.hold_run_frames == b.hold_run_frames
+        && a.track_index == b.track_index && a.buffer_count == b.buffer_count
+        && a.handedness == b.handedness && a.is_absent == b.is_absent
+        && a.gate_enabled == b.gate_enabled && a.gate_open == b.gate_open
+        && a.raw_energy_valid == b.raw_energy_valid
+        && a.smoothed_energy_valid == b.smoothed_energy_valid;
+}
+
+// Reads the bundle back and compares it with what the rig recorded.
+static bool verify_session(const std::string& path, const TelemetrySink& sink) {
+    char err[512];
+    cg_session_reader_ref rd = cg_session_reader_open(path.c_str(), err, sizeof(err));
+    if (!rd) {
+        std::cerr << "Session read-back failed to open: " << err << "\n";
+        return false;
+    }
+    std::string problem;
+    if (!cg_session_reader_is_complete(rd))  problem = "manifest not complete";
+    if (cg_session_reader_is_truncated(rd))  problem = "truncated";
+
+    std::map<int, std::vector<cg_session_shot>> by_track;
+    for (const auto& s : sink.shots) by_track[s.track_index].push_back(s);
+    if (problem.empty() && cg_session_reader_track_count(rd) != static_cast<int>(by_track.size())) {
+        problem = "track count differs";
+    }
+    for (const auto& [track, expected] : by_track) {
+        if (!problem.empty()) break;
+        std::vector<cg_session_shot> got(expected.size());
+        if (cg_session_reader_shot_count(rd, track) != expected.size()
+                || cg_session_reader_read_shots(rd, track, 0, got.size(), got.data()) != got.size()) {
+            problem = "shot count differs on track " + std::to_string(track);
+            break;
+        }
+        for (size_t i = 0; i < got.size(); ++i) {
+            if (!same_shot(got[i], expected[i])) {
+                problem = "shot " + std::to_string(i) + " differs on track " + std::to_string(track);
+                break;
+            }
+        }
+    }
+    if (problem.empty()) {
+        std::vector<cg_frame_telemetry> rows(sink.rows.size());
+        if (cg_session_reader_telemetry_count(rd) != rows.size()
+                || cg_session_reader_read_telemetry(rd, 0, rows.size(), rows.data()) != rows.size()) {
+            problem = "telemetry row count differs";
+        } else {
+            for (size_t i = 0; i < rows.size(); ++i) {
+                if (!same_row(rows[i], sink.rows[i])) {
+                    problem = "telemetry row " + std::to_string(i) + " differs";
+                    break;
+                }
+            }
+        }
+    }
+    if (problem.empty() && cg_session_reader_event_count(rd) != sink.events) {
+        problem = "event count differs";
+    }
+
+    if (problem.empty()) {
+        std::cerr << "Session " << path << ": " << sink.shots.size() << " shots on "
+                  << by_track.size() << " tracks, " << sink.rows.size() << " telemetry rows, "
+                  << sink.events << " events; read back bit-for-bit: OK\n";
+    } else {
+        std::cerr << "Session " << path << " read-back MISMATCH: " << problem << "\n";
+    }
+    cg_session_reader_close(rd);
+    return problem.empty();
+}
+
 static Args parse_args(int argc, char** argv) {
     Args a;
     for (int i = 1; i < argc; ++i) {
@@ -194,6 +380,8 @@ static Args parse_args(int argc, char** argv) {
         else if (arg == "--holds")        { a.holds         = true; }
         else if (arg == "--bypass-phase2") { a.bypass_phase2 = true; }
         else if (arg == "--telemetry" && i+1 < argc) { a.telemetry_path = argv[++i]; }
+        else if (arg == "--session-out" && i+1 < argc) { a.session_path = argv[++i]; }
+        else if (arg == "--pair-tracks")  { a.pair_tracks = true; }
         else if (arg[0] != '-')           { a.film_paths.push_back(arg); }
         else {
             std::cerr << "Unknown argument: " << arg << "\n";
@@ -276,20 +464,78 @@ int main(int argc, char** argv) {
             cg_gesture_model_destroy(model);
             return 4;
         }
+    }
+
+    const bool session = !args.session_path.empty();
+    if (args.pair_tracks && !session) {
+        std::cerr << "--pair-tracks needs --session-out\n";
+        cg_recognizer_destroy(rec);
+        cg_gesture_model_destroy(model);
+        return 1;
+    }
+    if (session) {
+        sink.recorder = start_session(args, rec);
+        if (!sink.recorder) {
+            cg_recognizer_destroy(rec);
+            cg_gesture_model_destroy(model);
+            return 4;
+        }
+    }
+    // Installed after the recorder's own: the rig forwards to it, so it can
+    // keep what it handed over for the read-back check.
+    if (sink.out.is_open() || session) {
         cg_recognizer_set_frame_telemetry_callback(rec, on_frame_telemetry, &sink);
         cg_recognizer_set_decision_event_callback(rec, on_decision_event, &sink);
     }
 
-    // Per-film replay: push shots one at a time, then check for a result.
-    // Because the replay rig is offline (no timer-based T_commit), we tick
-    // timers with synthetic timestamps after each shot.
-    for (const auto& film_path : args.film_paths) {
-        cg_handfilm_ref film = nullptr;
-        try {
-            film = film_from_file(film_path);
-        } catch (const std::exception& e) {
-            std::cerr << "Skipping " << film_path << ": " << e.what() << "\n";
-            continue;
+    // Per-film (or per-pair) replay: push shots one at a time, then check for a
+    // result. Because the replay rig is offline (no timer-based T_commit), we
+    // tick timers with synthetic timestamps after each shot.
+    const size_t step = args.pair_tracks ? 2 : 1;
+    double next_start = 0.0; // --session-out: where the next film starts on the timeline
+    for (size_t fi = 0; fi < args.film_paths.size(); fi += step) {
+        std::vector<std::string> paths(args.film_paths.begin() + fi,
+            args.film_paths.begin() + std::min(fi + step, args.film_paths.size()));
+
+        std::vector<std::vector<cg_handshot>> films;
+        bool skipped = false;
+        for (const auto& path : paths) {
+            try {
+                cg_handfilm_ref film = film_from_file(path);
+                std::vector<cg_handshot> shots(cg_handfilm_shot_count(film));
+                for (size_t i = 0; i < shots.size(); ++i) cg_handfilm_get_shot(film, i, &shots[i]);
+                cg_handfilm_destroy(film);
+                films.push_back(std::move(shots));
+            } catch (const std::exception& e) {
+                std::cerr << "Skipping " << path << ": " << e.what() << "\n";
+                skipped = true;
+            }
+        }
+        if (skipped) continue;
+        const std::string label = paths.size() == 1 ? paths[0] : paths[0] + " + " + paths[1];
+
+        // Shots in feed order with their track: film i's hand is track i.
+        if (session) {
+            double base = next_start;
+            if (base == 0.0) {
+                for (const auto& f : films) {
+                    if (!f.empty() && (base == 0.0 || f.front().timestamp < base)) base = f.front().timestamp;
+                }
+            }
+            for (auto& f : films) {
+                if (f.empty()) continue;
+                const double shift = std::ceil(base - f.front().timestamp); // whole seconds: exact
+                for (auto& shot : f) shot.timestamp += shift;
+            }
+        }
+        std::vector<std::pair<cg_handshot, int>> feed;
+        for (size_t t = 0; t < films.size(); ++t) {
+            for (const auto& shot : films[t]) feed.push_back({shot, static_cast<int>(t)});
+        }
+        if (films.size() > 1) { // merge a pair by time; a single film keeps its order
+            std::stable_sort(feed.begin(), feed.end(), [](const auto& a, const auto& b) {
+                return a.first.timestamp < b.first.timestamp;
+            });
         }
 
         // Detected results for this film.
@@ -315,27 +561,32 @@ int main(int argc, char** argv) {
         // film ends here, so its event is attributed to that film.
         cg_recognizer_reset_gate(rec);
         cg_recognizer_set_gate_enabled(rec, 1);
-        sink.film_path = film_path;
+        sink.film_path = label;
 
-        const size_t n = cg_handfilm_shot_count(film);
         double last_ts = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            cg_handshot shot{};
-            if (!cg_handfilm_get_shot(film, i, &shot)) continue;
+        for (const auto& [shot, track] : feed) {
             last_ts = shot.timestamp;
+            if (sink.recorder) {
+                cg_session_shot ss{};
+                ss.shot        = shot;
+                ss.track_index = shot.is_absent ? CG_SESSION_ABSENT_TRACK : track;
+                cg_session_recorder_record_shot(sink.recorder, &ss);
+                sink.shots.push_back(ss);
+                sink.track = ss.track_index;
+            }
             cg_recognizer_process_shot(rec, &shot);
             // Tick timers at each shot timestamp.
             cg_recognizer_tick_timers(rec, shot.timestamp);
         }
-        // Final tick with a far-future timestamp to flush pending commits.
-        cg_recognizer_tick_timers(rec, last_ts + 10.0);
-
-        cg_handfilm_destroy(film);
+        // Final tick after the film to flush pending commits: far future
+        // normally, +1 s on a session timeline (see --session-out).
+        cg_recognizer_tick_timers(rec, last_ts + (session ? 1.0 : 10.0));
+        next_start = last_ts + 1.5;
 
         // Emit one JSON line per result (or one empty-result line if none).
         if (results.empty()) {
             json out;
-            out["film_path"]          = film_path;
+            out["film_path"]          = label;
             out["gesture_id"]         = "";
             out["gesture_name"]       = "";
             out["confidence"]         = 0.0;
@@ -344,7 +595,7 @@ int main(int argc, char** argv) {
         } else {
             for (const auto& r : results) {
                 json out;
-                out["film_path"]          = film_path;
+                out["film_path"]          = label;
                 out["gesture_id"]         = r.gesture_id;
                 out["gesture_name"]       = r.gesture_name;
                 out["confidence"]         = r.confidence;
@@ -354,7 +605,18 @@ int main(int argc, char** argv) {
         }
     }
 
+    int status = 0;
+    if (sink.recorder) {
+        if (!cg_session_recorder_stop(sink.recorder)) {
+            std::cerr << "Session stop failed: " << cg_session_recorder_last_error(sink.recorder) << "\n";
+            status = 5;
+        }
+        cg_session_recorder_destroy(sink.recorder);
+        sink.recorder = nullptr;
+        if (status == 0 && !verify_session(args.session_path, sink)) status = 5;
+    }
+
     cg_recognizer_destroy(rec);
     cg_gesture_model_destroy(model);
-    return 0;
+    return status;
 }

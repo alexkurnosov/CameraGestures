@@ -39,6 +39,12 @@ set(CG_SOURCES
     src/hand_gesture_recognizing/HoldDetector.cpp
     src/hand_gesture_recognizing/PrefixMatcher.cpp
     src/hand_gesture_recognizing/HandGestureRecognizing.cpp
+    # Session capture: recorder, manifest, reader
+    src/session/Sha256.cpp
+    src/session/SessionFormat.cpp
+    src/session/SessionManifest.cpp
+    src/session/SessionRecorder.cpp
+    src/session/SessionReader.cpp
 )
 
 
@@ -53,7 +59,7 @@ target_include_directories(CameraGestures
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hands_recognizing
         ${CMAKE_CURRENT_SOURCE_DIR}/src/gesture_model
         ${CMAKE_CURRENT_SOURCE_DIR}/src/hand_gesture_recognizing
-
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/session
 )
 
 if(CG_ENABLE_TFLITE)
