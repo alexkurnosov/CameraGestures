@@ -729,3 +729,43 @@ TEST(SessionFixtures, CommittedBundlesOpenCompleteAndMatchTheirCounts) {
     }
     EXPECT_GE(bundles, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Binding events
+// ---------------------------------------------------------------------------
+
+TEST(SessionBindingEvents, AppendedLinesReadBackWithTheirFields) {
+    ScratchDir tmp;
+    cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+    ASSERT_EQ(cg_session_recorder_start(rec, nullptr, nullptr, nullptr), 1);
+
+    EXPECT_EQ(cg_session_recorder_append_binding_event(rec, 10.5, "cooldown_started",
+                                                       "{\"duration\": 1.0}"), 1);
+    // The reserved members cannot be overridden by the fields.
+    EXPECT_EQ(cg_session_recorder_append_binding_event(rec, 11.0, "gesture_suppressed",
+        "{\"gesture_id\": \"wave\", \"source\": \"core\", \"t\": 0}"), 1);
+    EXPECT_EQ(cg_session_recorder_append_binding_event(rec, 12.0, "status_changed", nullptr), 1);
+
+    EXPECT_EQ(cg_session_recorder_append_binding_event(rec, 13.0, "bad", "[1, 2]"), 0);
+    EXPECT_EQ(cg_session_recorder_append_binding_event(rec, 13.0, "bad", "{not json"), 0);
+    ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+    cg_session_recorder_destroy(rec);
+
+    cg_session_reader_ref rd = openOrFail(tmp.bundle());
+    ASSERT_NE(rd, nullptr);
+    ASSERT_EQ(cg_session_reader_event_count(rd), 3u);
+
+    const json first = json::parse(cg_session_reader_event_json(rd, 0));
+    EXPECT_EQ(first["source"], "binding");
+    EXPECT_EQ(first["event"], "cooldown_started");
+    EXPECT_EQ(first["t"], 10.5);
+    EXPECT_EQ(first["duration"], 1.0);
+
+    const json second = json::parse(cg_session_reader_event_json(rd, 1));
+    EXPECT_EQ(second["source"], "binding");
+    EXPECT_EQ(second["t"], 11.0);
+    EXPECT_EQ(second["gesture_id"], "wave");
+
+    EXPECT_EQ(json::parse(cg_session_reader_event_json(rd, 2))["event"], "status_changed");
+    cg_session_reader_close(rd);
+}

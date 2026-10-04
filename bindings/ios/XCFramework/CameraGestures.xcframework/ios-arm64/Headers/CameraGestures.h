@@ -5,6 +5,11 @@
 #include "HandsRecognizing.h"
 #include "GestureModel.h"
 #include "HandGestureRecognizing.h"
+/* Present only in the capture variant of the library; the standard variant
+ * ships without this header and without the code behind it. */
+#if __has_include("SessionCapture.h")
+#include "SessionCapture.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {

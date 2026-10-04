@@ -1,12 +1,14 @@
 PODS:
-  - CameraGestures (0.5.0):
+  - CameraGestures/Core (0.5.0):
     - MediaPipeTasksVision (= 0.10.14)
+  - CameraGestures/SessionCapture (0.5.0):
+    - CameraGestures/Core
   - MediaPipeTasksCommon (0.10.14)
   - MediaPipeTasksVision (0.10.14):
     - MediaPipeTasksCommon (= 0.10.14)
 
 DEPENDENCIES:
-  - CameraGestures (from `../../bindings/ios`)
+  - CameraGestures/SessionCapture (from `../../bindings/ios`)
 
 SPEC REPOS:
   trunk:
@@ -18,10 +20,10 @@ EXTERNAL SOURCES:
     :path: "../../bindings/ios"
 
 SPEC CHECKSUMS:
-  CameraGestures: de400689c01f7f7946b9e6e311cc82f064afdf8d
+  CameraGestures: 4a648f64316994f7e6c2ae9b0298d7e821fd6cd3
   MediaPipeTasksCommon: 5660099c2dd81f7ac4a7a5f51055785ead8e0e64
   MediaPipeTasksVision: 0fac0db83c0b45e4d7811a9227be5e571403cf83
 
-PODFILE CHECKSUM: e22e6e9bcbde130042be9892b3a65fa64491b11c
+PODFILE CHECKSUM: fd5beeac353d6d17b83e301c936eb40aa7e3d379
 
 COCOAPODS: 1.16.2

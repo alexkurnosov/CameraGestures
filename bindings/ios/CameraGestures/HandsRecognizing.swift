@@ -107,6 +107,19 @@ public class HandsRecognizing: NSObject {
     public var handshotCallback: HandShotCallback?
     public var handfilmCallback: HandFilmCallback?
 
+    #if CG_SESSION_CAPTURE
+    /// Each shot with what a session records beside it: the MediaPipe per-frame
+    /// hand index (CG_SESSION_ABSENT_TRACK for an absent frame) and the camera
+    /// PTS of the frame it came from. Called just before `handshotCallback`.
+    var sessionShotCallback: ((HandShot, Int32, Double?) -> Void)?
+
+    // MediaPipe reports a result by the timestamp the frame was submitted with,
+    // so the frame's PTS is kept under that timestamp until the result arrives.
+    // Written on the camera queue, read on MediaPipe's.
+    private let ptsLock = NSLock()
+    private var ptsByTimestampMs: [Int: Double] = [:]
+    #endif
+
     // MediaPipe
     private var landmarker: HandLandmarker?
 
@@ -260,9 +273,9 @@ public class HandsRecognizing: NSObject {
 
     // MARK: Private — MediaPipe result conversion
 
-    private func convertMediaPipeResults(_ result: HandLandmarkerResult, timestamp: TimeInterval) {
+    private func convertMediaPipeResults(_ result: HandLandmarkerResult, timestamp: TimeInterval, framePTS: Double?) {
         if result.landmarks.isEmpty {
-            pushAbsentIfActive(timestamp: timestamp)
+            pushAbsentIfActive(timestamp: timestamp, pts: framePTS)
             return
         }
 
@@ -274,7 +287,7 @@ public class HandsRecognizing: NSObject {
             let wrist = pts[0], lm9 = pts[9]
             let dx = lm9.x - wrist.x, dy = lm9.y - wrist.y, dz = lm9.z - wrist.z
             if dx*dx + dy*dy + dz*dz < 1e-12 {
-                pushAbsentIfActive(timestamp: timestamp)
+                pushAbsentIfActive(timestamp: timestamp, pts: framePTS)
                 continue
             }
 
@@ -288,25 +301,69 @@ public class HandsRecognizing: NSObject {
             }
 
             let shot = HandShot(landmarks: pts, timestamp: timestamp, leftOrRight: handedness)
-            pushHandshot(shot)
+            pushHandshot(shot, handIndex: Int32(handIndex), pts: framePTS)
         }
     }
 
-    private func pushAbsentIfActive(timestamp: TimeInterval) {
+    private func pushAbsentIfActive(timestamp: TimeInterval, pts: Double?) {
         let absent = HandShot.absent(timestamp: timestamp)
         // cg_hands_recognizer silently drops absent shots with no prior real frame
         let cShot = absent.toCStruct()
         cg_hands_recognizer_push_handshot(recognizerRef, [cShot])
         frameRateMonitor.noteShot(timestamp: timestamp, isAbsent: true)
-        handshotCallback?(absent)
+        deliver(absent, handIndex: -1, pts: pts)
     }
 
-    private func pushHandshot(_ shot: HandShot) {
+    private func pushHandshot(_ shot: HandShot, handIndex: Int32, pts: Double?) {
         var cShot = shot.toCStruct()
         cg_hands_recognizer_push_handshot(recognizerRef, &cShot)
         frameRateMonitor.noteShot(timestamp: shot.timestamp, isAbsent: false)
+        deliver(shot, handIndex: handIndex, pts: pts)
+    }
+
+    private func deliver(_ shot: HandShot, handIndex: Int32, pts: Double?) {
+        #if CG_SESSION_CAPTURE
+        sessionShotCallback?(shot, handIndex, pts)
+        #endif
         handshotCallback?(shot)
     }
+
+    #if CG_SESSION_CAPTURE
+    private func notePTS(_ pts: Double, timestampMs: Int) {
+        ptsLock.lock()
+        ptsByTimestampMs[timestampMs] = pts
+        ptsLock.unlock()
+    }
+
+    private func takePTS(timestampMs: Int) -> Double? {
+        ptsLock.lock()
+        defer { ptsLock.unlock() }
+        let pts = ptsByTimestampMs[timestampMs]
+        // Frames MediaPipe dropped never get a result; their entries go here.
+        ptsByTimestampMs = ptsByTimestampMs.filter { $0.key > timestampMs }
+        return pts
+    }
+
+    /// The camera as configured, for a session manifest.
+    func sessionCameraInfo() -> (preset: String?, width: Int32, height: Int32, fps: Double, position: Int32) {
+        let device = (captureSession?.inputs.first as? AVCaptureDeviceInput)?.device
+        var width: Int32 = 0, height: Int32 = 0, fps = 0.0
+        if let device {
+            let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+            width  = size.width
+            height = size.height
+            let frame = device.activeVideoMinFrameDuration.seconds
+            if frame.isFinite, frame > 0 { fps = 1.0 / frame }
+        }
+        let position: cg_camera_position
+        switch device?.position {
+        case .front?: position = CG_CAMERA_POSITION_FRONT
+        case .back?:  position = CG_CAMERA_POSITION_BACK
+        default:      position = CG_CAMERA_POSITION_UNKNOWN
+        }
+        return (captureSession?.sessionPreset.rawValue, width, height, fps, Int32(position.rawValue))
+    }
+    #endif
 }
 
 // MARK: - Convenience extensions
@@ -353,7 +410,11 @@ extension HandsRecognizing: HandLandmarkerLiveStreamDelegate {
         if let result {
             frameRateMonitor.noteLandmarkerResult()
             let ts = TimeInterval(timestampInMilliseconds) / 1000.0
-            convertMediaPipeResults(result, timestamp: ts)
+            var pts: Double?
+            #if CG_SESSION_CAPTURE
+            pts = takePTS(timestampMs: timestampInMilliseconds)
+            #endif
+            convertMediaPipeResults(result, timestamp: ts, framePTS: pts)
         }
     }
 }
@@ -373,6 +434,9 @@ extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
         do {
             let mpImage   = try MPImage(pixelBuffer: pixelBuffer)
             let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+            #if CG_SESSION_CAPTURE
+            notePTS(CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds, timestampMs: timestamp)
+            #endif
             try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
         } catch {
             print("Frame processing error: \(error)")

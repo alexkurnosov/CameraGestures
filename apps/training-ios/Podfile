@@ -5,7 +5,8 @@ use_frameworks! :linkage => :static
 # Stage 5: Training App v2 is now fully on the new CameraGestures pod.
 # All four V1 pods (HandGestureTypes, HandsRecognizingModule, GestureModelModule,
 # HandGestureRecognizingFramework) have been replaced by the unified pod.
-pod 'CameraGestures', :path => '../../bindings/ios'
+# The Training App records sessions, so it uses the capture variant of the library.
+pod 'CameraGestures/SessionCapture', :path => '../../bindings/ios'
 
 target 'ModelTrainingApp' do
   project 'ModelTraining/ModelTrainingApp.xcodeproj'

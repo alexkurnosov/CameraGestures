@@ -101,6 +101,16 @@ struct CameraView: View {
                             frameCadencePanel
                         }
 
+                        #if CG_SESSION_CAPTURE
+                        // Temporary (session capture Stage 3); Stage 6 replaces it.
+                        if appSettings.showDebugInfo {
+                            SessionCaptureDebugPanel(
+                                recognizer: gestureRecognizer.recognizer,
+                                appSettings: appSettings,
+                                isRecognitionActive: viewModel.isRecognitionActive)
+                        }
+                        #endif
+
                         // Recent gestures list (prediction mode)
                         if !viewModel.recentGestures.isEmpty && !viewModel.seriesCoordinator.isRunning {
                             recentGesturesSection

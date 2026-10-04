@@ -15,6 +15,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # (FeaturePreprocessor and PoseManifest compile and test fine without it).
 option(CG_ENABLE_TFLITE "Build with TFLite inference backend" OFF)
 
+# Session capture (recorder, reader, SessionCapture.h). OFF by default, so no
+# build ships capture code unless it asks for it. The standard iOS framework is
+# built without it and the capture framework with it (scripts/build-ios.sh).
+option(CG_SESSION_CAPTURE "Build the session recorder and reader" OFF)
+
+# The tests and the replay rig exercise the session code.
+option(CG_BUILD_TESTS "Build gtest unit tests" OFF)
+if(CG_BUILD_TESTS)
+    set(CG_SESSION_CAPTURE ON)
+endif()
+
 # ---- Third-party includes --------------------------------------------------
 
 set(NLOHMANN_JSON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json")
@@ -39,14 +50,17 @@ set(CG_SOURCES
     src/hand_gesture_recognizing/HoldDetector.cpp
     src/hand_gesture_recognizing/PrefixMatcher.cpp
     src/hand_gesture_recognizing/HandGestureRecognizing.cpp
-    # Session capture: recorder, manifest, reader
-    src/session/Sha256.cpp
-    src/session/SessionFormat.cpp
-    src/session/SessionManifest.cpp
-    src/session/SessionRecorder.cpp
-    src/session/SessionReader.cpp
 )
 
+if(CG_SESSION_CAPTURE)
+    list(APPEND CG_SOURCES
+        src/session/Sha256.cpp
+        src/session/SessionFormat.cpp
+        src/session/SessionManifest.cpp
+        src/session/SessionRecorder.cpp
+        src/session/SessionReader.cpp
+    )
+endif()
 
 add_library(CameraGestures STATIC ${CG_SOURCES})
 
@@ -92,11 +106,15 @@ endif()
 install(TARGETS CameraGestures
     ARCHIVE DESTINATION lib
 )
-install(DIRECTORY include/CameraGestures DESTINATION include)
+if(CG_SESSION_CAPTURE)
+    install(DIRECTORY include/CameraGestures DESTINATION include)
+else()
+    install(DIRECTORY include/CameraGestures DESTINATION include
+        PATTERN "SessionCapture.h" EXCLUDE)
+endif()
 
 # ---- Tests -----------------------------------------------------------------
 
-option(CG_BUILD_TESTS "Build gtest unit tests" OFF)
 if(CG_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

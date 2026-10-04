@@ -374,6 +374,26 @@ int cg_session_recorder_append_decision_event(cg_session_recorder_ref  recorder,
     return 1;
 }
 
+int cg_session_recorder_append_binding_event(cg_session_recorder_ref recorder,
+                                             double      timestamp,
+                                             const char* event,
+                                             const char* fields_json) {
+    if (!recorder || !event || !recorder->recording) return 0;
+    auto& r = *recorder;
+    json line = json::object();
+    if (fields_json) {
+        line = json::parse(fields_json, nullptr, false);
+        if (!line.is_object()) return r.fail("binding event fields are not a JSON object");
+    }
+    line["t"]      = timestamp;
+    line["source"] = "binding";
+    line["event"]  = event;
+    r.events_pending += line.dump(-1, ' ', false, json::error_handler_t::replace);
+    r.events_pending += '\n';
+    ++r.event_count;
+    return 1;
+}
+
 int cg_session_recorder_stop(cg_session_recorder_ref recorder) {
     if (!recorder || !recorder->recording) return 0;
     auto& r = *recorder;

@@ -302,16 +302,22 @@ public class HandGestureRecognizing {
     private var recentHandshots:   [HandShot]          = []
 
     // Cooldown (main thread)
-    private var cooldownEndTime: TimeInterval?  = nil
-    private var cooldownDuration: TimeInterval  = 1.0
-    private var pendingGesture: DetectedGesture? = nil
+    private var cooldown = CooldownQueue<DetectedGesture>()
     private var cooldownGen: Int = 0
+
+    #if CG_SESSION_CAPTURE
+    // Session capture (pipelineQueue only). Non-nil while a session is recorded.
+    private var sessionRecorderRef: cg_session_recorder_ref?
+    #endif
 
     private var _gateEnabled  = false
     private var _bypassPhase2 = false
 
     private var currentStatus: GestureRecognizingStatus = .idle {
         didSet {
+            #if CG_SESSION_CAPTURE
+            recordSessionEvent("status_changed", ["status": currentStatus.sessionEventName])
+            #endif
             DispatchQueue.main.async { [weak self] in
                 self?.statusChangeCallback?(self?.currentStatus ?? .idle)
             }
@@ -334,6 +340,9 @@ public class HandGestureRecognizing {
 
     deinit {
         stopTimerTick()
+        #if CG_SESSION_CAPTURE
+        endSessionCaptureOnQueue()
+        #endif
         if let ref = recognizerRef { cg_recognizer_destroy(ref) }
     }
 
@@ -386,6 +395,10 @@ public class HandGestureRecognizing {
         stopTimerTick()
         isRunning = false
         currentStatus = .idle
+        #if CG_SESSION_CAPTURE
+        // A session spans one prediction run.
+        stopSessionCapture()
+        #endif
     }
 
     public func pause() {
@@ -417,6 +430,7 @@ public class HandGestureRecognizing {
             guard let self, let ref = self.recognizerRef else { return }
             cg_recognizer_reset_gate(ref)
         }
+        recordSessionEvent("gate_reset", ["reason": "correction"])
         currentStatus = .running
     }
 
@@ -503,6 +517,7 @@ public class HandGestureRecognizing {
             guard let self, let ref = self.recognizerRef else { return }
             cg_recognizer_reset_gate(ref)
         }
+        recordSessionEvent("gate_reset", ["reason": "external"])
     }
 
     // MARK: Convenience
@@ -515,6 +530,10 @@ public class HandGestureRecognizing {
     // MARK: - Private: build C++ recognizer
 
     private func buildRecognizer() {
+        #if CG_SESSION_CAPTURE
+        // The recorder is attached to the recognizer that is about to go.
+        endSessionCaptureOnQueue()
+        #endif
         if let old = recognizerRef { cg_recognizer_destroy(old); recognizerRef = nil }
 
         var c = cg_recognizer_default_config()
@@ -600,17 +619,26 @@ public class HandGestureRecognizing {
     // MARK: - Private: camera callbacks
 
     private func setupHandsRecognizingCallbacks() {
+        #if CG_SESSION_CAPTURE
+        handsRecognizer.sessionShotCallback = { [weak self] shot, handIndex, pts in
+            self?.handleHandshot(shot, handIndex: handIndex, pts: pts)
+        }
         handsRecognizer.handshotCallback = { [weak self] shot in
-            self?.handleHandshot(shot)
             self?.handshotCallback?(shot)
         }
+        #else
+        handsRecognizer.handshotCallback = { [weak self] shot in
+            self?.handleHandshot(shot, handIndex: -1, pts: nil)
+            self?.handshotCallback?(shot)
+        }
+        #endif
         handsRecognizer.handfilmCallback = { [weak self] film in
             self?.handfilmCallback?(film)
             // In gate mode, recognition fires from the C++ pipeline — not from handfilms.
         }
     }
 
-    private func handleHandshot(_ shot: HandShot) {
+    private func handleHandshot(_ shot: HandShot, handIndex: Int32, pts: Double?) {
         pipelineQueue.async { [weak self] in
             guard let self else { return }
             self.recentHandshots.append(shot)
@@ -621,6 +649,16 @@ public class HandGestureRecognizing {
 
             guard let ref = self.recognizerRef else { return }
             var c = shot.toCHandshot()
+            #if CG_SESSION_CAPTURE
+            if let recorder = self.sessionRecorderRef {
+                // Before process_shot, so the row and events the shot produces
+                // are attributed to its track.
+                var recorded = cg_session_shot(shot: c, pts: pts ?? 0,
+                                               track_index: handIndex,
+                                               has_pts: pts == nil ? 0 : 1)
+                cg_session_recorder_record_shot(recorder, &recorded)
+            }
+            #endif
             cg_recognizer_process_shot(ref, &c)
         }
     }
@@ -652,22 +690,34 @@ public class HandGestureRecognizing {
     // MARK: - Private: cooldown (MainActor)
 
     @MainActor
-    private func emitOrQueueGated(_ gesture: DetectedGesture, cooldown: TimeInterval) {
+    private func emitOrQueueGated(_ gesture: DetectedGesture, cooldown duration: TimeInterval) {
         let now = Date().timeIntervalSince1970
-        if let end = cooldownEndTime, now < end {
-            pendingGesture = gesture
-        } else {
+        switch cooldown.submit(gesture, now: now, cooldown: duration) {
+        case .emit:
             processDetectedGesture(gesture)
-            startCooldown(duration: cooldown)
+            scheduleCooldownExpiry(after: duration, gesture: gesture)
+        case .queued(let suppressed):
+            // A gesture that was waiting for the window to end is discarded
+            // when another arrives in the same window.
+            if let suppressed {
+                recordSessionEvent("gesture_suppressed", [
+                    "gesture_id":  suppressed.prediction.gestureId,
+                    "confidence":  Double(suppressed.prediction.confidence),
+                    "detected_at": suppressed.detectionTimestamp,
+                    "replaced_by": gesture.prediction.gestureId,
+                ])
+            }
         }
     }
 
     @MainActor
-    private func startCooldown(duration: TimeInterval) {
+    private func scheduleCooldownExpiry(after duration: TimeInterval, gesture: DetectedGesture) {
         cooldownGen += 1
         let gen = cooldownGen
-        cooldownEndTime = Date().timeIntervalSince1970 + duration
-        cooldownDuration = duration
+        recordSessionEvent("cooldown_started", [
+            "duration":   duration,
+            "gesture_id": gesture.prediction.gestureId,
+        ])
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             self?.cooldownExpired(generation: gen)
@@ -677,11 +727,10 @@ public class HandGestureRecognizing {
     @MainActor
     private func cooldownExpired(generation: Int) {
         guard generation == cooldownGen else { return }
-        cooldownEndTime = nil
-        guard let g = pendingGesture else { return }
-        pendingGesture = nil
+        recordSessionEvent("cooldown_expired")
+        guard let g = cooldown.expire(now: Date().timeIntervalSince1970) else { return }
         processDetectedGesture(g)
-        startCooldown(duration: cooldownDuration)
+        scheduleCooldownExpiry(after: cooldown.duration, gesture: g)
     }
 
     @MainActor
@@ -714,6 +763,20 @@ public class HandGestureRecognizing {
 
     // MARK: - Private: helpers
 
+    /// Adds a binding event to the session being recorded, if there is one.
+    /// Compiles to nothing without CG_SESSION_CAPTURE.
+    private func recordSessionEvent(_ event: String, _ fields: [String: Any] = [:]) {
+        #if CG_SESSION_CAPTURE
+        let t = Date().timeIntervalSince1970
+        pipelineQueue.async { [weak self] in
+            guard let self, let recorder = self.sessionRecorderRef else { return }
+            let json = (try? JSONSerialization.data(withJSONObject: fields))
+                .flatMap { String(data: $0, encoding: .utf8) }
+            cg_session_recorder_append_binding_event(recorder, t, event, json)
+        }
+        #endif
+    }
+
     private func resetStats() {
         detectedGestures.removeAll()
         processingTimes.removeAll()
@@ -734,6 +797,115 @@ public class HandGestureRecognizing {
         return film
     }
 }
+
+// --------------------------------------------------------------------------
+// MARK: - Session capture
+// --------------------------------------------------------------------------
+
+#if CG_SESSION_CAPTURE
+// The recognizer's side of SessionRecorder (SessionRecorder.swift), which is
+// the public API.
+extension HandGestureRecognizing {
+
+    /// Creates the bundle and starts recording into it. The session ends at
+    /// `stopSessionCapture()`, at `stop()`, or when the recognizer is rebuilt.
+    func startSessionCapture(bundlePath: String,
+                             modelFiles: SessionModelFiles,
+                             extra: [String: String]) throws {
+        guard isInitialized else { throw SessionCaptureError.recognizerNotInitialized }
+
+        let strings = CStrings()
+        let info = Bundle.main.infoDictionary
+        let appVersion = [info?["CFBundleShortVersionString"], info?["CFBundleVersion"]]
+            .compactMap { $0 as? String }.joined(separator: " ")
+        var system = utsname()
+        uname(&system)
+        let deviceModel = withUnsafeBytes(of: &system.machine) {
+            String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
+        }
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let camera = handsRecognizer.sessionCameraInfo()
+
+        var pairs = extra.sorted { $0.key < $1.key }.map {
+            cg_session_kv(key: strings.make($0.key), value: strings.make($0.value))
+        }
+        var provenance = cg_session_provenance(
+            app_version:  strings.make(appVersion),
+            device_model: strings.make(deviceModel),
+            os_version:   strings.make("iOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"),
+            camera: cg_session_camera_info(preset: strings.make(camera.preset),
+                                           width: camera.width, height: camera.height,
+                                           fps: camera.fps, position: camera.position),
+            extra: nil, n_extra: Int32(pairs.count))
+        var files = cg_session_model_files(
+            gesture_model: strings.make(modelFiles.gestureModel?.path),
+            gesture_ids:   strings.make(modelFiles.gestureIds?.path),
+            pose_model:    strings.make(modelFiles.poseModel?.path),
+            pose_manifest: strings.make(modelFiles.poseManifest?.path),
+            preprocessor:  strings.make(modelFiles.preprocessor?.path))
+
+        // The structs point into `strings`, so it must outlive the start call.
+        try withExtendedLifetime(strings) { try pipelineQueue.sync {
+            guard sessionRecorderRef == nil else { throw SessionCaptureError.alreadyRecording }
+            guard let recorder = cg_session_recorder_create(bundlePath) else {
+                throw SessionCaptureError.startFailed("cannot create a recorder for \(bundlePath)")
+            }
+            let started = pairs.withUnsafeMutableBufferPointer { buffer -> Int32 in
+                provenance.extra = UnsafePointer(buffer.baseAddress)
+                return cg_session_recorder_start(recorder, recognizerRef, &provenance, &files)
+            }
+            guard started != 0 else {
+                let reason = String(cString: cg_session_recorder_last_error(recorder))
+                cg_session_recorder_destroy(recorder)
+                throw SessionCaptureError.startFailed(reason)
+            }
+            sessionRecorderRef = recorder
+        } }
+    }
+
+    /// Finalises the session. Does nothing when none is being recorded.
+    func stopSessionCapture() {
+        pipelineQueue.sync { endSessionCaptureOnQueue() }
+    }
+
+    var isCapturingSession: Bool {
+        pipelineQueue.sync { sessionRecorderRef != nil }
+    }
+
+    fileprivate func endSessionCaptureOnQueue() {
+        guard let recorder = sessionRecorderRef else { return }
+        sessionRecorderRef = nil
+        cg_session_recorder_destroy(recorder) // stops first: flushes and finalises the manifest
+    }
+}
+
+/// C strings that live as long as this object, for filling C structs.
+private final class CStrings {
+    private var pointers: [UnsafeMutablePointer<CChar>] = []
+
+    func make(_ string: String?) -> UnsafePointer<CChar>? {
+        guard let string, let copy = strdup(string) else { return nil }
+        pointers.append(copy)
+        return UnsafePointer(copy)
+    }
+
+    deinit { pointers.forEach { free($0) } }
+}
+
+private extension GestureRecognizingStatus {
+    var sessionEventName: String {
+        switch self {
+        case .idle:                return "idle"
+        case .initializing:        return "initializing"
+        case .running:             return "running"
+        case .paused:              return "paused"
+        case .pausedForCorrection: return "paused_for_correction"
+        case .stopping:            return "stopping"
+        case .error:               return "error"
+        }
+    }
+}
+#endif
 
 // --------------------------------------------------------------------------
 // MARK: - Helpers

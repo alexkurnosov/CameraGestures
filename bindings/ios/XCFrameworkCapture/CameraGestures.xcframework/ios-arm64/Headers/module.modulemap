@@ -1,0 +1,5 @@
+module CameraGesturesC {
+    umbrella header "CameraGestures.h"
+    export *
+    module * { export * }
+}
