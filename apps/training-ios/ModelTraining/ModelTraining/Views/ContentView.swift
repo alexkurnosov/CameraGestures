@@ -43,6 +43,15 @@ struct ContentView: View {
                 }
                 .tag(3)
 
+            #if CG_SESSION_CAPTURE
+            SessionsView()
+                .tabItem {
+                    Image(systemName: "waveform.path.ecg")
+                    Text("Sessions")
+                }
+                .tag(5)
+            #endif
+
             SettingsView()
                 .tabItem {
                     Image(systemName: "gear")
@@ -51,6 +60,17 @@ struct ContentView: View {
                 .tag(4)
         }
         .accentColor(.blue)
+        #if CG_SESSION_CAPTURE
+        // A .cgsession opened from Files or the share sheet.
+        .onOpenURL { url in
+            do {
+                try SessionsView.importSession(from: url)
+                selectedTab = 5
+            } catch {
+                showAlert("Import failed: \(error.localizedDescription)")
+            }
+        }
+        #endif
         .onAppear {
             subscribeToStatus()
             initializeRecognizer()
