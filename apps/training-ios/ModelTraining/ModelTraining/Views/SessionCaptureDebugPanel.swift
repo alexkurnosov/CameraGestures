@@ -6,6 +6,7 @@
 
 import SwiftUI
 import CameraGestures
+import Combine
 
 struct SessionCaptureDebugPanel: View {
     let recognizer: HandGestureRecognizing
@@ -15,6 +16,8 @@ struct SessionCaptureDebugPanel: View {
 
     @State private var message = "Not recording."
     @State private var sessions: [StoredSession] = []
+    @State private var withVideo = false
+    @State private var thermalState = ProcessInfo.processInfo.thermalState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -26,10 +29,17 @@ struct SessionCaptureDebugPanel: View {
                 Spacer()
             }
 
+            Toggle("With video", isOn: $withVideo)
+                .font(.caption)
+                .disabled(isRecognitionActive)
             Button("Record the next prediction run") { arm() }
                 .disabled(isRecognitionActive)
             Text(message)
                 .font(.caption)
+                .foregroundColor(.secondary)
+            // Stage 4's thermal test needs to know how hot the phone is.
+            Text("Thermal state: \(thermalName)")
+                .font(.caption.monospaced())
                 .foregroundColor(.secondary)
 
             Divider()
@@ -51,6 +61,10 @@ struct SessionCaptureDebugPanel: View {
         .background(Color.secondary.opacity(0.1))
         .cornerRadius(8)
         .onAppear { sessions = SessionRecorder.storedSessions() }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in
+            thermalState = ProcessInfo.processInfo.thermalState
+        }
         .onChange(of: isRecognitionActive) { active in
             // The recognizer ends the session when prediction stops.
             if !active {
@@ -60,9 +74,19 @@ struct SessionCaptureDebugPanel: View {
         }
     }
 
+    private var thermalName: String {
+        switch thermalState {
+        case .nominal:    return "nominal"
+        case .fair:       return "fair"
+        case .serious:    return "serious"
+        case .critical:   return "critical"
+        @unknown default: return "unknown"
+        }
+    }
+
     private func arm() {
         Task { @MainActor in
-            guard let consent = await SessionCaptureConsent.request(includesVideo: false) else {
+            guard let consent = await SessionCaptureConsent.request(includesVideo: withVideo) else {
                 message = "Consent declined. Nothing is recorded."
                 sessions = SessionRecorder.storedSessions()
                 return

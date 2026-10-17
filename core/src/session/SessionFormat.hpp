@@ -49,6 +49,7 @@ constexpr const char* kTelemetryFile = "telemetry.bin";
 constexpr const char* kEventsFile    = "events.jsonl";
 constexpr const char* kLabelsFile    = "labels.jsonl";
 constexpr const char* kShotsDir      = "shots";
+constexpr const char* kVideoFile     = "video.mov"; // written by the platform binding
 
 // "shots/0.bin", "shots/absent.bin"
 std::string shotFileName(int track_index);

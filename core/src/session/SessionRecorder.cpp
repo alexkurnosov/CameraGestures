@@ -201,6 +201,17 @@ json provenanceJson(const cg_session_provenance* p) {
     for (int i = 0; i < p->n_extra && p->extra; ++i) {
         if (p->extra[i].key) extra[p->extra[i].key] = optionalString(p->extra[i].value);
     }
+    json video = nullptr;
+    if (p->video.has_video) {
+        video = {
+            {"file",             kVideoFile},
+            {"width",            p->video.width},
+            {"height",           p->video.height},
+            {"rotation_degrees", p->video.rotation_degrees},
+            {"mirrored",         p->video.mirrored != 0},
+            {"anchor",           nullptr},
+        };
+    }
     return {
         {"app_version",  optionalString(p->app_version)},
         {"device_model", optionalString(p->device_model)},
@@ -212,6 +223,7 @@ json provenanceJson(const cg_session_provenance* p) {
             {"fps",      p->camera.fps},
             {"position", cameraPositionName(p->camera.position)},
         }},
+        {"video", video},
         {"extra", extra},
     };
 }
@@ -391,6 +403,17 @@ int cg_session_recorder_append_binding_event(cg_session_recorder_ref recorder,
     r.events_pending += line.dump(-1, ' ', false, json::error_handler_t::replace);
     r.events_pending += '\n';
     ++r.event_count;
+    return 1;
+}
+
+int cg_session_recorder_set_video_anchor(cg_session_recorder_ref recorder,
+                                         double pts, double timestamp) {
+    if (!recorder || !recorder->recording) return 0;
+    auto& r = *recorder;
+    json& video = r.manifest["provenance"]["video"];
+    if (!video.is_object()) return r.fail("the session was started without video");
+    video["anchor"] = {{"pts", pts}, {"timestamp", timestamp}};
+    if (!r.writeManifest()) return r.fail("cannot write manifest");
     return 1;
 }
 

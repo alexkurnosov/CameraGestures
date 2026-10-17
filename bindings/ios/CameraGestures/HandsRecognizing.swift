@@ -118,6 +118,9 @@ public class HandsRecognizing: NSObject {
     // Written on the camera queue, read on MediaPipe's.
     private let ptsLock = NSLock()
     private var ptsByTimestampMs: [Int: Double] = [:]
+
+    // Non-nil while a session records video. Set and read on the camera queue.
+    private var sessionVideoWriter: SessionVideoWriter?
     #endif
 
     // MediaPipe
@@ -363,6 +366,54 @@ public class HandsRecognizing: NSObject {
         }
         return (captureSession?.sessionPreset.rawValue, width, height, fps, Int32(position.rawValue))
     }
+
+    /// The frames a session video would store, as the camera is set up and as
+    /// the device is held now.
+    func sessionVideoFormat() throws -> SessionVideoFormat {
+        guard let videoOutput,
+              let connection = videoOutput.connection(with: .video),
+              let device = (captureSession?.inputs.first as? AVCaptureDeviceInput)?.device,
+              let settings = videoOutput.recommendedVideoSettingsForAssetWriter(writingTo: .mov),
+              let width = settings[AVVideoWidthKey] as? Int,
+              let height = settings[AVVideoHeightKey] as? Int
+        else { throw SessionCaptureError.startFailed("the camera is not set up, so its video format is unknown") }
+
+        // The system knows which rotation levels the picture; older systems
+        // have no equivalent, and a guessed rotation would misplace the overlay.
+        guard #available(iOS 17.0, *) else {
+            throw SessionCaptureError.startFailed("recording video needs iOS 17 or later")
+        }
+        let upright = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+            .videoRotationAngleForHorizonLevelCapture
+        // The connection has already applied its own angle to the frames.
+        let remaining = Int((upright - connection.videoRotationAngle).rounded())
+        return SessionVideoFormat(width: Int32(width), height: Int32(height),
+                                  rotationDegrees: Int32(((remaining % 360) + 360) % 360),
+                                  mirrored: connection.isVideoMirrored)
+    }
+
+    /// Starts writing the camera frames to `url`. Frames arrive once the camera runs.
+    func startSessionVideo(at url: URL, format: SessionVideoFormat) throws {
+        let writer = try SessionVideoWriter(url: url, format: format)
+        processingQueue?.sync { sessionVideoWriter = writer }
+    }
+
+    /// What the video writer has to tell the session since the last call.
+    func takeSessionVideoNotes() -> [SessionVideoNote] {
+        // Reading the reference off the camera queue is safe here: both this and
+        // `finishSessionVideo` run on the recognizer's pipeline queue.
+        sessionVideoWriter?.takeNotes() ?? []
+    }
+
+    /// Closes the video file, if one is being written, and returns the last notes.
+    func finishSessionVideo() -> [SessionVideoNote] {
+        var writer: SessionVideoWriter?
+        processingQueue?.sync {
+            writer = sessionVideoWriter
+            sessionVideoWriter = nil
+        }
+        return writer?.finish() ?? []
+    }
     #endif
 }
 
@@ -435,7 +486,9 @@ extension HandsRecognizing: AVCaptureVideoDataOutputSampleBufferDelegate {
             let mpImage   = try MPImage(pixelBuffer: pixelBuffer)
             let timestamp = Int(Date().timeIntervalSince1970 * 1000)
             #if CG_SESSION_CAPTURE
-            notePTS(CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds, timestampMs: timestamp)
+            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            notePTS(pts.seconds, timestampMs: timestamp)
+            sessionVideoWriter?.append(pixelBuffer, pts: pts, timestamp: Double(timestamp) / 1000.0)
             #endif
             try landmarker.detectAsync(image: mpImage, timestampInMilliseconds: timestamp)
         } catch {

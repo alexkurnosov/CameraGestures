@@ -133,7 +133,8 @@ public final class SessionRecorder {
 
     /// Starts recording and returns the bundle's location. Call it before
     /// `HandGestureRecognizing.start()`; the session ends when the recognizer
-    /// stops.
+    /// stops. When the consent includes video, the camera frames are written
+    /// to `video.mov` in the bundle, which needs iOS 17.
     @discardableResult
     public func start(consent: SessionCaptureConsent,
                       modelFiles: SessionModelFiles = SessionModelFiles()) throws -> URL {
@@ -146,6 +147,7 @@ public final class SessionRecorder {
         try recognizer.startSessionCapture(
             bundlePath: bundle.path,
             modelFiles: modelFiles,
+            includesVideo: consent.includesVideo,
             extra: [
                 "consent_granted_at":     ISO8601DateFormatter().string(from: consent.grantedAt),
                 "consent_includes_video": consent.includesVideo ? "true" : "false",

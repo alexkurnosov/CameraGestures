@@ -49,3 +49,11 @@ target_include_directories(replay_rig PRIVATE
     ${CMAKE_SOURCE_DIR}/src/gesture_model
     ${CMAKE_SOURCE_DIR}/src/hand_gesture_recognizing
 )
+
+# ---- Session capture Stage 4: video alignment check (standalone CLI) --------
+
+add_executable(session_video_check session_video_check/main.cpp)
+
+target_link_libraries(session_video_check PRIVATE CameraGestures)
+
+target_include_directories(session_video_check PRIVATE ${CMAKE_SOURCE_DIR}/include)

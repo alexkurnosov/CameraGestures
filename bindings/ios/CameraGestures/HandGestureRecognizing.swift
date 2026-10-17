@@ -651,6 +651,7 @@ public class HandGestureRecognizing {
             var c = shot.toCHandshot()
             #if CG_SESSION_CAPTURE
             if let recorder = self.sessionRecorderRef {
+                self.recordVideoNotes(self.handsRecognizer.takeSessionVideoNotes(), to: recorder)
                 // Before process_shot, so the row and events the shot produces
                 // are attributed to its track.
                 var recorded = cg_session_shot(shot: c, pts: pts ?? 0,
@@ -811,8 +812,11 @@ extension HandGestureRecognizing {
     /// `stopSessionCapture()`, at `stop()`, or when the recognizer is rebuilt.
     func startSessionCapture(bundlePath: String,
                              modelFiles: SessionModelFiles,
+                             includesVideo: Bool,
                              extra: [String: String]) throws {
         guard isInitialized else { throw SessionCaptureError.recognizerNotInitialized }
+        // Before anything is created, so a camera that cannot record leaves no bundle.
+        let videoFormat = try includesVideo ? handsRecognizer.sessionVideoFormat() : nil
 
         let strings = CStrings()
         let info = Bundle.main.infoDictionary
@@ -836,6 +840,12 @@ extension HandGestureRecognizing {
             camera: cg_session_camera_info(preset: strings.make(camera.preset),
                                            width: camera.width, height: camera.height,
                                            fps: camera.fps, position: camera.position),
+            video: cg_session_video_info(has_video: videoFormat == nil ? 0 : 1,
+                                         width: videoFormat?.width ?? 0,
+                                         height: videoFormat?.height ?? 0,
+                                         rotation_degrees: videoFormat?.rotationDegrees ?? 0,
+                                         mirrored: videoFormat?.mirrored == true ? 1 : 0,
+                                         has_anchor: 0, anchor_pts: 0, anchor_timestamp: 0),
             extra: nil, n_extra: Int32(pairs.count))
         var files = cg_session_model_files(
             gesture_model: strings.make(modelFiles.gestureModel?.path),
@@ -859,6 +869,18 @@ extension HandGestureRecognizing {
                 cg_session_recorder_destroy(recorder)
                 throw SessionCaptureError.startFailed(reason)
             }
+            if let videoFormat {
+                do {
+                    try handsRecognizer.startSessionVideo(
+                        at: URL(fileURLWithPath: bundlePath).appendingPathComponent("video.mov"),
+                        format: videoFormat)
+                } catch {
+                    // The user agreed to a session with video, so one without is not started.
+                    cg_session_recorder_destroy(recorder)
+                    try? FileManager.default.removeItem(atPath: bundlePath)
+                    throw error
+                }
+            }
             sessionRecorderRef = recorder
         } }
     }
@@ -872,9 +894,23 @@ extension HandGestureRecognizing {
         pipelineQueue.sync { sessionRecorderRef != nil }
     }
 
+    /// Writes the video writer's notes as binding events. `video_started` also
+    /// carries the pair of times that ties the video clock to the shot clock.
+    fileprivate func recordVideoNotes(_ notes: [SessionVideoNote], to recorder: cg_session_recorder_ref) {
+        for note in notes {
+            if note.event == "video_started", let pts = note.fields["pts"] as? Double {
+                cg_session_recorder_set_video_anchor(recorder, pts, note.timestamp)
+            }
+            let json = (try? JSONSerialization.data(withJSONObject: note.fields))
+                .flatMap { String(data: $0, encoding: .utf8) }
+            cg_session_recorder_append_binding_event(recorder, note.timestamp, note.event, json)
+        }
+    }
+
     fileprivate func endSessionCaptureOnQueue() {
         guard let recorder = sessionRecorderRef else { return }
         sessionRecorderRef = nil
+        recordVideoNotes(handsRecognizer.finishSessionVideo(), to: recorder)
         cg_session_recorder_destroy(recorder) // stops first: flushes and finalises the manifest
     }
 }

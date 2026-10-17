@@ -276,6 +276,20 @@ struct cg_session_reader_s {
         provenance.camera.height   = cam.value("height", 0);
         provenance.camera.fps      = cam.value("fps", 0.0);
         provenance.camera.position = cameraPositionFromName(cam.value("position", "unknown"));
+        const json video = p.value("video", json());
+        if (video.is_object()) {
+            provenance.video.has_video        = 1;
+            provenance.video.width            = video.value("width", 0);
+            provenance.video.height           = video.value("height", 0);
+            provenance.video.rotation_degrees = video.value("rotation_degrees", 0);
+            provenance.video.mirrored         = video.value("mirrored", false) ? 1 : 0;
+            const json anchor = video.value("anchor", json());
+            if (anchor.is_object()) {
+                provenance.video.has_anchor       = 1;
+                provenance.video.anchor_pts       = anchor.value("pts", 0.0);
+                provenance.video.anchor_timestamp = anchor.value("timestamp", 0.0);
+            }
+        }
         const json ex = p.value("extra", json::object());
         for (auto it = ex.begin(); it != ex.end(); ++it) {
             extra.push_back({keep(strings, json(it.key())), keep(strings, it.value())});

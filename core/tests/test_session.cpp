@@ -437,6 +437,81 @@ TEST(SessionManifest, UnknownProvenanceAndNoModelsAreNull) {
     cg_session_reader_close(rd);
 }
 
+// Session capture Stage 4: the video transform block and the clock anchor.
+TEST(SessionManifest, VideoTransformAndAnchorReadBackUnchanged) {
+    ScratchDir tmp;
+    cg_session_provenance prov{};
+    prov.video.has_video        = 1;
+    prov.video.width            = 480;
+    prov.video.height           = 360;
+    prov.video.rotation_degrees = 270;
+    prov.video.mirrored         = 1;
+    // Set only by set_video_anchor; start ignores them.
+    prov.video.has_anchor       = 1;
+    prov.video.anchor_pts       = 1.0;
+
+    cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+    ASSERT_EQ(cg_session_recorder_start(rec, nullptr, &prov, nullptr), 1);
+
+    // A session killed before the first video frame: transform, no anchor.
+    cg_session_reader_ref early = openOrFail(tmp.bundle());
+    ASSERT_NE(early, nullptr);
+    cg_session_provenance got{};
+    ASSERT_EQ(cg_session_reader_get_provenance(early, &got), 1);
+    EXPECT_EQ(got.video.has_video, 1);
+    EXPECT_EQ(got.video.has_anchor, 0);
+    cg_session_reader_close(early);
+
+    // Values a decimal round trip could disturb.
+    const double pts       = 81234.56789012345;
+    const double timestamp = 1791234567.123;
+    ASSERT_EQ(cg_session_recorder_set_video_anchor(rec, pts, timestamp), 1);
+
+    // The anchor is on disk before stop, so it survives a kill.
+    cg_session_reader_ref mid = openOrFail(tmp.bundle());
+    ASSERT_NE(mid, nullptr);
+    ASSERT_EQ(cg_session_reader_get_provenance(mid, &got), 1);
+    EXPECT_EQ(got.video.has_anchor, 1);
+    EXPECT_TRUE(sameBits(got.video.anchor_pts, pts));
+    cg_session_reader_close(mid);
+
+    ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+    cg_session_recorder_destroy(rec);
+
+    cg_session_reader_ref rd = openOrFail(tmp.bundle());
+    ASSERT_NE(rd, nullptr);
+    ASSERT_EQ(cg_session_reader_get_provenance(rd, &got), 1);
+    EXPECT_EQ(got.video.has_video, 1);
+    EXPECT_EQ(got.video.width, 480);
+    EXPECT_EQ(got.video.height, 360);
+    EXPECT_EQ(got.video.rotation_degrees, 270);
+    EXPECT_EQ(got.video.mirrored, 1);
+    EXPECT_EQ(got.video.has_anchor, 1);
+    EXPECT_TRUE(sameBits(got.video.anchor_pts, pts));
+    EXPECT_TRUE(sameBits(got.video.anchor_timestamp, timestamp));
+    EXPECT_EQ(json::parse(cg_session_reader_manifest_json(rd))["provenance"]["video"]["file"],
+              "video.mov");
+    cg_session_reader_close(rd);
+}
+
+TEST(SessionManifest, SessionWithoutVideoHasNoVideoBlockAndRefusesAnAnchor) {
+    ScratchDir tmp;
+    cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+    ASSERT_EQ(cg_session_recorder_start(rec, nullptr, nullptr, nullptr), 1);
+    EXPECT_EQ(cg_session_recorder_set_video_anchor(rec, 1.0, 2.0), 0);
+    ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+    cg_session_recorder_destroy(rec);
+
+    cg_session_reader_ref rd = openOrFail(tmp.bundle());
+    ASSERT_NE(rd, nullptr);
+    cg_session_provenance got{};
+    ASSERT_EQ(cg_session_reader_get_provenance(rd, &got), 1);
+    EXPECT_EQ(got.video.has_video, 0);
+    EXPECT_EQ(got.video.has_anchor, 0);
+    EXPECT_TRUE(json::parse(cg_session_reader_manifest_json(rd))["provenance"]["video"].is_null());
+    cg_session_reader_close(rd);
+}
+
 TEST(SessionManifest, UnreadableModelFileFailsStartAndCreatesNothing) {
     ScratchDir tmp;
     const std::string missing = (tmp.dir / "nope.tflite").string();

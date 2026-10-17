@@ -20,6 +20,8 @@ extern "C" {
  *   events.jsonl         decision events ("source": "core") and binding events
  *                        ("source": "binding"), one JSON object per line
  *   labels.jsonl         reserved, empty in format version 1
+ *   video.mov            optional; written by the platform binding, described
+ *                        by cg_session_video_info in the manifest
  *
  * Binary streams are little-endian, written in CRC-checked chunks of up to
  * CG_SESSION_DEFAULT_CHUNK_RECORDS records and flushed to the OS per chunk.
@@ -60,6 +62,29 @@ typedef struct cg_session_camera_info {
     int32_t     position; /* cg_camera_position */
 } cg_session_camera_info;
 
+/* The video beside the shots (video.mov), and what a viewer needs to draw
+ * landmarks over it. The file holds the camera frames as the landmark detector
+ * saw them, so a landmark's normalised (x, y) is a position in the stored
+ * frame. The platform binding writes the file; the recorder only describes it.
+ *
+ * A frame with capture timestamp `pts` is at video time pts - anchor_pts, and
+ * cg_session_shot.pts is on the same clock, so map shots to the video by pts.
+ * cg_handshot.timestamp comes from the platform's wall clock, which the system
+ * can adjust during a session, so anchor_timestamp places the video only
+ * roughly. */
+typedef struct cg_session_video_info {
+    int32_t has_video;         /* bool; 0 = no video, and the other fields are unset */
+    int32_t width;             /* stored frame size in pixels, before rotation */
+    int32_t height;
+    int32_t rotation_degrees;  /* clockwise rotation that shows the stored frame upright,
+                                  as the device was held at start: 0, 90, 180 or 270 */
+    int32_t mirrored;          /* bool; the stored frame is mirrored relative to the scene */
+    /* Set by cg_session_recorder_set_video_anchor, ignored at start. */
+    int32_t has_anchor;        /* bool; 0 until the first video frame is written */
+    double  anchor_pts;        /* capture timestamp of video time 0 (seconds) */
+    double  anchor_timestamp;  /* the same frame on the cg_handshot.timestamp clock */
+} cg_session_video_info;
+
 /* Platform-specific notes nobody depends on. Anything a reader relies on
  * belongs in a named field instead. */
 typedef struct cg_session_kv {
@@ -72,6 +97,7 @@ typedef struct cg_session_provenance {
     const char*            device_model;
     const char*            os_version;
     cg_session_camera_info camera;
+    cg_session_video_info  video;
     const cg_session_kv*   extra;         /* may be NULL when n_extra == 0 */
     int32_t                n_extra;
 } cg_session_provenance;
@@ -148,6 +174,14 @@ int cg_session_recorder_append_binding_event(cg_session_recorder_ref recorder,
                                              double      timestamp,
                                              const char* event,
                                              const char* fields_json);
+
+/* Ties the video clock to the shot clock: call once, when the first video
+ * frame is written, with that frame's capture timestamp and its timestamp on
+ * the cg_handshot.timestamp clock. Rewrites the manifest, so the pair survives
+ * a kill. Returns 0 if the session was started without video. */
+int cg_session_recorder_set_video_anchor(cg_session_recorder_ref recorder,
+                                         double pts,
+                                         double timestamp);
 
 /* Flushes every stream, detaches from the recognizer and rewrites the
  * manifest as complete, with record counts and the session time range.
