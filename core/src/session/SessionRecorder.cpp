@@ -87,6 +87,15 @@ bool writeFileAtomically(const std::string& path, const std::string& content) {
 
 json optionalString(const char* s) { return s ? json(s) : json(nullptr); }
 
+// Capture-degraded check. Motion energy is a per-frame delta with no dt
+// normalisation, so frames arriving further apart make the gate hotter. The
+// limit sits just above a cool phone tracking two hands (mean interval 1.105x
+// nominal, 9.4 % of frames dropped by MediaPipe); 1.15x is 5 % fewer frames
+// than that. Blocks rather than single gaps, because one skipped frame (a
+// double-length gap) is normal on about 10 % of frames.
+constexpr double kCadenceBlockSeconds  = 5.0;
+constexpr double kCadenceIntervalLimit = 1.15; // x the camera's nominal frame interval
+
 } // namespace
 
 struct cg_session_recorder_s {
@@ -108,6 +117,13 @@ struct cg_session_recorder_s {
     int    current_track = CG_SESSION_ABSENT_TRACK;
     bool   have_range = false;
     double t_start = 0.0, t_end = 0.0;
+
+    // Cadence check, on shot PTS. Off when the camera's nominal rate is unknown.
+    double nominal_interval = 0.0;
+    bool   have_block = false;
+    double block_start_pts = 0.0, last_pts = 0.0;
+    int    block_frames = 0; // distinct PTS values since block_start_pts
+    bool   degraded = false;
 
     bool fail(const std::string& message) {
         error = message;
@@ -169,6 +185,48 @@ struct cg_session_recorder_s {
         manifest["status"] = "aborted";
         manifest["error"]  = message;
         writeManifest(); // best effort; the reader works without it being updated
+    }
+
+    // Called per recorded shot that has a PTS. Shots of one camera frame share
+    // a PTS and count once. A block closes at the first frame kCadenceBlockSeconds
+    // or more after it opened; its mean interval runs up to that frame, so a
+    // gap between blocks is counted too. An event is written only when the
+    // state changes.
+    void noteFramePts(double pts, double timestamp) {
+        if (nominal_interval <= 0.0) return;
+        if (!have_block) {
+            have_block      = true;
+            block_start_pts = last_pts = pts;
+            block_frames    = 1;
+            return;
+        }
+        if (pts <= last_pts) return;
+        last_pts = pts;
+        if (pts - block_start_pts < kCadenceBlockSeconds) {
+            ++block_frames;
+            return;
+        }
+        const double mean  = (pts - block_start_pts) / block_frames;
+        const double limit = nominal_interval * kCadenceIntervalLimit;
+        if ((mean > limit) != degraded) {
+            degraded = !degraded;
+            json line = {
+                {"t",                   timestamp},
+                {"source",              "recorder"},
+                {"event",               degraded ? "capture_degraded" : "capture_recovered"},
+                {"mean_interval_ms",    mean * 1000.0},
+                {"limit_ms",            limit * 1000.0},
+                {"nominal_interval_ms", nominal_interval * 1000.0},
+                {"frames",              block_frames},
+                {"block_start_pts",     block_start_pts},
+                {"block_end_pts",       pts},
+            };
+            events_pending += line.dump();
+            events_pending += '\n';
+            ++event_count;
+        }
+        block_start_pts = pts;
+        block_frames    = 1;
     }
 
     StreamWriter* shotStream(int track) {
@@ -329,6 +387,9 @@ int cg_session_recorder_start(cg_session_recorder_ref       recorder,
     r.started   = true;
     r.recording = true;
     r.error.clear();
+    if (provenance && provenance->camera.fps > 0.0) {
+        r.nominal_interval = 1.0 / provenance->camera.fps;
+    }
     if (recognizer) {
         r.recognizer = recognizer;
         cg_recognizer_set_frame_telemetry_callback(recognizer, onFrameTelemetry, recorder);
@@ -358,6 +419,7 @@ int cg_session_recorder_record_shot(cg_session_recorder_ref recorder,
     if (!r.have_range) { r.t_start = r.t_end = t; r.have_range = true; }
     if (t < r.t_start) r.t_start = t;
     if (t > r.t_end)   r.t_end   = t;
+    if (s.has_pts) r.noteFramePts(s.pts, t);
     return 1;
 }
 

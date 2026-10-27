@@ -17,8 +17,9 @@ extern "C" {
  *   shots/<track>.bin    one packed shot track per MediaPipe hand index
  *                        (0.bin, 1.bin, ...); frames with no hand go to absent.bin
  *   telemetry.bin        one packed cg_frame_telemetry row per processed shot
- *   events.jsonl         decision events ("source": "core") and binding events
- *                        ("source": "binding"), one JSON object per line
+ *   events.jsonl         decision events ("source": "core"), binding events
+ *                        ("source": "binding") and recorder events
+ *                        ("source": "recorder"), one JSON object per line
  *   labels.jsonl         reserved, empty in format version 1
  *   video.mov            optional; written by the platform binding, described
  *                        by cg_session_video_info in the manifest
@@ -152,7 +153,18 @@ int cg_session_recorder_start(cg_session_recorder_ref       recorder,
                               const cg_session_model_files* files);
 
 /* Records one shot. An absent shot goes to the absent track whatever its
- * track_index; a present shot needs track_index >= 0. Returns 1 on success. */
+ * track_index; a present shot needs track_index >= 0. Returns 1 on success.
+ *
+ * Capture-degraded check: when the provenance gave a camera fps and shots
+ * carry a pts, the recorder measures the mean interval between camera frames
+ * (distinct pts values) in blocks of 5 seconds. A block whose mean is more
+ * than 1.15 times the nominal frame interval (1 / fps) is degraded. When the
+ * state changes, the recorder writes
+ *     {"t", "source": "recorder", "event": "capture_degraded" | "capture_recovered",
+ *      "mean_interval_ms", "limit_ms", "nominal_interval_ms", "frames",
+ *      "block_start_pts", "block_end_pts"}
+ * where t is the timestamp of the shot that closed the block. A session that
+ * ends degraded has no capture_recovered. */
 int cg_session_recorder_record_shot(cg_session_recorder_ref recorder,
                                     const cg_session_shot*  shot);
 

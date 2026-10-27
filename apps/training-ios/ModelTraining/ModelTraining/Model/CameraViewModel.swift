@@ -15,6 +15,9 @@ class CameraViewModel: ObservableObject {
     /// Landmark-path cadence, polled once a second while recognition runs.
     /// Surfaced only behind the debug switch; see `CameraView.frameCadencePanel`.
     @Published var frameRateStats = FrameRateStats()
+    /// Added to every cadence log line of the current run, so a scripted
+    /// measurement can name its configurations. Nil for an ordinary run.
+    var cadenceLabel: String?
     // MARK: - Permissions & banners
 
     @Published var cameraPermissionGranted = false
@@ -38,6 +41,11 @@ class CameraViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var statsTask: Task<Void, Never>?
+
+    // Cadence log state for the current prediction run (see CadenceLog).
+    private var cadenceRun: String?
+    private var cadenceThermalSeen: [String] = []
+    private var cadenceSeconds = 0
     private var isConfigured = false
 
     // MARK: - Init
@@ -113,6 +121,10 @@ class CameraViewModel: ObservableObject {
             do {
                 try await gestureRecognizer.recognizer.start()
                 isRecognitionActive = true
+                cadenceRun = ISO8601DateFormatter().string(from: Date())
+                cadenceThermalSeen = [CadenceLog.name(ProcessInfo.processInfo.thermalState)]
+                cadenceSeconds = 0
+                logCadence("start")
             } catch {
                 print("Failed to start recognition: \(error)")
             }
@@ -157,6 +169,8 @@ class CameraViewModel: ObservableObject {
     }
 
     func stopAll() {
+        // Before the recognizer stops, while the counters still describe the run.
+        if isRecognitionActive { logCadence("stop") }
         if seriesCoordinator.isRunning {
             seriesCoordinator.stop()
             trainingDataManager?.stopDataCollection()
@@ -170,6 +184,24 @@ class CameraViewModel: ObservableObject {
     func resetFrameRateStats() {
         gestureRecognizer?.recognizer.resetFrameRateStats()
         frameRateStats = FrameRateStats()
+        if isRecognitionActive { logCadence("reset") }
+    }
+
+    /// One cadence log line: the counters since start or the last reset, the
+    /// thermal state, and the camera exposure, which shows when low light
+    /// stretches the frames.
+    private func logCadence(_ kind: String) {
+        guard let recognizer = gestureRecognizer?.recognizer else { return }
+        var fields: [String: Any] = [
+            "kind":         kind,
+            "run":          cadenceRun ?? "",
+            "thermal":      CadenceLog.name(ProcessInfo.processInfo.thermalState),
+            "thermal_seen": cadenceThermalSeen,
+        ]
+        if let cadenceLabel { fields["label"] = cadenceLabel }
+        fields.merge(CadenceLog.fields(recognizer.getFrameRateStats())) { a, _ in a }
+        fields.merge(CadenceLog.fields(recognizer.getCameraExposure())) { a, _ in a }
+        CadenceLog.shared.write("CG:Cadence", fields)
     }
 
     func clearGestures() {
@@ -223,8 +255,20 @@ class CameraViewModel: ObservableObject {
                 guard let self, self.isRecognitionActive, let recognizer = self.gestureRecognizer else { continue }
                 self.stats = recognizer.recognizer.getStatistics()
                 self.frameRateStats = recognizer.recognizer.getFrameRateStats()
+                self.cadenceSeconds += 1
+                if self.cadenceSeconds % 10 == 0 { self.logCadence("tick") }
             }
         }
+
+        NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.isRecognitionActive else { return }
+                let state = CadenceLog.name(ProcessInfo.processInfo.thermalState)
+                if self.cadenceThermalSeen.last != state { self.cadenceThermalSeen.append(state) }
+                self.logCadence("thermal")
+            }
+            .store(in: &cancellables)
     }
 
     deinit {

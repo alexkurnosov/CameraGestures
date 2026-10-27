@@ -467,6 +467,9 @@ public class HandGestureRecognizing {
     /// Restarts the cadence measurement window without restarting the camera.
     public func resetFrameRateStats() { handsRecognizer.resetFrameRateStats() }
 
+    /// The camera's exposure right now; see `HandsRecognizing.getCameraExposure()`.
+    public func getCameraExposure() -> CameraExposure? { handsRecognizer.getCameraExposure() }
+
     public func getRecentGestures(limit: Int = 10) -> [DetectedGesture] {
         Array(detectedGestures.suffix(limit))
     }

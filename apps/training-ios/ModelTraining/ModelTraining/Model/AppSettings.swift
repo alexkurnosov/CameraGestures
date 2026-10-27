@@ -189,3 +189,20 @@ class AppSettings: ObservableObject {
             .appendingPathComponent("GestureModel/pose_manifest.json")
     }
 }
+
+#if CG_SESSION_CAPTURE
+extension AppSettings {
+    /// The loaded model files, for a session manifest. A missing file is nil.
+    func sessionModelFiles() -> SessionModelFiles {
+        func existing(_ url: URL) -> URL? {
+            FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        return SessionModelFiles(
+            gestureModel: existing(defaultTFLiteModelURL()),
+            gestureIds:   existing(defaultGestureIdsURL()),
+            poseModel:    existing(defaultPoseModelURL()),
+            poseManifest: existing(defaultPoseManifestURL()),
+            preprocessor: existing(defaultPreprocessorURL()))
+    }
+}
+#endif

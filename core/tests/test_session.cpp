@@ -844,3 +844,92 @@ TEST(SessionBindingEvents, AppendedLinesReadBackWithTheirFields) {
     EXPECT_EQ(json::parse(cg_session_reader_event_json(rd, 2))["event"], "status_changed");
     cg_session_reader_close(rd);
 }
+
+// ---------------------------------------------------------------------------
+// Capture-degraded events
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Two hands per camera frame (tracks 0 and 1, one pts), fed from t0 for
+// `seconds` at `fps`, skipping every `skip_every`-th frame (0 = none).
+void feedFrames(cg_session_recorder_ref rec, std::mt19937& rng, double* t,
+                double seconds, double fps, int skip_every, bool has_pts) {
+    const double end = *t + seconds;
+    for (int i = 0; *t < end; ++i, *t += 1.0 / fps) {
+        if (skip_every > 0 && i % skip_every == skip_every - 1) continue;
+        for (int track = 0; track < 2; ++track) {
+            cg_session_shot s = sessionShot(handShot(*t, 0.2f + 0.4f * track, rng), track, *t, has_pts);
+            ASSERT_EQ(cg_session_recorder_record_shot(rec, &s), 1);
+        }
+    }
+}
+
+std::vector<json> recorderEvents(const std::string& bundle) {
+    std::vector<json> out;
+    cg_session_reader_ref rd = openOrFail(bundle);
+    if (!rd) return out;
+    for (size_t i = 0; i < cg_session_reader_event_count(rd); ++i) {
+        json e = json::parse(cg_session_reader_event_json(rd, i));
+        if (e["source"] == "recorder") out.push_back(e);
+    }
+    cg_session_reader_close(rd);
+    return out;
+}
+
+cg_session_provenance cameraAt(double fps) {
+    cg_session_provenance p{};
+    p.camera.fps = fps;
+    return p;
+}
+
+} // namespace
+
+TEST(SessionCaptureDegraded, SlowFramesAreReportedOnceAndRecoveryOnce) {
+    ScratchDir tmp;
+    std::mt19937 rng(7);
+    cg_session_provenance prov = cameraAt(30.0);
+    cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+    ASSERT_EQ(cg_session_recorder_start(rec, nullptr, &prov, nullptr), 1);
+
+    double t = 100.0;
+    // A cool phone: MediaPipe drops one frame in ten, mean interval 1.11x. Healthy.
+    feedFrames(rec, rng, &t, 10.0, 30.0, 10, true);
+    // The camera falls to 24 fps (1.25x): degraded.
+    feedFrames(rec, rng, &t, 10.0, 24.0, 0, true);
+    // Back to 30 fps: recovered.
+    feedFrames(rec, rng, &t, 10.0, 30.0, 0, true);
+    ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+    cg_session_recorder_destroy(rec);
+
+    const auto events = recorderEvents(tmp.bundle());
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0]["event"], "capture_degraded");
+    EXPECT_NEAR(events[0]["mean_interval_ms"].get<double>(), 1000.0 / 24.0, 0.5);
+    EXPECT_NEAR(events[0]["limit_ms"].get<double>(), 1150.0 / 30.0, 1e-6);
+    EXPECT_NEAR(events[0]["nominal_interval_ms"].get<double>(), 1000.0 / 30.0, 1e-6);
+    EXPECT_GE(events[0]["t"].get<double>(), 110.0);
+    EXPECT_LT(events[0]["t"].get<double>(), 121.0);
+    // Two hands share a pts, so a 5 s block at 24 fps holds ~120 frames, not ~240.
+    EXPECT_NEAR(events[0]["frames"].get<int>(), 120, 2);
+
+    EXPECT_EQ(events[1]["event"], "capture_recovered");
+    EXPECT_NEAR(events[1]["mean_interval_ms"].get<double>(), 1000.0 / 30.0, 0.5);
+    EXPECT_GE(events[1]["t"].get<double>(), 120.0);
+}
+
+TEST(SessionCaptureDegraded, NoCheckWithoutPtsOrWithoutANominalRate) {
+    for (const bool known_fps : {false, true}) {
+        ScratchDir tmp;
+        std::mt19937 rng(8);
+        cg_session_provenance prov = cameraAt(known_fps ? 30.0 : 0.0);
+        cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+        ASSERT_EQ(cg_session_recorder_start(rec, nullptr, &prov, nullptr), 1);
+        double t = 0.0;
+        // 12 fps is far over the limit; only a missing input keeps it quiet.
+        feedFrames(rec, rng, &t, 15.0, 12.0, 0, /*has_pts=*/!known_fps);
+        ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+        cg_session_recorder_destroy(rec);
+        EXPECT_TRUE(recorderEvents(tmp.bundle()).empty()) << "known_fps=" << known_fps;
+    }
+}

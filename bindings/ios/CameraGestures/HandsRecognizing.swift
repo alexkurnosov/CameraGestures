@@ -88,6 +88,16 @@ public struct HandsRecognizingConfig {
     }
 }
 
+/// See `HandsRecognizing.getCameraExposure()`. Durations in seconds.
+public struct CameraExposure: Equatable {
+    public let exposureDuration: Double
+    public let iso: Float
+    /// 1 / nominal frame rate.
+    public let minFrameDuration: Double
+    /// The longest frame auto-exposure may use.
+    public let maxFrameDuration: Double
+}
+
 public typealias HandShotCallback  = (HandShot) -> Void
 public typealias HandFilmCallback  = (HandFilm) -> Void
 
@@ -209,6 +219,19 @@ public class HandsRecognizing: NSObject {
 
     /// Restarts the measurement window without restarting the camera.
     public func resetFrameRateStats() { frameRateMonitor.reset() }
+
+    /// The camera's exposure right now. In low light auto-exposure lengthens
+    /// each frame, up to `maxFrameDuration`, so the camera delivers fewer
+    /// frames than its nominal rate. Nil before the camera is set up.
+    public func getCameraExposure() -> CameraExposure? {
+        guard let device = (captureSession?.inputs.first as? AVCaptureDeviceInput)?.device else {
+            return nil
+        }
+        return CameraExposure(exposureDuration: device.exposureDuration.seconds,
+                              iso:              device.iso,
+                              minFrameDuration: device.activeVideoMinFrameDuration.seconds,
+                              maxFrameDuration: device.activeVideoMaxFrameDuration.seconds)
+    }
 
     // MARK: Camera utilities
 

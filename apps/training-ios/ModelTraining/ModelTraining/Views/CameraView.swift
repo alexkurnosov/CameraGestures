@@ -769,6 +769,14 @@ struct CameraView: View {
                     Spacer()
                 }
             }
+
+            #if CG_SESSION_CAPTURE
+            Divider()
+            ObserverEffectExperimentControls(
+                viewModel: viewModel,
+                recognizer: gestureRecognizer.recognizer,
+                appSettings: appSettings)
+            #endif
         }
         .padding()
         .background(Color.secondary.opacity(0.08))

@@ -93,24 +93,12 @@ struct SessionCaptureDebugPanel: View {
             }
             do {
                 let url = try SessionRecorder(recognizer: recognizer)
-                    .start(consent: consent, modelFiles: modelFiles())
+                    .start(consent: consent, modelFiles: appSettings.sessionModelFiles())
                 message = "Armed: \(url.lastPathComponent). Tap Start Prediction, then Stop to finish."
             } catch {
                 message = "Could not start: \(error)"
             }
         }
-    }
-
-    private func modelFiles() -> SessionModelFiles {
-        func existing(_ url: URL) -> URL? {
-            FileManager.default.fileExists(atPath: url.path) ? url : nil
-        }
-        return SessionModelFiles(
-            gestureModel: existing(appSettings.defaultTFLiteModelURL()),
-            gestureIds:   existing(appSettings.defaultGestureIdsURL()),
-            poseModel:    existing(appSettings.defaultPoseModelURL()),
-            poseManifest: existing(appSettings.defaultPoseManifestURL()),
-            preprocessor: existing(appSettings.defaultPreprocessorURL()))
     }
 
     private func describe(_ s: StoredSession) -> String {
