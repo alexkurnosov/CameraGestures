@@ -7,7 +7,10 @@
 // Order of use:
 //   1. `SessionCaptureConsent.request(includesVideo:)` asks the user.
 //   2. `SessionRecorder.start(consent:modelFiles:)`, before the recognizer starts.
-//   3. The session ends when the recognizer stops, or at `stop()`.
+//   3. The session ends when the recognizer stops, or at `stop()`. It also
+//      ends on its own when free space falls below the limit given to `start`
+//      or a write fails; `HandGestureRecognizing.sessionCaptureStoppedCallback`
+//      says why.
 
 #if CG_SESSION_CAPTURE
 
@@ -21,6 +24,17 @@ public enum SessionCaptureError: Error {
     case recognizerNotInitialized
     case alreadyRecording
     case startFailed(String)
+    /// Free space is already below the limit given to `start`.
+    case notEnoughSpace(availableBytes: Int64, minimumBytes: Int64)
+}
+
+/// Why a session ended on its own, while the recognizer kept running.
+/// The session is readable either way.
+public enum SessionCaptureStopReason {
+    /// Free space fell below the limit given to `SessionRecorder.start`.
+    case lowDiskSpace(availableBytes: Int64)
+    /// A write to the bundle failed. The session keeps what reached the disk.
+    case writeFailed(String)
 }
 
 /// The files that shape the recognizer's decisions. The library records each
@@ -131,13 +145,21 @@ public final class SessionRecorder {
 
     public var isRecording: Bool { recognizer.isCapturingSession }
 
+    /// Free space a session leaves on the device unless `start` is told otherwise.
+    public static let defaultMinimumFreeBytes: Int64 = 500_000_000
+
     /// Starts recording and returns the bundle's location. Call it before
     /// `HandGestureRecognizing.start()`; the session ends when the recognizer
     /// stops. When the consent includes video, the camera frames are written
     /// to `video.mov` in the bundle, which needs iOS 17.
+    ///
+    /// The session does not start when less than `minimumFreeBytes` is free,
+    /// and ends on its own once free space falls below it, so a full disk
+    /// cannot cut it off mid-write. 0 turns the check off.
     @discardableResult
     public func start(consent: SessionCaptureConsent,
-                      modelFiles: SessionModelFiles = SessionModelFiles()) throws -> URL {
+                      modelFiles: SessionModelFiles = SessionModelFiles(),
+                      minimumFreeBytes: Int64 = SessionRecorder.defaultMinimumFreeBytes) throws -> URL {
         guard consent.consume() else { throw SessionCaptureError.consentAlreadyUsed }
 
         let name = ISO8601DateFormatter.string(from: Date(), timeZone: TimeZone(identifier: "UTC")!,
@@ -148,6 +170,7 @@ public final class SessionRecorder {
             bundlePath: bundle.path,
             modelFiles: modelFiles,
             includesVideo: consent.includesVideo,
+            minimumFreeBytes: minimumFreeBytes,
             extra: [
                 "consent_granted_at":     ISO8601DateFormatter().string(from: consent.grantedAt),
                 "consent_includes_video": consent.includesVideo ? "true" : "false",

@@ -428,6 +428,13 @@ public class HandsRecognizing: NSObject {
         sessionVideoWriter?.takeNotes() ?? []
     }
 
+    /// Why the video file can no longer be written (e.g. the disk is full),
+    /// or nil while it can. Called on the recognizer's pipeline queue, like
+    /// `takeSessionVideoNotes`.
+    func sessionVideoFailure() -> String? {
+        sessionVideoWriter?.failure
+    }
+
     /// Closes the video file, if one is being written, and returns the last notes.
     func finishSessionVideo() -> [SessionVideoNote] {
         var writer: SessionVideoWriter?

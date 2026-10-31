@@ -104,6 +104,12 @@ final class SessionVideoWriter {
         }
     }
 
+    /// The writer's error once it has failed, else nil. The writer then
+    /// refuses every frame, so the video ends at the failure.
+    var failure: String? {
+        writer.status == .failed ? (writer.error?.localizedDescription ?? "unknown error") : nil
+    }
+
     /// The notes collected since the last call.
     func takeNotes() -> [SessionVideoNote] {
         notesLock.lock()

@@ -13,6 +13,9 @@ struct SettingsView: View {
     @State private var isUpdatingServer = false
     @State private var updateServerResult: Result<Void, Error>? = nil
     @State private var showingUpdateAlert = false
+    #if CG_SESSION_CAPTURE
+    @FocusState private var isLimitFieldFocused: Bool
+    #endif
     
     var body: some View {
         NavigationView {
@@ -43,6 +46,9 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
+            #if CG_SESSION_CAPTURE
+            .safeAreaInset(edge: .bottom) { limitFieldSaveBar }
+            #endif
         }
         .alert("Reset Settings", isPresented: $showingResetAlert) {
             Button("Reset", role: .destructive) {
@@ -325,8 +331,61 @@ struct SettingsView: View {
                 Toggle("", isOn: $appSettings.showDebugInfo)
                     .labelsHidden()
             }
+
+            #if CG_SESSION_CAPTURE
+            // Session capture is a debug feature, like its Camera tab toggles.
+            if appSettings.showDebugInfo {
+                HStack {
+                    Image(systemName: "externaldrive.fill")
+                        .foregroundColor(.red)
+                        .frame(width: 24)
+
+                    VStack(alignment: .leading) {
+                        Text("Session free-space limit, MB")
+                        Text("Recording stops below it; 0 = off. Free now: \(freeSpaceNow)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    TextField("MB", value: $appSettings.sessionMinimumFreeMB, format: .number)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                        .focused($isLimitFieldFocused)
+                }
+            }
+            #endif
         }
     }
+
+    #if CG_SESSION_CAPTURE
+    // The number pad has no Return key, and the field saves its value when it
+    // loses focus. A keyboard toolbar item did not appear on this screen, so
+    // this is a bar of its own, which the safe area inset keeps above the keyboard.
+    @ViewBuilder
+    private var limitFieldSaveBar: some View {
+        if isLimitFieldFocused {
+            HStack {
+                Spacer()
+                Button("Save") { isLimitFieldFocused = false }
+                    .font(.body.weight(.semibold))
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(.bar)
+        }
+    }
+
+    /// Measured the way the recorder measures it, so a limit can be set just
+    /// above it to test the stop.
+    private var freeSpaceNow: String {
+        let free = (try? URL(fileURLWithPath: NSHomeDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity
+        return free.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "unknown"
+    }
+    #endif
     
     private var modelSettingsSection: some View {
         Section("Model") {

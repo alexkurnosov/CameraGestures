@@ -1,5 +1,6 @@
-// Sessions tab: the sessions stored on the device, import of a .cgsession
-// from Files, and the timeline player.
+// Sessions tab: the sessions stored on the device with their size and length,
+// import of a .cgsession from Files, export through the share sheet, deletion,
+// and the timeline player.
 //
 // The session reader ships only in the capture variant of the library, so the
 // whole tab is compiled only with CG_SESSION_CAPTURE.
@@ -16,15 +17,30 @@ extension UTType {
 }
 
 struct SessionsView: View {
+    @EnvironmentObject var gestureRecognizer: GestureRecognizerWrapper
+
     @State private var sessions: [StoredSession] = []
+    /// Bytes on disk per bundle, measured when the list is loaded.
+    @State private var sizes: [URL: Int64] = [:]
     @State private var player: SessionPlayer?
     @State private var showingImporter = false
     @State private var errorMessage: String?
+    @State private var sharing: SharedSession?
+    @State private var pendingDeletion: StoredSession?
 
     var body: some View {
         NavigationView {
             List(sessions.reversed(), id: \.url) { session in
-                Button { open(session) } label: { row(session) }
+                let recording = isBeingRecorded(session)
+                Button { open(session) } label: { row(session, recording: recording) }
+                    .swipeActions(edge: .trailing) {
+                        // The Camera tab is still writing it.
+                        if !recording {
+                            Button("Delete", role: .destructive) { pendingDeletion = session }
+                            Button("Share") { sharing = SharedSession(url: session.url) }
+                                .tint(.blue)
+                        }
+                    }
             }
             .overlay {
                 if sessions.isEmpty {
@@ -38,20 +54,35 @@ struct SessionsView: View {
                 Button("Import") { showingImporter = true }
             }
         }
-        .onAppear { sessions = SessionRecorder.storedSessions() }
+        .onAppear { reload() }
+        // A recording that has just ended is now complete.
+        .onChange(of: gestureRecognizer.recordingSessionURL) { _ in reload() }
         // A bundle is a folder. Files shows it as one document only once it
         // knows the type, so a plain folder can be picked as well.
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: [.cgSession, .folder]) { result in
             do {
                 try Self.importSession(from: result.get())
-                sessions = SessionRecorder.storedSessions()
+                reload()
             } catch {
                 errorMessage = "Import failed: \(error.localizedDescription)"
             }
         }
         .fullScreenCover(item: $player) { player in
             SessionPlayerView(player: player)
+        }
+        .sheet(item: $sharing) { shared in
+            ActivityView(items: [shared.url])
+        }
+        .alert("Delete this session?",
+               isPresented: Binding(get: { pendingDeletion != nil },
+                                    set: { if !$0 { pendingDeletion = nil } }),
+               presenting: pendingDeletion) { session in
+            Button("Delete", role: .destructive) { delete(session) }
+            Button("Cancel", role: .cancel) { }
+        } message: { session in
+            Text("\(session.url.deletingPathExtension().lastPathComponent) will be removed from this device. "
+                 + "A recording cannot be made again.")
         }
         .alert("Sessions", isPresented: Binding(get: { errorMessage != nil },
                                                 set: { if !$0 { errorMessage = nil } })) {
@@ -61,15 +92,55 @@ struct SessionsView: View {
         }
     }
 
-    private func row(_ session: StoredSession) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func row(_ session: StoredSession, recording: Bool) -> some View {
+        let size = sizes[session.url].map {
+            ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+        } ?? "?"
+        return VStack(alignment: .leading, spacing: 2) {
             Text(session.url.deletingPathExtension().lastPathComponent)
                 .foregroundColor(.primary)
-            Text("\(formatTime(session.duration)), \(session.shotCount) shots"
-                 + (session.isComplete ? "" : ", interrupted"))
-                .font(.caption)
-                .foregroundColor(.secondary)
+            if recording {
+                Text("Recording")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.red)
+            } else {
+                Text("\(formatTime(session.duration)), \(size), \(session.shotCount) shots"
+                     + (session.isComplete ? "" : ", interrupted"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
+    }
+
+    private func reload() {
+        sessions = SessionRecorder.storedSessions()
+        sizes = Dictionary(uniqueKeysWithValues: sessions.map { ($0.url, Self.bundleSize($0.url)) })
+    }
+
+    private func isBeingRecorded(_ session: StoredSession) -> Bool {
+        // By name: both are in the sessions directory, but one URL may carry
+        // a trailing slash or a /private prefix the other lacks.
+        session.url.lastPathComponent == gestureRecognizer.recordingSessionURL?.lastPathComponent
+            && SessionRecorder(recognizer: gestureRecognizer.recognizer).isRecording
+    }
+
+    private func delete(_ session: StoredSession) {
+        do {
+            try FileManager.default.removeItem(at: session.url)
+        } catch {
+            errorMessage = "Could not delete the session: \(error.localizedDescription)"
+        }
+        reload()
+    }
+
+    /// Sum of the file sizes in a bundle.
+    static func bundleSize(_ url: URL) -> Int64 {
+        let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey])
+        var total: Int64 = 0
+        while let file = files?.nextObject() as? URL {
+            total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        return total
     }
 
     private func open(_ session: StoredSession) {
@@ -96,6 +167,26 @@ struct SessionsView: View {
             throw error
         }
     }
+}
+
+// MARK: - Share sheet
+
+/// A bundle handed to the share sheet; `sheet(item:)` needs an identity.
+private struct SharedSession: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+/// The bundle goes out as the .cgsession folder, so the receiver gets the
+/// same bundle the reader opens.
+private struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Player

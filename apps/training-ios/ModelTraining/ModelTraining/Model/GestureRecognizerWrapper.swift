@@ -29,6 +29,14 @@ class GestureRecognizerWrapper: ObservableObject {
     var handfilmModelVersion: String = ""
     var poseModelVersion: String = ""
 
+    #if CG_SESSION_CAPTURE
+    /// The bundle the Camera tab is recording into, so the Sessions list can
+    /// keep it from being deleted or shared half-written.
+    @Published var recordingSessionURL: URL?
+    /// A session that ended on its own (low disk space, failed write).
+    let sessionCaptureStopped = PassthroughSubject<SessionCaptureStopReason, Never>()
+    #endif
+
     init(recognizer: HandGestureRecognizing) {
         self.recognizer = recognizer
     }
@@ -56,6 +64,11 @@ class GestureRecognizerWrapper: ObservableObject {
                 self?.holdsTelemetry = telemetry
             }
         }
+        #if CG_SESSION_CAPTURE
+        recognizer.sessionCaptureStoppedCallback = { [weak self] reason in
+            DispatchQueue.main.async { self?.sessionCaptureStopped.send(reason) }
+        }
+        #endif
     }
 
     /// Build a config and initialize the underlying recognizer.

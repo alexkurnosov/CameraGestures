@@ -250,6 +250,11 @@ public class HandGestureRecognizing {
     public var holdsModeTelemetryCallback:  HoldsModeTelemetryCallback?
     public var handshotCallback:            HandShotCallback?
     public var handfilmCallback:            HandFilmCallback?
+    #if CG_SESSION_CAPTURE
+    /// Called on the main thread when a session ends on its own (low disk
+    /// space, failed write) while the recognizer keeps running.
+    public var sessionCaptureStoppedCallback: ((SessionCaptureStopReason) -> Void)?
+    #endif
 
     // MARK: Runtime flags
 
@@ -308,6 +313,10 @@ public class HandGestureRecognizing {
     #if CG_SESSION_CAPTURE
     // Session capture (pipelineQueue only). Non-nil while a session is recorded.
     private var sessionRecorderRef: cg_session_recorder_ref?
+    private var sessionBundleURL: URL?
+    private var sessionMinimumFreeBytes: Int64 = 0
+    /// Shot timestamp of the last free-space check.
+    private var sessionLastSpaceCheck: Double = 0
     #endif
 
     private var _gateEnabled  = false
@@ -661,6 +670,7 @@ public class HandGestureRecognizing {
                                                track_index: handIndex,
                                                has_pts: pts == nil ? 0 : 1)
                 cg_session_recorder_record_shot(recorder, &recorded)
+                self.endSessionCaptureIfNeeded(recorder, at: shot.timestamp)
             }
             #endif
             cg_recognizer_process_shot(ref, &c)
@@ -816,8 +826,14 @@ extension HandGestureRecognizing {
     func startSessionCapture(bundlePath: String,
                              modelFiles: SessionModelFiles,
                              includesVideo: Bool,
+                             minimumFreeBytes: Int64,
                              extra: [String: String]) throws {
         guard isInitialized else { throw SessionCaptureError.recognizerNotInitialized }
+        let bundleURL = URL(fileURLWithPath: bundlePath)
+        // The bundle does not exist yet, so ask about the folder it goes into.
+        if let free = freeBytes(at: bundleURL.deletingLastPathComponent()), free < minimumFreeBytes {
+            throw SessionCaptureError.notEnoughSpace(availableBytes: free, minimumBytes: minimumFreeBytes)
+        }
         // Before anything is created, so a camera that cannot record leaves no bundle.
         let videoFormat = try includesVideo ? handsRecognizer.sessionVideoFormat() : nil
 
@@ -884,7 +900,10 @@ extension HandGestureRecognizing {
                     throw error
                 }
             }
-            sessionRecorderRef = recorder
+            sessionRecorderRef      = recorder
+            sessionBundleURL        = bundleURL
+            sessionMinimumFreeBytes = minimumFreeBytes
+            sessionLastSpaceCheck   = 0
         } }
     }
 
@@ -910,12 +929,53 @@ extension HandGestureRecognizing {
         }
     }
 
+    /// Ends the session on its own when a write has failed or free space is
+    /// below the limit, and tells the app why. Free space is checked once a
+    /// second of shot time. Pipeline queue, after the shot is recorded.
+    fileprivate func endSessionCaptureIfNeeded(_ recorder: cg_session_recorder_ref, at timestamp: Double) {
+        var reason: SessionCaptureStopReason?
+        var fields: [String: Any] = [:]
+        if cg_session_recorder_is_recording(recorder) == 0 {
+            let error = String(cString: cg_session_recorder_last_error(recorder))
+            reason = .writeFailed(error)
+            fields = ["reason": "write_failed", "error": error]
+        } else if let error = handsRecognizer.sessionVideoFailure() {
+            reason = .writeFailed("video: \(error)")
+            fields = ["reason": "write_failed", "error": "video: \(error)"]
+        } else if timestamp - sessionLastSpaceCheck >= 1, let url = sessionBundleURL {
+            sessionLastSpaceCheck = timestamp
+            if let free = freeBytes(at: url), free < sessionMinimumFreeBytes {
+                reason = .lowDiskSpace(availableBytes: free)
+                fields = ["reason": "low_disk_space", "available_bytes": free,
+                          "minimum_bytes": sessionMinimumFreeBytes]
+            }
+        }
+        guard let reason else { return }
+
+        // Lost when the recorder itself has failed; kept otherwise.
+        let json = (try? JSONSerialization.data(withJSONObject: fields))
+            .flatMap { String(data: $0, encoding: .utf8) }
+        cg_session_recorder_append_binding_event(recorder, timestamp, "capture_stopped", json)
+        endSessionCaptureOnQueue()
+        DispatchQueue.main.async { [weak self] in self?.sessionCaptureStoppedCallback?(reason) }
+    }
+
     fileprivate func endSessionCaptureOnQueue() {
         guard let recorder = sessionRecorderRef else { return }
         sessionRecorderRef = nil
+        sessionBundleURL   = nil
         recordVideoNotes(handsRecognizer.finishSessionVideo(), to: recorder)
         cg_session_recorder_destroy(recorder) // stops first: flushes and finalises the manifest
     }
+}
+
+/// Bytes free on the volume that holds `url`: the space writes can use now,
+/// not counting caches the system could clear. nil when the system cannot say.
+private func freeBytes(at url: URL) -> Int64? {
+    // A URL caches resource values until its run loop turns. The pipeline queue
+    // has no run loop, so a reused URL would return its first number forever.
+    (try? URL(fileURLWithPath: url.path).resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
+        .volumeAvailableCapacity.map(Int64.init)
 }
 
 /// C strings that live as long as this object, for filling C structs.

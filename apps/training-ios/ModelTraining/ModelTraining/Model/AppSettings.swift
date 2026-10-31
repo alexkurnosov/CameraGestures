@@ -54,6 +54,18 @@ class AppSettings: ObservableObject {
     @Published var cameraConfig = HandsRecognizingConfig.defaultConfig
     @Published var modelConfig = GestureModelConfig.defaultConfig
 
+    #if CG_SESSION_CAPTURE
+    // MARK: - Session capture
+
+    private static let sessionMinimumFreeMBKey = "sessionMinimumFreeMB"
+
+    /// A session recording does not start, and stops, when less than this many
+    /// MB are free. 0 turns the check off, so only a failed write stops it.
+    @Published var sessionMinimumFreeMB: Int {
+        didSet { UserDefaults.standard.set(sessionMinimumFreeMB, forKey: Self.sessionMinimumFreeMBKey) }
+    }
+    #endif
+
     // MARK: - In-view threshold
 
     private static let minInViewDurationKey = "minInViewDuration"
@@ -118,6 +130,11 @@ class AppSettings: ObservableObject {
         gestureModelLoadedAt = gestureTS > 0 ? Date(timeIntervalSince1970: gestureTS) : nil
         let poseTS = UserDefaults.standard.double(forKey: Self.poseModelLoadedAtKey)
         poseModelLoadedAt = poseTS > 0 ? Date(timeIntervalSince1970: poseTS) : nil
+        #if CG_SESSION_CAPTURE
+        // 0 is a valid choice, so a missing key cannot be read as 0.
+        sessionMinimumFreeMB = UserDefaults.standard.object(forKey: Self.sessionMinimumFreeMBKey) as? Int
+            ?? Int(SessionRecorder.defaultMinimumFreeBytes / 1_000_000)
+        #endif
     }
 
     /// Call after the first training job fires to permanently lock the threshold.
@@ -204,5 +221,7 @@ extension AppSettings {
             poseManifest: existing(defaultPoseManifestURL()),
             preprocessor: existing(defaultPreprocessorURL()))
     }
+
+    var sessionMinimumFreeBytes: Int64 { Int64(sessionMinimumFreeMB) * 1_000_000 }
 }
 #endif

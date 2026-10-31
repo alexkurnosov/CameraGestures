@@ -19,6 +19,7 @@ struct CameraView: View {
     @State private var showingPermissionAlert = false
     @State private var recPulse = false
     @State private var cadenceCopied = false
+    @State private var thermalState = ProcessInfo.processInfo.thermalState
 
     // Stage 9: confidence-log state
     /// The last detected hold, pending reviewer label.
@@ -100,16 +101,6 @@ struct CameraView: View {
                         if appSettings.showDebugInfo {
                             frameCadencePanel
                         }
-
-                        #if CG_SESSION_CAPTURE
-                        // Temporary (session capture Stage 3); Stage 6 replaces it.
-                        if appSettings.showDebugInfo {
-                            SessionCaptureDebugPanel(
-                                recognizer: gestureRecognizer.recognizer,
-                                appSettings: appSettings,
-                                isRecognitionActive: viewModel.isRecognitionActive)
-                        }
-                        #endif
 
                         // Recent gestures list (prediction mode)
                         if !viewModel.recentGestures.isEmpty && !viewModel.seriesCoordinator.isRunning {
@@ -536,17 +527,37 @@ struct CameraView: View {
 
             } else if viewModel.isRecognitionActive {
                 // Prediction running: Stop button only
+                #if CG_SESSION_CAPTURE
+                if gestureRecognizer.recordingSessionURL != nil {
+                    recordingIndicator
+                }
+                #endif
                 stopButton
 
             } else {
                 // Idle: timing config + start buttons
                 timingConfig
 
+                #if CG_SESSION_CAPTURE
+                if appSettings.showDebugInfo {
+                    sessionCaptureToggles
+                }
+                #endif
+
                 HStack(spacing: 12) {
                     startPredictionButton
                     startTrainingButton
                 }
             }
+
+            #if CG_SESSION_CAPTURE
+            if appSettings.showDebugInfo, let message = viewModel.sessionCaptureMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            #endif
 
             if appSettings.enhancedPredictionMode {
                 bypassPhase2FilterToggle
@@ -643,11 +654,25 @@ struct CameraView: View {
         .cornerRadius(10)
     }
 
+    /// Record session is armed and visible. Turning Show Debug Info off disarms it.
+    private var isSessionArmed: Bool {
+        #if CG_SESSION_CAPTURE
+        return viewModel.recordSession && appSettings.showDebugInfo
+        #else
+        return false
+        #endif
+    }
+
     private var startPredictionButton: some View {
-        Button(action: { viewModel.startRecognition() }) {
+        Button(action: {
+            #if CG_SESSION_CAPTURE
+            if isSessionArmed { viewModel.startRecognitionWithSession(); return }
+            #endif
+            viewModel.startRecognition()
+        }) {
             HStack(spacing: 6) {
-                Image(systemName: "play.fill")
-                Text("Start Prediction")
+                Image(systemName: isSessionArmed ? "record.circle" : "play.fill")
+                Text(isSessionArmed ? "Start Prediction + Record" : "Start Prediction")
             }
             .font(.subheadline.weight(.semibold))
             .foregroundColor(.white)
@@ -690,6 +715,38 @@ struct CameraView: View {
         }
     }
 
+    #if CG_SESSION_CAPTURE
+    /// Armed before Start Prediction; the session spans exactly that run.
+    private var sessionCaptureToggles: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: $viewModel.recordSession) {
+                Label("Record session", systemImage: "record.circle")
+                    .font(.subheadline)
+            }
+            Toggle("With video", isOn: $viewModel.recordWithVideo)
+                .font(.caption)
+                .padding(.leading, 28)
+                .disabled(!viewModel.recordSession)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.06))
+        .cornerRadius(10)
+    }
+
+    private var recordingIndicator: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 8, height: 8)
+            Text("Recording session")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.red)
+            Spacer()
+        }
+    }
+    #endif
+
     @ViewBuilder
     private var phasePill: some View {
         switch viewModel.seriesCoordinator.phase {
@@ -722,6 +779,11 @@ struct CameraView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundColor(.secondary)
             }
+            // Heat moves the cadence more than capture does, so compare runs
+            // only at the same thermal state.
+            Text("Thermal state: \(CadenceLog.name(thermalState))")
+                .font(.caption.monospaced())
+                .foregroundColor(.secondary)
 
             if !viewModel.isRecognitionActive && fr.frames == 0 {
                 Text("Start prediction to measure.")
@@ -781,6 +843,10 @@ struct CameraView: View {
         .padding()
         .background(Color.secondary.opacity(0.08))
         .cornerRadius(8)
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in
+            thermalState = ProcessInfo.processInfo.thermalState
+        }
     }
 
     private func cadenceRow(_ leftLabel: String, _ leftValue: String,
@@ -953,7 +1019,7 @@ struct CameraView: View {
         )
         uploadPoseEntry(labeled)
         // High-confidence wrong prediction → open Correction View (§4.1).
-        if isWrong && conf >= tauPose && !appSettings.bypassPhase2Filter {
+        if isWrong && conf >= tauPose && !appSettings.bypassPhase2Filter && !isRecordingSession {
             pendingPoseCorrection = capture
             gestureRecognizer.recognizer.pauseForCorrection()
         }
@@ -976,11 +1042,22 @@ struct CameraView: View {
         )
         uploadPhase3Entry(entry)
         // High-confidence wrong prediction → open Phase 3 Correction View (§4.1).
-        if isWrong && conf >= tauPhase3 {
+        if isWrong && conf >= tauPhase3 && !isRecordingSession {
             pendingPhase3Correction = PendingPhase3Capture(gesture: gesture, recentHolds: recentHolds)
             recentHolds = []
             gestureRecognizer.recognizer.pauseForCorrection()
         }
+    }
+
+    /// A correction pauses the camera and resets the gate, which would break a
+    /// recorded session in two, so none opens while one is recorded. The
+    /// confidence-log entry is still uploaded.
+    private var isRecordingSession: Bool {
+        #if CG_SESSION_CAPTURE
+        return SessionRecorder(recognizer: gestureRecognizer.recognizer).isRecording
+        #else
+        return false
+        #endif
     }
 
     private func uploadPoseEntry(_ entry: PoseConfidenceLogEntry) {

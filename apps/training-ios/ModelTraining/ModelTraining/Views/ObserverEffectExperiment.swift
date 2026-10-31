@@ -9,8 +9,7 @@
 //
 // Results: "[CG:Cadence]" lines from CameraViewModel (one "stop" line per run
 // holds its counters) and "[CG:Experiment]" lines from here, all in
-// Documents/cadence.log. Kept for re-measuring after a library change, so it
-// is not part of the temporary SessionCaptureDebugPanel.
+// Documents/cadence.log. Kept for re-measuring after a library change.
 
 #if CG_SESSION_CAPTURE
 
