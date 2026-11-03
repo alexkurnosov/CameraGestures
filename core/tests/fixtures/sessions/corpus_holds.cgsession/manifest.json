@@ -32,7 +32,7 @@
     },
     "telemetry": 605
   },
-  "created_at": 1790790762.930364,
+  "created_at": 1793646994.110255,
   "files": {
     "events": "events.jsonl",
     "labels": "labels.jsonl",
@@ -81,10 +81,11 @@
       "generator": "replay_rig",
       "mode": "holds"
     },
-    "os_version": null
+    "os_version": null,
+    "video": null
   },
   "status": "complete",
-  "stopped_at": 1790790762.95016,
+  "stopped_at": 1793646994.138105,
   "time_range": [
     1776580812.971,
     1776580872.045

@@ -213,6 +213,7 @@ static void on_decision_event(void* ctx, const cg_decision_event* e) {
         j["restricted"]   = e->restricted != 0;
         j["accepted"]     = e->accepted != 0;
         j["gesture_id"]   = e->gesture_id ? e->gesture_id : "";
+        j["top_gesture_id"] = e->top_gesture_id ? e->top_gesture_id : "";
         j["confidence"]   = e->confidence;
         if (e->restricted) j["candidates"] = candidate_list(e);
         break;

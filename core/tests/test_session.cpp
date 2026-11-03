@@ -775,6 +775,15 @@ TEST(SessionFormatVersion, MissingManifestIsAnError) {
 // Committed fixtures keep opening (tests run from core/tests/)
 // ---------------------------------------------------------------------------
 
+namespace {
+
+double manifestTau(cg_session_reader_ref rd, const char* name) {
+    const json config = json::parse(cg_session_reader_manifest_json(rd))["config"];
+    return config.contains(name) ? config[name].get<double>() : config["holds"][name].get<double>();
+}
+
+} // namespace
+
 TEST(SessionFixtures, CommittedBundlesOpenCompleteAndMatchTheirCounts) {
     const fs::path dir = "fixtures/sessions";
     ASSERT_TRUE(fs::is_directory(dir)) << "run from core/tests/";
@@ -800,9 +809,53 @@ TEST(SessionFixtures, CommittedBundlesOpenCompleteAndMatchTheirCounts) {
             shots += n;
         }
         EXPECT_EQ(readAllRows(rd).size(), shots); // one row per shot
+
+        // Real model output: a rejected prediction keeps its best candidate.
+        int rejected = 0;
+        for (size_t i = 0; i < cg_session_reader_event_count(rd); ++i) {
+            const json line = json::parse(cg_session_reader_event_json(rd, i));
+            if (line["event"] != "phase3_prediction" || line["accepted"]) continue;
+            ++rejected;
+            EXPECT_EQ(line["gesture_id"], "");
+            EXPECT_NE(line["top_gesture_id"], "");
+            EXPECT_GT(line["confidence"].get<double>(), 0.0);
+            EXPECT_LT(line["confidence"].get<double>(), line["restricted"].get<bool>()
+                ? manifestTau(rd, "tau_phase3_confidence") : manifestTau(rd, "confidence_threshold"));
+        }
+        EXPECT_GE(rejected, 1);
         cg_session_reader_close(rd);
     }
     EXPECT_GE(bundles, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 events
+// ---------------------------------------------------------------------------
+
+TEST(SessionDecisionEvents, RejectedPhase3PredictionKeepsItsBestCandidate) {
+    ScratchDir tmp;
+    cg_session_recorder_ref rec = cg_session_recorder_create(tmp.bundle().c_str());
+    ASSERT_EQ(cg_session_recorder_start(rec, nullptr, nullptr, nullptr), 1);
+
+    cg_decision_event ev{};
+    ev.kind           = CG_EVENT_PHASE3_PREDICTION;
+    ev.timestamp      = 10.0;
+    ev.accepted       = 0;
+    ev.gesture_id     = "";
+    ev.top_gesture_id = "wave";
+    ev.confidence     = 0.5f;
+    ASSERT_EQ(cg_session_recorder_append_decision_event(rec, &ev), 1);
+    ASSERT_EQ(cg_session_recorder_stop(rec), 1);
+    cg_session_recorder_destroy(rec);
+
+    cg_session_reader_ref rd = openOrFail(tmp.bundle());
+    ASSERT_NE(rd, nullptr);
+    const json line = json::parse(cg_session_reader_event_json(rd, 0));
+    EXPECT_EQ(line["accepted"], false);
+    EXPECT_EQ(line["gesture_id"], "");
+    EXPECT_EQ(line["top_gesture_id"], "wave");
+    EXPECT_EQ(line["confidence"], 0.5);
+    cg_session_reader_close(rd);
 }
 
 // ---------------------------------------------------------------------------

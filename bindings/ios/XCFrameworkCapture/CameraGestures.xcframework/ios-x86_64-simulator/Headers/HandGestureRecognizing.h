@@ -142,8 +142,8 @@ typedef struct cg_decision_event {
     const int* observed_seq;    /* pose sequence after this hold */
     int    n_observed;
 
-    /* HOLD_COMPLETED: pose confidence. PHASE3_PREDICTION: confidence of the
-     * emitted gesture, 0 when nothing was emitted. */
+    /* HOLD_COMPLETED: pose confidence. PHASE3_PREDICTION: confidence of
+     * top_gesture_id, emitted or not, 0 when the model had no candidate. */
     float  confidence;
     /* HOLD_COMPLETED: confidence >= tau_pose_confidence.
      * PHASE3_PREDICTION: a gesture was emitted. */
@@ -152,6 +152,7 @@ typedef struct cg_decision_event {
     /* PHASE3_PREDICTION */
     int         restricted;     /* 1 = masked argmax over candidate_ids, 0 = unrestricted */
     const char* gesture_id;     /* emitted gesture, "" when none */
+    const char* top_gesture_id; /* the model's best candidate, emitted or not, "" when none */
 
     /* PHASE3_PREDICTION (restricted) and COMMIT_FIRED */
     const char* const* candidate_ids;

@@ -231,6 +231,8 @@ struct SessionPlayerView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
+            SessionLayersView(player: player)
+
             overview
                 .frame(height: CGFloat(max(player.tracks.count, 1)) * 10)
 

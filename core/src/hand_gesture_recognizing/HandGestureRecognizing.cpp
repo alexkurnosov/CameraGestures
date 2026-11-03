@@ -453,21 +453,25 @@ void HandGestureRecognizing::recognizeRestricted(
 
     std::vector<const char*> c_ids = cStrings(candidates);
 
+    // Threshold 0 so a rejected prediction can report its best candidate, with
+    // the threshold applied here. The inference still runs once.
     cg_gesture_prediction pred{};
-    int ok = model_->classifyRestricted(film,
-                                        c_ids.data(),
-                                        static_cast<int>(c_ids.size()),
-                                        tau, &pred);
+    int found = model_->classifyRestricted(film,
+                                           c_ids.data(),
+                                           static_cast<int>(c_ids.size()),
+                                           0.0f, &pred);
+    bool ok = found && pred.confidence >= tau;
 
     cg_decision_event ev{};
-    ev.kind          = CG_EVENT_PHASE3_PREDICTION;
-    ev.timestamp     = now;
-    ev.buffer_count  = static_cast<int>(cg_handfilm_shot_count(film));
-    ev.restricted    = 1;
-    ev.accepted      = ok ? 1 : 0;
-    ev.gesture_id    = ok ? pred.gesture_id : "";
-    ev.confidence    = ok ? pred.confidence : 0.0f;
-    ev.candidate_ids = c_ids.data();
+    ev.kind           = CG_EVENT_PHASE3_PREDICTION;
+    ev.timestamp      = now;
+    ev.buffer_count   = static_cast<int>(cg_handfilm_shot_count(film));
+    ev.restricted     = 1;
+    ev.accepted       = ok ? 1 : 0;
+    ev.gesture_id     = ok ? pred.gesture_id : "";
+    ev.top_gesture_id = found ? pred.gesture_id : "";
+    ev.confidence     = found ? pred.confidence : 0.0f;
+    ev.candidate_ids  = c_ids.data();
     ev.n_candidates  = static_cast<int>(c_ids.size());
     reportEvent(ev);
 
@@ -476,17 +480,20 @@ void HandGestureRecognizing::recognizeRestricted(
 
 void HandGestureRecognizing::recognizeUnrestricted(cg_handfilm_ref film, double now) {
     if (!model_) return;
+    // Threshold 0 for the same reason as in recognizeRestricted.
     cg_gesture_prediction pred{};
-    int ok = model_->classify(film, config_.confidence_threshold, &pred);
+    int found = model_->classify(film, 0.0f, &pred);
+    bool ok = found && pred.confidence >= config_.confidence_threshold;
 
     cg_decision_event ev{};
-    ev.kind         = CG_EVENT_PHASE3_PREDICTION;
-    ev.timestamp    = now;
-    ev.buffer_count = static_cast<int>(cg_handfilm_shot_count(film));
-    ev.restricted   = 0;
-    ev.accepted     = ok ? 1 : 0;
-    ev.gesture_id   = ok ? pred.gesture_id : "";
-    ev.confidence   = ok ? pred.confidence : 0.0f;
+    ev.kind           = CG_EVENT_PHASE3_PREDICTION;
+    ev.timestamp      = now;
+    ev.buffer_count   = static_cast<int>(cg_handfilm_shot_count(film));
+    ev.restricted     = 0;
+    ev.accepted       = ok ? 1 : 0;
+    ev.gesture_id     = ok ? pred.gesture_id : "";
+    ev.top_gesture_id = found ? pred.gesture_id : "";
+    ev.confidence     = found ? pred.confidence : 0.0f;
     reportEvent(ev);
 
     if (ok) emitGesture(film, pred, -1);

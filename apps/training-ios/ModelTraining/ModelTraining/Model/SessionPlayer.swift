@@ -35,6 +35,8 @@ final class SessionPlayer: NSObject, ObservableObject, Identifiable {
     /// One row per entry of `tracks`: whether the hand has a shot in each
     /// bucket. Empty until the load-time pass over the session finishes.
     @Published private(set) var overview: [[Bool]] = []
+    /// The library's decisions, on the playhead's time axis. Nil until loaded.
+    @Published private(set) var layers: SessionLayers?
 
     private let reader: SessionReader
     private let startTime: TimeInterval
@@ -60,6 +62,11 @@ final class SessionPlayer: NSObject, ObservableObject, Identifiable {
             // A second reader, because a reader must stay on one thread.
             overview = await Task.detached {
                 SessionPlayer.makeOverview(url: url, tracks: tracks, start: start, duration: duration)
+            }.value
+        }
+        Task {
+            layers = await Task.detached {
+                SessionLayers(url: url, start: start)
             }.value
         }
     }
