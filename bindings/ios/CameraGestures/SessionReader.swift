@@ -40,6 +40,22 @@ public struct SessionTelemetryRow {
     public let minBufferDeadline: TimeInterval?
 }
 
+/// The video beside the shots, from the manifest.
+public struct SessionVideoInfo: Sendable {
+    public let url: URL
+    /// Stored frame size in pixels, before rotation. Landmarks are normalised
+    /// to this frame.
+    public let width: Int
+    public let height: Int
+    /// Clockwise rotation that shows a stored frame upright: 0, 90, 180 or 270.
+    public let rotationDegrees: Int
+    /// The stored frames are mirrored relative to the scene.
+    public let mirrored: Bool
+    /// Capture timestamp of video time 0. A shot's frame is at video time
+    /// `pts - anchorPTS`.
+    public let anchorPTS: TimeInterval
+}
+
 /// One line of events.jsonl. `fields` is the whole JSON object.
 public struct SessionEvent {
     public let timestamp: TimeInterval
@@ -51,6 +67,10 @@ public struct SessionEvent {
 public final class SessionReader {
 
     private let ref: cg_session_reader_ref
+    private let url: URL
+
+    /// The track of frames with no hand; not listed in `handTracks`.
+    public static let absentTrack = Int(CG_SESSION_ABSENT_TRACK)
 
     /// Fails on a missing or unparsable manifest and on a format version newer
     /// than this library reads. An interrupted session opens normally.
@@ -60,6 +80,7 @@ public final class SessionReader {
             throw SessionReaderError.openFailed(String(cString: message))
         }
         self.ref = ref
+        self.url = url
     }
 
     deinit {
@@ -97,6 +118,30 @@ public final class SessionReader {
     /// `shotCount(track:)` when there is none.
     public func firstShotIndex(track: Int, atOrAfter time: TimeInterval) -> Int {
         cg_session_reader_find_shot(ref, Int32(track), time)
+    }
+
+    /// Timestamp and capture timestamp of up to `count` shots of one track,
+    /// starting at index `first`. The capture timestamp is nil for a shot
+    /// recorded without one.
+    public func shotTimes(track: Int, from first: Int, count: Int)
+        -> [(timestamp: TimeInterval, pts: TimeInterval?)] {
+        var buffer = [cg_session_shot](repeating: cg_session_shot(), count: count)
+        let read = cg_session_reader_read_shots(ref, Int32(track), first, count, &buffer)
+        return buffer.prefix(read).map { ($0.shot.timestamp, $0.has_pts != 0 ? $0.pts : nil) }
+    }
+
+    /// Nil when the session has no video, or when no frame reached the video
+    /// file, so there is nothing to place shots on.
+    public var video: SessionVideoInfo? {
+        var provenance = cg_session_provenance()
+        cg_session_reader_get_provenance(ref, &provenance)
+        let v = provenance.video
+        guard v.has_video != 0, v.has_anchor != 0 else { return nil }
+        return SessionVideoInfo(url: url.appendingPathComponent("video.mov"),
+                                width: Int(v.width), height: Int(v.height),
+                                rotationDegrees: Int(v.rotation_degrees),
+                                mirrored: v.mirrored != 0,
+                                anchorPTS: v.anchor_pts)
     }
 
     /// Nil when the session was recorded without a recognizer.

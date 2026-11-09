@@ -1,5 +1,6 @@
 // The metadata layers under the session player's skeleton: gate, hold, Phase 3
-// and commit, each with its own toggle.
+// and commit, each with its own toggle. The row of toggles also holds the
+// video's, which the player panel uses.
 //
 // All four charts show the same fixed window centred on the playhead, and
 // dragging on them moves the playhead. In a 10-minute session the slider moves
@@ -42,11 +43,21 @@ struct SessionLayersView: View {
 
     @State private var visible = Set(SessionLayerKind.allCases)
     @State private var dragStartTime: TimeInterval?
+    @State private var scrollingDrag = false
 
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
-                ForEach(SessionLayerKind.allCases) { toggle($0) }
+                ForEach(SessionLayerKind.allCases) { kind in
+                    toggle(kind.rawValue, on: visible.contains(kind)) {
+                        if visible.contains(kind) { visible.remove(kind) } else { visible.insert(kind) }
+                    }
+                }
+                // A session without video says so in the player panel.
+                toggle("Video", on: player.video != nil && player.showsVideo) {
+                    player.showsVideo.toggle()
+                }
+                .disabled(player.video == nil)
             }
             if let layers = player.layers {
                 GeometryReader { proxy in
@@ -56,7 +67,8 @@ struct SessionLayersView: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .gesture(scrub(width: proxy.size.width))
+                    // Beside the page's scrolling, which a plain gesture would block.
+                    .simultaneousGesture(scrub(width: proxy.size.width))
                 }
                 .frame(height: CGFloat(visible.count) * Self.rowHeight)
             } else {
@@ -70,12 +82,9 @@ struct SessionLayersView: View {
     /// Chart, its heading and the gap between rows.
     private static let rowHeight: CGFloat = chartHeight + 14 + 3
 
-    private func toggle(_ kind: SessionLayerKind) -> some View {
-        let on = visible.contains(kind)
-        return Button {
-            if on { visible.remove(kind) } else { visible.insert(kind) }
-        } label: {
-            Text(kind.rawValue)
+    private func toggle(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
                 .font(.caption.weight(on ? .semibold : .regular))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
@@ -89,13 +98,23 @@ struct SessionLayersView: View {
     }
 
     private func scrub(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 8)
             .onChanged { drag in
+                if scrollingDrag { return }
+                if dragStartTime == nil,
+                   abs(drag.translation.height) > abs(drag.translation.width) {
+                    // A mostly vertical drag scrolls the page.
+                    scrollingDrag = true
+                    return
+                }
                 let start = dragStartTime ?? player.time
                 dragStartTime = start
                 player.seek(to: start - Double(drag.translation.width / width) * LayerScale.window)
             }
-            .onEnded { _ in dragStartTime = nil }
+            .onEnded { _ in
+                dragStartTime = nil
+                scrollingDrag = false
+            }
     }
 
     private func chart(_ kind: SessionLayerKind, _ layers: SessionLayers) -> some View {

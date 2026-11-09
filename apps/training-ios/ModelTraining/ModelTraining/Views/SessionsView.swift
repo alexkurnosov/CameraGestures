@@ -9,6 +9,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 import CameraGestures
 
 extension UTType {
@@ -195,9 +196,10 @@ struct SessionPlayerView: View {
     @ObservedObject var player: SessionPlayer
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
-        let shot = player.currentShot
+    /// Panel width as a share of the page width, set by pinching the panel.
+    @State private var panelScale: CGFloat = 1
 
+    var body: some View {
         VStack(spacing: 12) {
             HStack {
                 Text(player.name)
@@ -207,53 +209,83 @@ struct SessionPlayerView: View {
                 Button("Done") { dismiss() }
             }
 
-            if player.tracks.count > 1 {
-                Picker("Hand", selection: $player.selectedTrack) {
-                    ForEach(player.tracks, id: \.self) { track in
-                        Text("Hand \(track)").tag(track)
+            // The panel can take the full width, so the charts below scroll.
+            GeometryReader { page in
+                ScrollView {
+                    VStack(spacing: 12) {
+                        if player.tracks.count > 1 {
+                            HandPicker(tracks: player.tracks) { player.trackFilter = $0 }
+                                .equatable()
+                        }
+
+                        panel
+                            .frame(width: page.size.width * panelScale)
+
+                        Text(handedness(player.currentShots))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        overview
+                            .frame(height: CGFloat(max(player.tracks.count, 1)) * 10)
+
+                        Slider(value: Binding(get: { player.time }, set: { player.seek(to: $0) }),
+                               in: 0...max(player.duration, 0.001))
+
+                        HStack {
+                            Button {
+                                player.isPlaying ? player.pause() : player.play()
+                            } label: {
+                                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.title2)
+                                    .frame(width: 44, height: 44)
+                            }
+                            Spacer()
+                            Text("\(formatTime(player.time)) / \(formatTime(player.duration))")
+                                .font(.body.monospacedDigit())
+                        }
+
+                        SessionLayersView(player: player)
                     }
                 }
-                .pickerStyle(.segmented)
-            }
-
-            ZStack {
-                Color.black.opacity(0.85)
-                HandSkeletonView(points: shot?.landmarks ?? [])
-                if shot == nil {
-                    Text(player.tracks.isEmpty ? "No hand in this session" : "Hand not in view")
-                        .foregroundColor(.secondary)
-                }
-            }
-            .cornerRadius(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Text(handedness(shot))
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            SessionLayersView(player: player)
-
-            overview
-                .frame(height: CGFloat(max(player.tracks.count, 1)) * 10)
-
-            Slider(value: Binding(get: { player.time }, set: { player.seek(to: $0) }),
-                   in: 0...max(player.duration, 0.001))
-
-            HStack {
-                Button {
-                    player.isPlaying ? player.pause() : player.play()
-                } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
-                }
-                Spacer()
-                Text("\(formatTime(player.time)) / \(formatTime(player.duration))")
-                    .font(.body.monospacedDigit())
             }
         }
         .padding()
         .onDisappear { player.pause() }
+    }
+
+    /// Video and skeletons at the video's own shape. Pinching sets the panel's
+    /// size up to the page width and zooms into the picture beyond it. A drag
+    /// pans while zoomed, and a double tap shows the whole frame again.
+    private var panel: some View {
+        let shots = player.currentShots
+        let shape = uprightVideoSize(player.video) ?? CGSize(width: 3, height: 4)
+
+        return ZStack {
+            Color.black.opacity(0.85)
+            ZoomableView(panelScale: $panelScale, content: ZStack {
+                if let avPlayer = player.avPlayer, player.videoState == .showing {
+                    SessionVideoView(player: avPlayer)
+                }
+                SessionHandsOverlay(hands: shots.map { $0.shot.landmarks }, video: player.video)
+            })
+            Group {
+                if shots.isEmpty, player.videoState != .showing {
+                    Text(player.tracks.isEmpty ? "No hand in this session" : "Hand not in view")
+                        .foregroundColor(.secondary)
+                }
+                if let note = videoNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+            // The notes cover the panel; touches go through to the zoom.
+            .allowsHitTesting(false)
+        }
+        .aspectRatio(shape, contentMode: .fit)
+        .cornerRadius(12)
     }
 
     /// One band per hand track showing where that hand is in view, with the
@@ -270,7 +302,7 @@ struct SessionPlayerView: View {
                                         width: bucketWidth,
                                         height: rowHeight - 2))
                 }
-                let selected = player.tracks[rowIndex] == player.selectedTrack
+                let selected = player.shownTracks.contains(player.tracks[rowIndex])
                 context.fill(path, with: .color(selected ? .blue : .gray.opacity(0.5)))
             }
             if player.duration > 0 {
@@ -282,14 +314,227 @@ struct SessionPlayerView: View {
         .background(Color.gray.opacity(0.15))
     }
 
-    private func handedness(_ shot: HandShot?) -> String {
-        switch shot?.leftOrRight {
-        case .left:    return "Left hand"
-        case .right:   return "Right hand"
-        case .unknown: return "Handedness unknown"
-        case nil:      return " "
+    /// What the panel says about the video, if anything.
+    private var videoNote: String? {
+        switch player.videoState {
+        case .unavailable: return "Video unavailable (recorded without video)"
+        case .failed:      return "Video could not be loaded: \(player.videoError ?? "")"
+        case .loading:     return "Loading video"
+        case .hidden:      return nil
+        case .outOfRange:  return "No video at this time"
+        case .showing:     return player.video?.mirrored == true ? "Mirrored video" : nil
         }
     }
+
+    /// Each shown hand's track and MediaPipe's label for it, e.g. "Hand 0: left".
+    private func handedness(_ shots: [(track: Int, shot: HandShot)]) -> String {
+        guard !shots.isEmpty else { return " " }
+        return shots.map { hand in
+            switch hand.shot.leftOrRight {
+            case .left:    return "Hand \(hand.track): left"
+            case .right:   return "Hand \(hand.track): right"
+            case .unknown: return "Hand \(hand.track): handedness unknown"
+            }
+        }.joined(separator: ", ")
+    }
+}
+
+// MARK: - Hand picker
+
+/// A view of its own that redraws only when the tracks change. While playing,
+/// the playhead redraws the player many times a second, and a segmented picker
+/// redrawn that often dropped taps.
+private struct HandPicker: View, Equatable {
+    let tracks: [Int]
+    let onSelect: (Int?) -> Void
+
+    /// The track shown; nil shows every hand.
+    @State private var selection: Int?
+
+    static func == (lhs: HandPicker, rhs: HandPicker) -> Bool {
+        lhs.tracks == rhs.tracks
+    }
+
+    var body: some View {
+        Picker("Hand", selection: $selection) {
+            Text("Both").tag(Int?.none)
+            ForEach(tracks, id: \.self) { track in
+                Text("Hand \(track)").tag(Int?.some(track))
+            }
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: selection) { onSelect($0) }
+    }
+}
+
+// MARK: - Video and hand overlay
+
+/// Pinch zoom and pan from UIScrollView, which works inside the page's
+/// ScrollView where a SwiftUI pinch gesture did not. A pinch that ends below
+/// the panel's size resizes the panel instead, so the size stays. A double tap
+/// zooms out.
+private struct ZoomableView<Content: View>: UIViewRepresentable {
+    @Binding var panelScale: CGFloat
+    let content: Content
+
+    /// The smallest panel, as a share of the page width.
+    private static var minPanelScale: CGFloat { 0.3 }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(host: UIHostingController(rootView: content))
+    }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.maximumZoomScale = 6
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = .clear
+
+        let hosted: UIView = context.coordinator.host.view
+        hosted.backgroundColor = .clear
+        hosted.frame = scrollView.bounds
+        hosted.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        scrollView.addSubview(hosted)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
+                                               action: #selector(Coordinator.zoomOut(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.host.rootView = content
+        context.coordinator.panelScale = $panelScale
+        // Zooming out below 1 shrinks the picture; the panel follows when the
+        // pinch ends.
+        scrollView.minimumZoomScale = Self.minPanelScale / panelScale
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        let host: UIHostingController<Content>
+        var panelScale: Binding<CGFloat>?
+
+        init(host: UIHostingController<Content>) {
+            self.host = host
+        }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            host.view
+        }
+
+        /// Keeps a picture smaller than the panel in its centre.
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            let dx = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
+            let dy = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
+            scrollView.contentInset = UIEdgeInsets(top: dy, left: dx, bottom: dy, right: dx)
+        }
+
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            guard let panelScale else { return }
+            let current = panelScale.wrappedValue
+            // Below the page width, the pinch sets the panel's size and the
+            // picture fills the panel again.
+            guard scale < 1 || current < 1 else { return }
+            let newScale = min(max(current * scale, ZoomableView.minPanelScale), 1)
+            scrollView.setZoomScale(1, animated: false)
+            scrollView.contentInset = .zero
+            panelScale.wrappedValue = newScale
+        }
+
+        @objc func zoomOut(_ gesture: UITapGestureRecognizer) {
+            (gesture.view as? UIScrollView)?.setZoomScale(1, animated: true)
+        }
+    }
+}
+
+/// The session video, fitted to the view and turned upright by the file's own
+/// rotation.
+private struct SessionVideoView: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerView {
+        let view = PlayerView()
+        view.playerLayer.videoGravity = .resizeAspect
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateUIView(_ view: PlayerView, context: Context) {}
+
+    final class PlayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
+}
+
+/// Hand skeletons drawn where the video shows its frames. Landmarks are
+/// normalised to the stored frame, so they get the same rotation and fit as the
+/// video. The mirrored flag flips neither: the frames and the landmarks are
+/// both as MediaPipe saw them. Without video they fill the view, as on the
+/// Camera tab.
+private struct SessionHandsOverlay: View {
+    let hands: [[Point3D]]
+    let video: SessionVideoInfo?
+
+    private static let connections: [(Int, Int)] = [
+        (0,1),(1,2),(2,3),(3,4),
+        (0,5),(5,6),(6,7),(7,8),
+        (0,9),(9,10),(10,11),(11,12),
+        (0,13),(13,14),(14,15),(15,16),
+        (0,17),(17,18),(18,19),(19,20)
+    ]
+
+    var body: some View {
+        Canvas { context, size in
+            let rect = contentRect(in: size)
+            let rotation = video?.rotationDegrees ?? 0
+            for points in hands where points.count >= 21 {
+                let placed = points.map { point -> CGPoint in
+                    let p = Self.upright(point, rotation: rotation)
+                    return CGPoint(x: rect.minX + p.x * rect.width, y: rect.minY + p.y * rect.height)
+                }
+                var bones = Path()
+                for (a, b) in Self.connections {
+                    bones.move(to: placed[a])
+                    bones.addLine(to: placed[b])
+                }
+                context.stroke(bones, with: .color(.blue), lineWidth: 2)
+                for p in placed {
+                    context.stroke(Path(ellipseIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)),
+                                   with: .color(.green), lineWidth: 2)
+                }
+            }
+        }
+    }
+
+    /// Where an aspect fit puts the upright video, as AVPlayerLayer does.
+    private func contentRect(in size: CGSize) -> CGRect {
+        let bounds = CGRect(origin: .zero, size: size)
+        guard let upright = uprightVideoSize(video) else { return bounds }
+        return AVMakeRect(aspectRatio: upright, insideRect: bounds)
+    }
+
+    /// A stored-frame point in the upright frame, both normalised, for a
+    /// clockwise rotation.
+    private static func upright(_ point: Point3D, rotation: Int) -> CGPoint {
+        let x = CGFloat(point.x), y = CGFloat(point.y)
+        switch rotation {
+        case 90:  return CGPoint(x: 1 - y, y: x)
+        case 180: return CGPoint(x: 1 - x, y: 1 - y)
+        case 270: return CGPoint(x: y, y: 1 - x)
+        default:  return CGPoint(x: x, y: y)
+        }
+    }
+}
+
+/// The video frame's size once turned upright; nil without video.
+private func uprightVideoSize(_ video: SessionVideoInfo?) -> CGSize? {
+    guard let video else { return nil }
+    return video.rotationDegrees % 180 != 0 ? CGSize(width: video.height, height: video.width)
+                                            : CGSize(width: video.width, height: video.height)
 }
 
 /// Minutes, seconds and tenths, e.g. "9:59.4".
